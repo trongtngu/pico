@@ -177,13 +177,12 @@ private final class VillageScene: SKScene {
             tileAnchorPoint: Self.tileAnchorPoint
         )
         let walkFrames = VillagerWalkFrames()
-        let idleTexture = firstCharacterFrame()
+        let idleTexture = walkFrames.frames(forRow: 0)[0]
 
         for index in 0..<villagerCount {
             let tile = startingTile(for: index)
             let startPosition = layout.characterPosition(for: tile)
             let villager = VillagerNode(
-                gridSize: gridSize,
                 currentPosition: startPosition,
                 walkFrames: walkFrames,
                 idleTexture: idleTexture,
@@ -226,33 +225,13 @@ private final class VillageScene: SKScene {
         let column = linearPosition % gridSize
         return TileCoordinate(row: row, column: column)
     }
-
-    private func firstCharacterFrame() -> SKTexture {
-        let sheet = SKTexture(imageNamed: "Character0_Idle")
-        sheet.filteringMode = .linear
-
-        let frameSize = CGSize(width: 460, height: 460)
-        let sheetSize = CGSize(width: 3680, height: 2300)
-        let rows = Int(sheetSize.height / frameSize.height)
-        let rect = CGRect(
-            x: 0,
-            y: CGFloat(rows - 1) * frameSize.height / sheetSize.height,
-            width: frameSize.width / sheetSize.width,
-            height: frameSize.height / sheetSize.height
-        )
-        let texture = SKTexture(rect: rect, in: sheet)
-        texture.filteringMode = .linear
-        return texture
-    }
 }
 
 private final class VillagerNode: SKNode {
     private static let walkActionKey = "walk"
 
-    private let gridSize: Int
     private let sprite: SKSpriteNode
     private let walkFrames: VillagerWalkFrames
-    private let idleTexture: SKTexture
     private var currentAnimationDirection: VillagerWalkDirection?
     private var nextTargetTime: TimeInterval = 0
     private var isMoving = false
@@ -263,18 +242,15 @@ private final class VillagerNode: SKNode {
     private let movementSpeed: CGFloat
 
     init(
-        gridSize: Int,
         currentPosition: CGPoint,
         walkFrames: VillagerWalkFrames,
         idleTexture: SKTexture,
         characterSize: CGFloat,
         speed: CGFloat
     ) {
-        self.gridSize = gridSize
         self.currentPosition = currentPosition
         self.targetPosition = currentPosition
         self.walkFrames = walkFrames
-        self.idleTexture = idleTexture
         self.sprite = SKSpriteNode(texture: idleTexture)
         self.movementSpeed = speed
         super.init()
@@ -332,11 +308,7 @@ private final class VillagerNode: SKNode {
     }
 
     private func chooseRandomTarget(layout: VillageSceneLayout, currentTime: TimeInterval) {
-        let tile = TileCoordinate(
-            row: Int.random(in: 0..<gridSize),
-            column: Int.random(in: 0..<gridSize)
-        )
-        let nextPosition = layout.characterPosition(for: tile)
+        let nextPosition = layout.randomCharacterPosition()
         guard hypot(nextPosition.x - currentPosition.x, nextPosition.y - currentPosition.y) >= 2 else {
             nextTargetTime = currentTime + TimeInterval.random(in: 0.25...0.75)
             return
@@ -375,7 +347,6 @@ private final class VillagerNode: SKNode {
 
     private func stopWalking() {
         sprite.removeAction(forKey: Self.walkActionKey)
-        sprite.texture = idleTexture
     }
 }
 
@@ -404,7 +375,7 @@ private struct VillagerWalkFrames {
     private let frames: [[SKTexture]]
 
     init() {
-        let sheet = SKTextureAtlas(named: "CharacterWalk").textureNamed("Character0_Walk.png")
+        let sheet = SKTexture(imageNamed: "Character0_Walk")
         sheet.filteringMode = .linear
 
         frames = (0..<Self.rowCount).map { row in
@@ -455,17 +426,32 @@ private struct VillageSceneLayout {
     }
 
     func center(for tile: TileCoordinate) -> CGPoint {
+        center(row: CGFloat(tile.row), column: CGFloat(tile.column))
+    }
+
+    private func center(row: CGFloat, column: CGFloat) -> CGPoint {
         let boardHeight = CGFloat(gridSize - 1) * tileHeight + tileWidth
         let originX = size.width / 2
         let originY = (size.height + boardHeight) / 2 - tileWidth * (1 - tileAnchorPoint.y)
-        let x = originX + CGFloat(tile.column - tile.row) * tileWidth / 2
-        let y = originY - CGFloat(tile.column + tile.row) * tileHeight / 2
+        let x = originX + (column - row) * tileWidth / 2
+        let y = originY - (column + row) * tileHeight / 2
 
         return CGPoint(x: x, y: y)
     }
 
     func characterPosition(for tile: TileCoordinate) -> CGPoint {
-        let center = center(for: tile)
+        characterPosition(row: CGFloat(tile.row), column: CGFloat(tile.column))
+    }
+
+    func randomCharacterPosition() -> CGPoint {
+        characterPosition(
+            row: CGFloat.random(in: 0...CGFloat(gridSize - 1)),
+            column: CGFloat.random(in: 0...CGFloat(gridSize - 1))
+        )
+    }
+
+    private func characterPosition(row: CGFloat, column: CGFloat) -> CGPoint {
+        let center = center(row: row, column: column)
         return CGPoint(x: center.x, y: center.y + characterYOffset)
     }
 }
