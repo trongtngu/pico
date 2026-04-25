@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+    <dict>
+        <key>codeandweb</key>
+        <dict>
+            <key>generator</key>
+            <string>TexturePacker 7.12.0 - https://www.codeandweb.com/texturepacker</string>
+            <key>smartupdate</key>
+            <string>$TexturePacker:SmartUpdate:59073d6040f7af12f30bd273697f7471:6b5f878ab635341bc48b301fd12136f0:50095bdea0fa73fe8cff48b7e97839d3$</string>
+        </dict>
+        <key>format</key>
+        <string>APPL</string>
+        <key>images</key>
+        <array>
+            <dict>
+                <key>path</key>
+                <string>CharacterWalk.1.png</string>
+                <key>size</key>
+                <string>{636,552}</string>
+                <key>subimages</key>
+                <array>
+                    <dict>
+                        <key>aliases</key>
+                        <array/>
+                        <key>isFullyOpaque</key>
+                        <false/>
+                        <key>name</key>
+                        <string>Character0_Walk.png</string>
+                        <key>spriteOffset</key>
+                        <string>{31,7}</string>
+                        <key>spriteSourceSize</key>
+                        <string>{690,575}</string>
+                        <key>textureRect</key>
+                        <string>{{4,4},{628,544}}</string>
+                        <key>textureRotated</key>
+                        <false/>
+                    </dict>
+                </array>
+            </dict>
+        </array>
+        <key>version</key>
+        <integer>1</integer>
+    </dict>
+</plist>
