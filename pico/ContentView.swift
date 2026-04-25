@@ -20,6 +20,7 @@ struct AppShellView: View {
     @State private var selectedTab: AppTab = .home
     @StateObject private var friendStore = FriendStore()
     @StateObject private var focusStore = FocusStore()
+    @StateObject private var villageStore = VillageStore()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -36,8 +37,20 @@ struct AppShellView: View {
         }
         .environmentObject(friendStore)
         .environmentObject(focusStore)
+        .environmentObject(villageStore)
         .task(id: sessionStore.session?.user?.id) {
             await focusStore.restoreSavedState(for: sessionStore.session)
+            if sessionStore.session == nil {
+                villageStore.clear()
+            } else {
+                await villageStore.loadResidents(for: sessionStore.session)
+            }
+        }
+        .onChange(of: focusStore.resultSession) {
+            guard focusStore.resultSession?.status == .completed else { return }
+            Task {
+                await villageStore.loadResidents(for: sessionStore.session)
+            }
         }
         .onChange(of: scenePhase) {
             switch scenePhase {
@@ -118,6 +131,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
 
 private struct HomePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var villageStore: VillageStore
 
     var body: some View {
         List {
@@ -157,9 +171,30 @@ private struct HomePage: View {
             } footer: {
                 Text("A starting point for the primary dashboard experience.")
             }
+
+            Section {
+                NavigationLink {
+                    VillagePage()
+                } label: {
+                    HStack {
+                        Label("Village", systemImage: "house")
+                        Spacer()
+                        if villageStore.isLoadingResidents {
+                            ProgressView()
+                        } else {
+                            Text("\(villageStore.residents.count)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } footer: {
+                Text("Residents appear after completed multiplayer focus sessions.")
+            }
         }
         .task {
             await sessionStore.loadProfileIfNeeded()
+            await villageStore.loadResidents(for: sessionStore.session)
         }
     }
 }
