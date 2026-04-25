@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     var body: some View {
@@ -14,8 +15,11 @@ struct ContentView: View {
 }
 
 struct AppShellView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var sessionStore: AuthSessionStore
     @State private var selectedTab: AppTab = .home
     @StateObject private var friendStore = FriendStore()
+    @StateObject private var focusStore = FocusStore()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -31,6 +35,35 @@ struct AppShellView: View {
             }
         }
         .environmentObject(friendStore)
+        .environmentObject(focusStore)
+        .task(id: sessionStore.session?.user?.id) {
+            await focusStore.restoreSavedState(for: sessionStore.session)
+        }
+        .onChange(of: scenePhase) {
+            switch scenePhase {
+            case .active:
+                Task {
+                    await focusStore.handleSceneBecameActive(for: sessionStore.session)
+                }
+            case .background:
+                focusStore.handleSceneMovedToBackground(
+                    for: sessionStore.session,
+                    protectedDataAvailable: UIApplication.shared.isProtectedDataAvailable
+                )
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
+            focusStore.handleDeviceWillLock()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            Task {
+                await focusStore.handleDeviceDidUnlock(for: sessionStore.session)
+            }
+        }
     }
 }
 
@@ -76,7 +109,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
         case .friends:
             FriendsPage()
         case .sessions:
-            SessionsPage()
+            FocusPage()
         case .settings:
             ProfilePage()
         }
@@ -127,25 +160,6 @@ private struct HomePage: View {
         }
         .task {
             await sessionStore.loadProfileIfNeeded()
-        }
-    }
-}
-
-private struct SessionsPage: View {
-    var body: some View {
-        List {
-            Section {
-                NavigationLink("Recent sessions") {
-                    PlaceholderDetailView(title: "Recent Sessions")
-                }
-                NavigationLink("Session history") {
-                    PlaceholderDetailView(title: "Session History")
-                }
-            } header: {
-                Text("Sessions")
-            } footer: {
-                Text("Session list and detail flows can be added here.")
-            }
         }
     }
 }
