@@ -112,7 +112,8 @@ final class AuthSessionStore: ObservableObject {
             session = result.session
             notice = result.message
             resetProfile()
-            if result.session != nil {
+            if let session = result.session {
+                try? await authService.syncUserTimezone(for: session)
                 await loadProfileIfNeeded()
             }
         } catch {

@@ -8,11 +8,23 @@
 import Foundation
 import Combine
 
+enum VillageLoadState: Equatable {
+    case idle
+    case loading
+    case loaded
+    case failed
+}
+
 @MainActor
 final class VillageStore: ObservableObject {
     @Published private(set) var residents: [VillageResident] = []
-    @Published private(set) var isLoadingResidents = false
+    @Published private(set) var loadState: VillageLoadState = .idle
+    @Published private(set) var hasLoadedResidents = false
     @Published var notice: String?
+
+    var isLoadingResidents: Bool {
+        loadState == .loading
+    }
 
     private let villageService: VillageService
 
@@ -23,21 +35,24 @@ final class VillageStore: ObservableObject {
     func loadResidents(for session: AuthSession?) async {
         guard let session, !isLoadingResidents else { return }
 
-        isLoadingResidents = true
+        loadState = .loading
         notice = nil
-        defer { isLoadingResidents = false }
 
         do {
             residents = try await villageService.fetchResidents(for: session)
+            hasLoadedResidents = true
+            loadState = .loaded
         } catch {
             notice = displayMessage(for: error)
+            loadState = .failed
         }
     }
 
     func clear() {
         residents = []
         notice = nil
-        isLoadingResidents = false
+        loadState = .idle
+        hasLoadedResidents = false
     }
 
     #if DEBUG
@@ -56,6 +71,8 @@ final class VillageStore: ObservableObject {
                 unlockedAt: Date()
             )
         ]
+        store.loadState = .loaded
+        store.hasLoadedResidents = true
         return store
     }
     #endif

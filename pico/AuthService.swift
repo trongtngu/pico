@@ -106,7 +106,8 @@ final class AuthService {
                 data: SignUpMetadata(
                     username: normalizedUsername,
                     displayName: displayName.normalizedDisplayName,
-                    avatarConfig: avatarConfig
+                    avatarConfig: avatarConfig,
+                    timeZone: TimeZone.current.identifier
                 )
             )
         )
@@ -200,6 +201,15 @@ final class AuthService {
         )
 
         return response.isEmpty
+    }
+
+    func syncUserTimezone(for authSession: AuthSession) async throws {
+        let _: String = try await send(
+            path: "/rest/v1/rpc/set_user_timezone",
+            method: "POST",
+            body: UserTimezoneUpdate(timeZone: TimeZone.current.identifier),
+            accessToken: authSession.accessToken
+        )
     }
 
     private func send<RequestBody: Encodable, ResponseBody: Decodable>(
@@ -334,6 +344,7 @@ private struct SignUpMetadata: Encodable {
     let username: String
     let displayName: String
     let avatarConfig: AvatarConfig
+    let timeZone: String
 }
 
 private struct SignUpResponse: Decodable {
@@ -374,6 +385,10 @@ private struct UserProfileResponse: Decodable {
 private struct UserProfileUpdate: Encodable {
     let displayName: String
     let avatarConfig: AvatarConfig
+}
+
+private struct UserTimezoneUpdate: Encodable {
+    let timeZone: String
 }
 
 private struct UsernameAvailabilityResponse: Decodable {

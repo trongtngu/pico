@@ -5,6 +5,7 @@
 //  Created by Tommy Nguyen on 25/4/2026.
 //
 
+import SpriteKit
 import SwiftUI
 import UIKit
 
@@ -21,6 +22,7 @@ struct AppShellView: View {
     @StateObject private var friendStore = FriendStore()
     @StateObject private var focusStore = FocusStore()
     @StateObject private var villageStore = VillageStore()
+    @StateObject private var scoreStore = ScoreStore()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -38,18 +40,22 @@ struct AppShellView: View {
         .environmentObject(friendStore)
         .environmentObject(focusStore)
         .environmentObject(villageStore)
+        .environmentObject(scoreStore)
         .task(id: sessionStore.session?.user?.id) {
             await focusStore.restoreSavedState(for: sessionStore.session)
             if sessionStore.session == nil {
                 villageStore.clear()
+                scoreStore.clear()
             } else {
                 await villageStore.loadResidents(for: sessionStore.session)
+                await scoreStore.loadScore(for: sessionStore.session)
             }
         }
         .onChange(of: focusStore.resultSession) {
             guard focusStore.resultSession?.status == .completed else { return }
             Task {
                 await villageStore.loadResidents(for: sessionStore.session)
+                await scoreStore.loadScore(for: sessionStore.session)
             }
         }
         .onChange(of: scenePhase) {
@@ -130,72 +136,90 @@ private enum AppTab: String, CaseIterable, Identifiable {
 }
 
 private struct HomePage: View {
-    @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var scoreStore: ScoreStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var sessionStore: AuthSessionStore
 
     var body: some View {
-        List {
-            Section {
-                if let profile = sessionStore.profile {
-                    ProfileCardView(profile: profile)
-                } else if sessionStore.isProfileLoading {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                VillageView(residents: villageStore.residents)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 430)
+                    .padding(.horizontal, 6)
+
+                if villageStore.isLoadingResidents {
                     HStack {
-                        Text("Loading profile")
+                        Text("Loading village")
+                            .foregroundStyle(.secondary)
                         Spacer()
                         ProgressView()
                     }
-                } else {
-                    ProfileUnavailableView()
+                    .padding(.horizontal)
                 }
-            }
 
-            if let profileNotice = sessionStore.profileNotice {
-                Section {
-                    Text(profileNotice)
+                if let notice = villageStore.notice {
+                    Text(notice)
                         .foregroundStyle(.secondary)
-
-                    Button("Retry") {
-                        Task {
-                            await sessionStore.reloadProfile()
-                        }
-                    }
+                        .padding(.horizontal)
                 }
-            }
 
-            Section {
-                NavigationLink("Open overview") {
-                    PlaceholderDetailView(title: "Home Overview")
-                }
-            } header: {
-                Text("Home")
-            } footer: {
-                Text("A starting point for the primary dashboard experience.")
+                StreakCardView(
+                    currentStreak: scoreStore.currentStreak,
+                    isLoading: scoreStore.isLoadingScore,
+                    notice: scoreStore.notice
+                )
+                .padding(.horizontal)
             }
-
-            Section {
-                NavigationLink {
-                    VillagePage()
-                } label: {
-                    HStack {
-                        Label("Village", systemImage: "house")
-                        Spacer()
-                        if villageStore.isLoadingResidents {
-                            ProgressView()
-                        } else {
-                            Text("\(villageStore.residents.count)")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            } footer: {
-                Text("Residents appear after completed multiplayer focus sessions.")
-            }
+            .padding(.vertical)
         }
         .task {
-            await sessionStore.loadProfileIfNeeded()
             await villageStore.loadResidents(for: sessionStore.session)
+            await scoreStore.loadScore(for: sessionStore.session)
         }
+        .refreshable {
+            await villageStore.loadResidents(for: sessionStore.session)
+            await scoreStore.loadScore(for: sessionStore.session)
+        }
+    }
+}
+
+private struct StreakCardView: View {
+    let currentStreak: Int
+    let isLoading: Bool
+    let notice: String?
+
+    private var streakLabel: String {
+        "\(currentStreak) day\(currentStreak == 1 ? "" : "s") streak"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "flame")
+                    .foregroundStyle(.orange)
+
+                Text(streakLabel)
+                    .font(.headline)
+
+                Spacer()
+
+                if isLoading {
+                    ProgressView()
+                }
+            }
+
+            if let notice {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
     }
 }
 
@@ -206,6 +230,23 @@ private struct ProfilePage: View {
 
     var body: some View {
         Form {
+            Section {
+                VStack(spacing: 12) {
+                    ProfileIdleCharacterView(hat: avatarConfig.selectedHat)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 180)
+
+                    Button {
+                        avatarConfig = avatarConfig.withHat(nextHat)
+                    } label: {
+                        Label("Cycle Outfit", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            }
+
             Section {
                 if let profile = sessionStore.profile {
                     ProfileCardView(profile: profile)
@@ -231,7 +272,7 @@ private struct ProfilePage: View {
                 Section {
                     AvatarPickerView(selection: $avatarConfig)
                 } header: {
-                    Text("Avatar")
+                    Text("Outfit")
                 }
 
                 Section {
@@ -285,10 +326,86 @@ private struct ProfilePage: View {
         return hasValidDisplayName && hasChanges
     }
 
+    private var nextHat: AvatarHat {
+        let hats = AvatarHat.allCases
+        guard let currentIndex = hats.firstIndex(of: avatarConfig.selectedHat) else { return .none }
+        return hats[(currentIndex + 1) % hats.count]
+    }
+
     private func syncEditableProfile() {
         guard let profile = sessionStore.profile else { return }
         displayName = profile.displayName
         avatarConfig = profile.avatarConfig
+    }
+}
+
+private struct ProfileIdleCharacterView: View {
+    let hat: AvatarHat
+
+    var body: some View {
+        GeometryReader { proxy in
+            SpriteView(
+                scene: ProfileIdleCharacterScene(
+                    size: proxy.size,
+                    hat: hat
+                ),
+                options: [.allowsTransparency]
+            )
+            .id(hat.id)
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .background(Color.clear)
+        }
+        .accessibilityLabel(Text("Animated profile character"))
+    }
+}
+
+private final class ProfileIdleCharacterScene: SKScene {
+    private static let idleActionKey = "idle"
+
+    private let hat: AvatarHat
+    private var renderedSize: CGSize = .zero
+
+    init(size: CGSize, hat: AvatarHat) {
+        self.hat = hat
+        super.init(size: size)
+        scaleMode = .resizeFill
+        backgroundColor = .clear
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        nil
+    }
+
+    override func didMove(to view: SKView) {
+        view.allowsTransparency = true
+        view.isOpaque = false
+        view.backgroundColor = .clear
+        redrawIfNeeded()
+    }
+
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        redrawIfNeeded()
+    }
+
+    private func redrawIfNeeded() {
+        guard size.width > 0, size.height > 0, size != renderedSize else { return }
+
+        renderedSize = size
+        removeAllChildren()
+
+        let frames = AvatarIdleFrames(hat: hat).frames(forRow: 0)
+        guard let firstFrame = frames.first else { return }
+
+        let sprite = SKSpriteNode(texture: firstFrame)
+        let spriteSide = min(size.width * 0.72, size.height * 0.90, 150)
+        sprite.size = CGSize(width: spriteSide, height: spriteSide)
+        sprite.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        sprite.run(
+            .repeatForever(.animate(with: frames, timePerFrame: 0.10)),
+            withKey: Self.idleActionKey
+        )
+        addChild(sprite)
     }
 }
 

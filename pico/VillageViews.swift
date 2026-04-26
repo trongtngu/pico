@@ -47,10 +47,15 @@ struct VillagePage: View {
     }
 }
 
-private struct VillageView: View {
+struct VillageView: View {
     let residents: [VillageResident]
 
     private static let gridSize = 6
+    private var sceneID: String {
+        residents
+            .map { "\($0.id.uuidString)-\($0.profile.avatarConfig.selectedHat.rawValue)" }
+            .joined(separator: "|")
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -58,10 +63,11 @@ private struct VillageView: View {
                 scene: VillageScene(
                     size: proxy.size,
                     gridSize: Self.gridSize,
-                    villagerCount: max(residents.count, 1)
+                    residents: residents
                 ),
                 options: [.allowsTransparency]
             )
+            .id(sceneID)
             .frame(width: proxy.size.width, height: proxy.size.height)
             .background(Color.clear)
             .accessibilityLabel(Text("Village grid"))
@@ -101,14 +107,14 @@ private final class VillageScene: SKScene {
     private static let tileAnchorPoint = CGPoint(x: 0.5, y: 0.71)
 
     private let gridSize: Int
-    private let villagerCount: Int
+    private let residents: [VillageResident]
     private var renderedSize: CGSize = .zero
     private var villagers: [VillagerNode] = []
     private var lastUpdateTime: TimeInterval?
 
-    init(size: CGSize, gridSize: Int, villagerCount: Int) {
+    init(size: CGSize, gridSize: Int, residents: [VillageResident]) {
         self.gridSize = gridSize
-        self.villagerCount = min(villagerCount, gridSize * gridSize)
+        self.residents = Array(residents.prefix(gridSize * gridSize))
         super.init(size: size)
         scaleMode = .resizeFill
         backgroundColor = .clear
@@ -176,16 +182,16 @@ private final class VillageScene: SKScene {
             gridSize: gridSize,
             tileAnchorPoint: Self.tileAnchorPoint
         )
-        let walkFrames = VillagerWalkFrames()
-        let idleTexture = walkFrames.frames(forRow: 0)[0]
-
-        for index in 0..<villagerCount {
+        for (index, resident) in residents.enumerated() {
             let tile = startingTile(for: index)
             let startPosition = layout.characterPosition(for: tile)
+            let selectedHat = resident.profile.avatarConfig.selectedHat
+            let idleFrames = AvatarIdleFrames(hat: selectedHat)
+            let walkFrames = VillagerWalkFrames(hat: selectedHat)
             let villager = VillagerNode(
                 currentPosition: startPosition,
                 walkFrames: walkFrames,
-                idleTexture: idleTexture,
+                idleFrames: idleFrames,
                 characterSize: layout.characterSize,
                 speed: layout.characterSpeed
             )
@@ -229,9 +235,11 @@ private final class VillageScene: SKScene {
 
 private final class VillagerNode: SKNode {
     private static let walkActionKey = "walk"
+    private static let idleActionKey = "idle"
 
     private let sprite: SKSpriteNode
     private let walkFrames: VillagerWalkFrames
+    private let idleFrames: AvatarIdleFrames
     private var currentAnimationDirection: VillagerWalkDirection?
     private var nextTargetTime: TimeInterval = 0
     private var isMoving = false
@@ -244,14 +252,15 @@ private final class VillagerNode: SKNode {
     init(
         currentPosition: CGPoint,
         walkFrames: VillagerWalkFrames,
-        idleTexture: SKTexture,
+        idleFrames: AvatarIdleFrames,
         characterSize: CGFloat,
         speed: CGFloat
     ) {
         self.currentPosition = currentPosition
         self.targetPosition = currentPosition
         self.walkFrames = walkFrames
-        self.sprite = SKSpriteNode(texture: idleTexture)
+        self.idleFrames = idleFrames
+        self.sprite = SKSpriteNode(texture: idleFrames.firstFrame())
         self.movementSpeed = speed
         super.init()
 
@@ -260,6 +269,7 @@ private final class VillagerNode: SKNode {
         sprite.anchorPoint = CGPoint(x: 0.5, y: 0.12)
         sprite.size = CGSize(width: characterSize, height: characterSize)
         addChild(sprite)
+        startIdle()
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -338,6 +348,7 @@ private final class VillagerNode: SKNode {
         guard direction != currentAnimationDirection else { return }
 
         currentAnimationDirection = direction
+        stopIdle()
         sprite.xScale = direction.isFlipped ? -abs(sprite.xScale) : abs(sprite.xScale)
         sprite.run(
             .repeatForever(.animate(with: walkFrames.frames(forRow: direction.row), timePerFrame: 0.08)),
@@ -347,6 +358,20 @@ private final class VillagerNode: SKNode {
 
     private func stopWalking() {
         sprite.removeAction(forKey: Self.walkActionKey)
+        sprite.xScale = abs(sprite.xScale)
+        startIdle()
+    }
+
+    private func startIdle() {
+        guard sprite.action(forKey: Self.idleActionKey) == nil else { return }
+        sprite.run(
+            .repeatForever(.animate(with: idleFrames.frames(forRow: 0), timePerFrame: 0.10)),
+            withKey: Self.idleActionKey
+        )
+    }
+
+    private func stopIdle() {
+        sprite.removeAction(forKey: Self.idleActionKey)
     }
 }
 
@@ -369,24 +394,23 @@ private struct VillagerWalkDirection: Equatable {
 }
 
 private struct VillagerWalkFrames {
+    private static let atlasImageName = "CharacterWalk_Set1.1"
+    private static let atlasPixelSize = CGSize(width: 1388, height: 1737)
+    private static let sheetPixelSize = CGSize(width: 690, height: 575)
+    private static let atlasInset: CGFloat = 2
+    private static let sheetSpacing: CGFloat = 4
     private static let rowCount = 5
     private static let frameCount = 6
 
     private let frames: [[SKTexture]]
 
-    init() {
-        let sheet = SKTexture(imageNamed: "Character0_Walk")
-        sheet.filteringMode = .linear
+    init(hat: AvatarHat) {
+        let atlasTexture = SKTexture(imageNamed: Self.atlasImageName)
+        atlasTexture.filteringMode = .linear
 
         frames = (0..<Self.rowCount).map { row in
             (0..<Self.frameCount).map { frame in
-                let rect = CGRect(
-                    x: CGFloat(frame) / CGFloat(Self.frameCount),
-                    y: CGFloat(Self.rowCount - row - 1) / CGFloat(Self.rowCount),
-                    width: 1 / CGFloat(Self.frameCount),
-                    height: 1 / CGFloat(Self.rowCount)
-                )
-                let texture = SKTexture(rect: rect, in: sheet)
+                let texture = SKTexture(rect: Self.normalizedFrameRect(hat: hat, row: row, frame: frame), in: atlasTexture)
                 texture.filteringMode = .linear
                 return texture
             }
@@ -396,16 +420,42 @@ private struct VillagerWalkFrames {
     func frames(forRow row: Int) -> [SKTexture] {
         frames[min(max(row, 0), Self.rowCount - 1)]
     }
+
+    private static func normalizedFrameRect(hat: AvatarHat, row: Int, frame: Int) -> CGRect {
+        let slot = hat.walkAtlasSlot
+        let framePixelWidth = sheetPixelSize.width / CGFloat(frameCount)
+        let framePixelHeight = sheetPixelSize.height / CGFloat(rowCount)
+        let framePixelRect = CGRect(
+            x: atlasInset
+                + CGFloat(slot.column) * (sheetPixelSize.width + sheetSpacing)
+                + CGFloat(frame) * framePixelWidth,
+            y: atlasInset
+                + CGFloat(slot.row) * (sheetPixelSize.height + sheetSpacing)
+                + CGFloat(row) * framePixelHeight,
+            width: framePixelWidth,
+            height: framePixelHeight
+        )
+        return CGRect(
+            x: framePixelRect.minX / atlasPixelSize.width,
+            y: (atlasPixelSize.height - framePixelRect.maxY) / atlasPixelSize.height,
+            width: framePixelRect.width / atlasPixelSize.width,
+            height: framePixelRect.height / atlasPixelSize.height
+        )
+    }
 }
 
 private struct VillageSceneLayout {
+    private static let tileSpacingScale: CGFloat = 0.88
+
     let size: CGSize
     let gridSize: Int
     let tileAnchorPoint: CGPoint
 
     var tileWidth: CGFloat {
-        let horizontalFit = size.width * 0.90 / CGFloat(gridSize)
-        let verticalFit = size.height * 0.82 / (CGFloat(gridSize) * 0.5 + 1)
+        let horizontalTiles = 1 + CGFloat(gridSize - 1) * Self.tileSpacingScale
+        let verticalTiles = 1 + CGFloat(gridSize - 1) * 0.5 * Self.tileSpacingScale
+        let horizontalFit = size.width * 0.90 / horizontalTiles
+        let verticalFit = size.height * 0.82 / verticalTiles
         return max(34, min(horizontalFit, verticalFit, 72))
     }
 
@@ -430,11 +480,13 @@ private struct VillageSceneLayout {
     }
 
     private func center(row: CGFloat, column: CGFloat) -> CGPoint {
-        let boardHeight = CGFloat(gridSize - 1) * tileHeight + tileWidth
+        let horizontalStep = tileWidth / 2 * Self.tileSpacingScale
+        let verticalStep = tileHeight / 2 * Self.tileSpacingScale
+        let boardHeight = CGFloat(gridSize - 1) * verticalStep * 2 + tileWidth
         let originX = size.width / 2
         let originY = (size.height + boardHeight) / 2 - tileWidth * (1 - tileAnchorPoint.y)
-        let x = originX + (column - row) * tileWidth / 2
-        let y = originY - (column + row) * tileHeight / 2
+        let x = originX + (column - row) * horizontalStep
+        let y = originY - (column + row) * verticalStep
 
         return CGPoint(x: x, y: y)
     }
