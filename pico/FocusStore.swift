@@ -12,7 +12,7 @@ import Combine
 final class FocusStore: ObservableObject {
     static let defaultDurationSeconds = 30 * 60
     static let minimumDurationSeconds = 60
-    static let maximumDurationSeconds = 24 * 60 * 60
+    static let maximumDurationSeconds = 120 * 60
 
     @Published private(set) var lobbySession: FocusSession?
     @Published private(set) var activeSession: FocusSession?
@@ -110,9 +110,15 @@ final class FocusStore: ObservableObject {
         }
     }
 
-    func createLobby(mode: FocusSessionMode, for authSession: AuthSession?) async {
+    func createLobby(
+        mode: FocusSessionMode,
+        durationSeconds: Int? = nil,
+        for authSession: AuthSession?
+    ) async {
         guard let authSession, !isCreating, !hasPendingResultSync else { return }
 
+        let requestedDuration = durationSeconds ?? Self.defaultDurationSeconds
+        let clampedDuration = min(Self.maximumDurationSeconds, max(Self.minimumDurationSeconds, requestedDuration))
         isCreating = true
         notice = nil
         defer { isCreating = false }
@@ -120,7 +126,7 @@ final class FocusStore: ObservableObject {
         do {
             let session = try await focusService.createSession(
                 mode: mode,
-                durationSeconds: Self.defaultDurationSeconds,
+                durationSeconds: clampedDuration,
                 for: authSession
             )
             applyOpenSession(session, authSession: authSession)
@@ -251,7 +257,8 @@ final class FocusStore: ObservableObject {
         }
     }
 
-    func cancelLobbySession(for authSession: AuthSession?) async {
+    @discardableResult
+    func cancelLobbySession(for authSession: AuthSession?) async -> Bool {
         guard
             let authSession,
             let lobbySession,
@@ -259,7 +266,7 @@ final class FocusStore: ObservableObject {
             !isFinishing,
             isCurrentUserHost(authSession)
         else {
-            return
+            return false
         }
 
         isFinishing = true
@@ -267,13 +274,20 @@ final class FocusStore: ObservableObject {
         defer { isFinishing = false }
 
         do {
-            let session = try await focusService.cancelSession(lobbySession.id, for: authSession)
-            applyFinishedSession(session)
+            _ = try await focusService.cancelSessionLobby(lobbySession.id, for: authSession)
+            self.lobbySession = nil
+            self.activeSession = nil
+            self.sessionDetail = nil
+            self.resultSession = nil
+            self.completionScoreReceipt = nil
+            self.hasPendingResultSync = false
             clearSavedState()
             subscribeToRealtime(for: authSession, sessionID: nil)
             await loadIncomingInvites(for: authSession)
+            return true
         } catch {
             notice = displayMessage(for: error)
+            return false
         }
     }
 
@@ -285,6 +299,37 @@ final class FocusStore: ObservableObject {
     func interruptCurrentSession(for authSession: AuthSession?) async {
         guard let authSession, let session = activeSession ?? liveSavedSession() else { return }
         await finish(session, pendingResult: .interrupt, authSession: authSession)
+    }
+
+    func leaveCurrentMultiplayerSession(for authSession: AuthSession?) async {
+        guard
+            let authSession,
+            let session = lobbySession ?? activeSession,
+            session.mode == .multiplayer,
+            !isFinishing,
+            !isCurrentUserHost(authSession)
+        else {
+            return
+        }
+
+        isFinishing = true
+        notice = nil
+        defer { isFinishing = false }
+
+        do {
+            _ = try await focusService.leaveSession(session.id, for: authSession)
+            lobbySession = nil
+            activeSession = nil
+            sessionDetail = nil
+            resultSession = nil
+            completionScoreReceipt = nil
+            hasPendingResultSync = false
+            clearSavedState()
+            subscribeToRealtime(for: authSession, sessionID: nil)
+            await loadIncomingInvites(for: authSession)
+        } catch {
+            notice = displayMessage(for: error)
+        }
     }
 
     func retryPendingResult(for authSession: AuthSession?) async {

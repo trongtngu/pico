@@ -258,6 +258,14 @@ final class FocusService {
         )
     }
 
+    func leaveSession(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
+        try await sessionResponse(
+            path: "/rest/v1/rpc/leave_focus_session",
+            body: FocusSessionIDRequest(targetSessionId: id),
+            accessToken: authSession.accessToken
+        )
+    }
+
     func startSession(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
         try await sessionResponse(
             path: "/rest/v1/rpc/start_focus_session",
@@ -281,9 +289,9 @@ final class FocusService {
         return result
     }
 
-    func cancelSession(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
+    func cancelSessionLobby(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
         try await sessionResponse(
-            path: "/rest/v1/rpc/cancel_focus_session",
+            path: "/rest/v1/rpc/cancel_session_lobby",
             body: FocusSessionIDRequest(targetSessionId: id),
             accessToken: authSession.accessToken
         )

@@ -7,6 +7,7 @@
 
 import SpriteKit
 import SwiftUI
+import UIKit
 
 struct AvatarConfig: Codable, Equatable {
     static let currentVersion = 1
@@ -242,6 +243,59 @@ struct AvatarIdleFrames {
     }
 }
 
+private final class AvatarPortraitImageCache {
+    static let shared = AvatarPortraitImageCache()
+
+    private static let atlasImageName = "Idle_Characters_Set1.1"
+    private static let sheetPixelSize = CGSize(width: 920, height: 575)
+    private static let atlasInset: CGFloat = 2
+    private static let sheetSpacing: CGFloat = 4
+    private static let rowCount = 5
+    private static let frameCount = 8
+    private static let portraitCropHeightRatio: CGFloat = 0.68
+
+    private let cache = NSCache<NSNumber, UIImage>()
+
+    func image(for hat: AvatarHat) -> UIImage? {
+        let key = NSNumber(value: hat.rawValue)
+        if let cachedImage = cache.object(forKey: key) {
+            return cachedImage
+        }
+
+        guard let image = Self.makeImage(for: hat) else {
+            return nil
+        }
+
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    private static func makeImage(for hat: AvatarHat) -> UIImage? {
+        guard let atlasImage = UIImage(named: atlasImageName),
+              let atlasCGImage = atlasImage.cgImage else {
+            return nil
+        }
+
+        let slot = hat.atlasSlot
+        let framePixelWidth = sheetPixelSize.width / CGFloat(frameCount)
+        let framePixelHeight = sheetPixelSize.height / CGFloat(rowCount)
+        let cropRect = CGRect(
+            x: atlasInset
+                + CGFloat(slot.column) * (sheetPixelSize.width + sheetSpacing),
+            y: atlasInset
+                + CGFloat(slot.row) * (sheetPixelSize.height + sheetSpacing),
+            width: framePixelWidth,
+            height: ceil(framePixelHeight * Self.portraitCropHeightRatio)
+        ).integral
+
+        guard let portraitCGImage = atlasCGImage.cropping(to: cropRect) else {
+            return nil
+        }
+
+        return UIImage(cgImage: portraitCGImage, scale: atlasImage.scale, orientation: atlasImage.imageOrientation)
+    }
+}
+
 struct AvatarBadgeView: View {
     let config: AvatarConfig
     var size: CGFloat = 56
@@ -250,16 +304,33 @@ struct AvatarBadgeView: View {
         config.selectedHat
     }
 
+    private var portraitImage: UIImage? {
+        AvatarPortraitImageCache.shared.image(for: hat)
+    }
+
     var body: some View {
         ZStack {
             Circle()
-                .fill(hat.color.gradient)
+                .fill(hat.color.opacity(portraitImage == nil ? 1 : 0.18).gradient)
 
-            Image(systemName: hat.systemImage)
-                .font(.system(size: size * 0.42, weight: .semibold))
-                .foregroundStyle(.white)
+            if let portraitImage {
+                Image(uiImage: portraitImage)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+            } else {
+                Image(systemName: hat.systemImage)
+                    .font(.system(size: size * 0.42, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
         }
         .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay {
+            Circle()
+                .stroke(.white.opacity(0.28), lineWidth: max(1, size * 0.025))
+        }
         .accessibilityLabel(Text("\(hat.name) avatar"))
     }
 }
@@ -286,7 +357,7 @@ struct AvatarPickerView: View {
                             .overlay {
                                 if selection.selectedHat == hat {
                                     Circle()
-                                        .stroke(.tint, lineWidth: 3)
+                                        .stroke(PicoColors.primary, lineWidth: 3)
                                 }
                             }
                             .overlay {
@@ -302,12 +373,12 @@ struct AvatarPickerView: View {
 
                         Text(hat.name)
                             .font(.caption)
-                            .foregroundStyle(isUnlocked ? .primary : .secondary)
+                            .foregroundStyle(isUnlocked ? PicoColors.textPrimary : PicoColors.textSecondary)
                             .lineLimit(1)
 
                         Text("\(hat.requiredScore) pts")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(PicoColors.textSecondary)
                             .opacity(isUnlocked ? 0 : 1)
                     }
                     .frame(maxWidth: .infinity, minHeight: 104)

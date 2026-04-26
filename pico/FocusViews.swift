@@ -212,7 +212,7 @@ private struct FocusLobbyView: View {
                             }
                         }
                     }
-                    .disabled(focusStore.isStarting || focusStore.isUpdatingConfig)
+                    .disabled(focusStore.isStarting || focusStore.isUpdatingConfig || !canStartLobby)
                 } else {
                     LabeledContent("Duration", value: "\(durationMinutes) min")
                 }
@@ -255,6 +255,13 @@ private struct FocusLobbyView: View {
         durationMinutes * 60 != session.durationSeconds
     }
 
+    private var canStartLobby: Bool {
+        guard session.mode == .multiplayer else { return true }
+        return focusStore.sessionDetail?.members.contains {
+            $0.role != .host && $0.status == .joined
+        } == true
+    }
+
     private var lobbySubtitle: String {
         if session.mode == .solo {
             return "Configure this solo session before starting. Once started, the duration is locked."
@@ -268,8 +275,12 @@ private struct FocusLobbyView: View {
     }
 
     private var availableFriends: [UserProfile] {
-        let memberIDs = Set(focusStore.sessionDetail?.members.map(\.userID) ?? [])
-        return friendStore.friends.filter { !memberIDs.contains($0.userID) }
+        let unavailableMemberIDs = Set(
+            focusStore.sessionDetail?.members
+                .filter { $0.status == .joined || $0.status == .invited }
+                .map(\.userID) ?? []
+        )
+        return friendStore.friends.filter { !unavailableMemberIDs.contains($0.userID) }
     }
 }
 
