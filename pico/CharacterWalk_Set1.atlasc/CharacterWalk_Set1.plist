@@ -7,7 +7,7 @@
             <key>generator</key>
             <string>TexturePacker 7.12.0 - https://www.codeandweb.com/texturepacker</string>
             <key>smartupdate</key>
-            <string>$TexturePacker:SmartUpdate:76cd4cfe6012daf9ba28d3f442e79ed8:f9e52a7f114af2b426556e3f8e89d37e:6cb5d69caadbc8339a4145f6fee76be5$</string>
+            <string>$TexturePacker:SmartUpdate:f9abf055b87e3927d0d9187424cdee7c:574950c07e6902b2a5a6430e87db41f9:6cb5d69caadbc8339a4145f6fee76be5$</string>
         </dict>
         <key>format</key>
         <string>APPL</string>
@@ -26,7 +26,7 @@
                         <key>isFullyOpaque</key>
                         <false/>
                         <key>name</key>
-                        <string>Character0_Walk.png</string>
+                        <string>CharacterWalk_0.png</string>
                         <key>spriteOffset</key>
                         <string>{0,0}</string>
                         <key>spriteSourceSize</key>

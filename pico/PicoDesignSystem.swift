@@ -63,6 +63,11 @@ enum PicoShadow {
     static let tabBarColor = Color.black.opacity(0.09)
     static let tabBarRadius: CGFloat = 28
     static let tabBarY: CGFloat = 10
+
+    static let raisedCardColor = Color.black.opacity(0.08)
+    static let raisedCardRadius: CGFloat = 22
+    static let raisedCardX: CGFloat = 0
+    static let raisedCardY: CGFloat = 10
 }
 
 enum PicoTabStyle {
@@ -71,6 +76,19 @@ enum PicoTabStyle {
     static let activePillBackground = PicoColors.softSurface
     static let barBackground = PicoColors.surface
     static let barBorder = PicoColors.border
+}
+
+enum PicoCreamCardStyle {
+    static let background = PicoColors.appBackground
+    static let border = PicoColors.border
+    static let controlBackground = PicoColors.softSurface
+    static let badgeBackground = PicoColors.appBackground
+    static let divider = PicoColors.border.opacity(0.8)
+    static let cornerRadius = PicoRadius.medium
+    static let sheetCornerRadius = PicoRadius.modal
+    static let borderWidth: CGFloat = 1
+    static let contentPadding = PicoSpacing.cardPadding
+    static let sheetCardPadding = PicoSpacing.standard
 }
 
 extension Color {
@@ -82,6 +100,44 @@ extension Color {
             blue: Double(hex & 0xff) / 255,
             opacity: alpha
         )
+    }
+}
+
+struct PicoCreamCardModifier: ViewModifier {
+    var cornerRadius: CGFloat = PicoCreamCardStyle.cornerRadius
+    var showsShadow: Bool = true
+    var padding: CGFloat? = nil
+    var background: Color = PicoCreamCardStyle.background
+    var border: Color = PicoCreamCardStyle.border
+
+    func body(content: Content) -> some View {
+        content
+            .padding(padding ?? 0)
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(background)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(border, lineWidth: PicoCreamCardStyle.borderWidth)
+            )
+            .shadow(
+                color: showsShadow ? PicoShadow.raisedCardColor : .clear,
+                radius: showsShadow ? PicoShadow.raisedCardRadius : 0,
+                x: PicoShadow.raisedCardX,
+                y: showsShadow ? PicoShadow.raisedCardY : 0
+            )
+    }
+}
+
+struct PicoCardDivider: View {
+    var horizontalPadding: CGFloat = PicoCreamCardStyle.contentPadding
+
+    var body: some View {
+        Rectangle()
+            .fill(PicoCreamCardStyle.divider)
+            .frame(height: PicoCreamCardStyle.borderWidth)
+            .padding(.horizontal, horizontalPadding)
     }
 }
 
@@ -113,6 +169,24 @@ extension View {
 
     func picoScreenBackground() -> some View {
         background(PicoColors.appBackground.ignoresSafeArea())
+    }
+
+    func picoCreamCard(
+        cornerRadius: CGFloat = PicoCreamCardStyle.cornerRadius,
+        showsShadow: Bool = true,
+        padding: CGFloat? = nil,
+        background: Color = PicoCreamCardStyle.background,
+        border: Color = PicoCreamCardStyle.border
+    ) -> some View {
+        modifier(
+            PicoCreamCardModifier(
+                cornerRadius: cornerRadius,
+                showsShadow: showsShadow,
+                padding: padding,
+                background: background,
+                border: border
+            )
+        )
     }
 }
 
