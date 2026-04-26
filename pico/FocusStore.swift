@@ -28,6 +28,7 @@ final class FocusStore: ObservableObject {
     @Published private(set) var activeInviteID: UUID?
     @Published private(set) var activeInvitedFriendIDs: Set<UUID> = []
     @Published private(set) var hasPendingResultSync = false
+    @Published private(set) var completionScoreReceipt: UserScore?
     @Published var notice: String?
 
     private let focusService: FocusService
@@ -296,17 +297,19 @@ final class FocusStore: ObservableObject {
         activeSession = nil
         sessionDetail = nil
         resultSession = pendingResult.optimisticSession(from: savedState.session)
+        completionScoreReceipt = nil
         hasPendingResultSync = true
         notice = nil
         isFinishing = true
         defer { isFinishing = false }
 
         do {
-            let savedSession = try await sync(pendingResult, session: savedState.session, authSession: authSession)
+            let syncResult = try await sync(pendingResult, session: savedState.session, authSession: authSession)
             let optimisticSession = pendingResult.optimisticSession(from: savedState.session)
-            resultSession = pendingResult.shouldUseSavedSession(savedSession, originalSession: savedState.session)
-                ? savedSession
+            resultSession = pendingResult.shouldUseSavedSession(syncResult.session, originalSession: savedState.session)
+                ? syncResult.session
                 : optimisticSession
+            completionScoreReceipt = syncResult.score
             hasPendingResultSync = false
             clearSavedState()
             subscribeToRealtime(for: authSession, sessionID: nil)
@@ -470,6 +473,7 @@ final class FocusStore: ObservableObject {
         activeSession = nil
         sessionDetail = nil
         resultSession = optimisticSession
+        completionScoreReceipt = nil
         hasPendingResultSync = true
         saveState(LocalFocusState(
             userID: authSession.user?.id ?? session.ownerID,
@@ -478,10 +482,11 @@ final class FocusStore: ObservableObject {
         ))
 
         do {
-            let savedSession = try await sync(pendingResult, session: session, authSession: authSession)
-            resultSession = pendingResult.shouldUseSavedSession(savedSession, originalSession: session)
-                ? savedSession
+            let syncResult = try await sync(pendingResult, session: session, authSession: authSession)
+            resultSession = pendingResult.shouldUseSavedSession(syncResult.session, originalSession: session)
+                ? syncResult.session
                 : optimisticSession
+            completionScoreReceipt = syncResult.score
             hasPendingResultSync = false
             clearSavedState()
             subscribeToRealtime(for: authSession, sessionID: nil)
@@ -497,12 +502,14 @@ final class FocusStore: ObservableObject {
         _ pendingResult: PendingFocusResult,
         session: FocusSession,
         authSession: AuthSession
-    ) async throws -> FocusSession {
+    ) async throws -> FocusSyncResult {
         switch pendingResult {
         case .complete:
-            try await focusService.completeSession(session.id, for: authSession)
+            let completion = try await focusService.completeSession(session.id, for: authSession)
+            return FocusSyncResult(session: completion.session, score: completion.score)
         case .interrupt:
-            try await focusService.interruptSession(session.id, for: authSession)
+            let session = try await focusService.interruptSession(session.id, for: authSession)
+            return FocusSyncResult(session: session, score: nil)
         }
     }
 
@@ -574,6 +581,7 @@ final class FocusStore: ObservableObject {
         sessionDetail = nil
         incomingInvites = []
         hasPendingResultSync = false
+        completionScoreReceipt = nil
         realtimeSubscription?.stop()
         realtimeSubscription = nil
         realtimeChannelID = nil
@@ -582,6 +590,11 @@ final class FocusStore: ObservableObject {
     private func displayMessage(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
+}
+
+private struct FocusSyncResult {
+    let session: FocusSession
+    let score: UserScore?
 }
 
 private struct LocalFocusState: Codable, Equatable {

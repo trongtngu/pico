@@ -43,7 +43,6 @@ private struct AuthFormView: View {
     @State private var confirmPassword = ""
     @State private var username = ""
     @State private var displayName = ""
-    @State private var avatarConfig = AvatarCatalog.defaultConfig
 
     private var normalizedUsername: String {
         username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -116,11 +115,6 @@ private struct AuthFormView: View {
                     Text("Username can use lowercase letters, numbers, and underscores.")
                 }
 
-                Section {
-                    AvatarPickerView(selection: $avatarConfig)
-                } header: {
-                    Text("Avatar")
-                }
             }
 
             if let notice = sessionStore.notice {
@@ -163,7 +157,7 @@ private struct AuthFormView: View {
                 password: password,
                 username: normalizedUsername,
                 displayName: normalizedDisplayName,
-                avatarConfig: avatarConfig
+                avatarConfig: AvatarCatalog.defaultConfig
             )
         }
     }

@@ -38,6 +38,11 @@ final class ScoreStore: ObservableObject {
         }
     }
 
+    func applyScore(_ score: UserScore) {
+        self.score = score
+        notice = nil
+    }
+
     func clear() {
         score = .zero
         notice = nil

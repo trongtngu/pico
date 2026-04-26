@@ -83,6 +83,25 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Equatable {
 
     var id: Int { rawValue }
 
+    var requiredScore: Int {
+        switch self {
+        case .none:
+            0
+        case .bambooHat:
+            10
+        case .beanie:
+            20
+        case .bow:
+            30
+        case .helmet:
+            40
+        }
+    }
+
+    func isUnlocked(with score: Int) -> Bool {
+        score >= requiredScore
+    }
+
     var name: String {
         switch self {
         case .none:
@@ -247,6 +266,7 @@ struct AvatarBadgeView: View {
 
 struct AvatarPickerView: View {
     @Binding var selection: AvatarConfig
+    var score: Int = 0
 
     private let columns = [
         GridItem(.adaptive(minimum: 72), spacing: 12)
@@ -255,7 +275,10 @@ struct AvatarPickerView: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 12) {
             ForEach(AvatarHat.allCases) { hat in
+                let isUnlocked = hat.isUnlocked(with: score)
+
                 Button {
+                    guard isUnlocked else { return }
                     selection = selection.withHat(hat)
                 } label: {
                     VStack(spacing: 8) {
@@ -266,17 +289,35 @@ struct AvatarPickerView: View {
                                         .stroke(.tint, lineWidth: 3)
                                 }
                             }
+                            .overlay {
+                                if !isUnlocked {
+                                    Circle()
+                                        .fill(.black.opacity(0.42))
+
+                                    Image(systemName: "lock.fill")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundStyle(.white)
+                                }
+                            }
 
                         Text(hat.name)
                             .font(.caption)
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(isUnlocked ? .primary : .secondary)
                             .lineLimit(1)
+
+                        Text("\(hat.requiredScore) pts")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .opacity(isUnlocked ? 0 : 1)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 86)
+                    .frame(maxWidth: .infinity, minHeight: 104)
                     .contentShape(Rectangle())
+                    .opacity(isUnlocked ? 1 : 0.72)
                 }
                 .buttonStyle(.plain)
+                .disabled(!isUnlocked)
                 .accessibilityAddTraits(selection.selectedHat == hat ? .isSelected : [])
+                .accessibilityLabel(Text(isUnlocked ? hat.name : "\(hat.name), locked until \(hat.requiredScore) points"))
             }
         }
         .padding(.vertical, 4)

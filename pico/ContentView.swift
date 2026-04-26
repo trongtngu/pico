@@ -55,8 +55,11 @@ struct AppShellView: View {
             guard focusStore.resultSession?.status == .completed else { return }
             Task {
                 await villageStore.loadResidents(for: sessionStore.session)
-                await scoreStore.loadScore(for: sessionStore.session)
             }
+        }
+        .onChange(of: focusStore.completionScoreReceipt) {
+            guard let score = focusStore.completionScoreReceipt else { return }
+            scoreStore.applyScore(score)
         }
         .onChange(of: scenePhase) {
             switch scenePhase {
@@ -165,6 +168,7 @@ private struct HomePage: View {
                 }
 
                 StreakCardView(
+                    score: scoreStore.score.score,
                     currentStreak: scoreStore.currentStreak,
                     isLoading: scoreStore.isLoadingScore,
                     notice: scoreStore.notice
@@ -185,12 +189,27 @@ private struct HomePage: View {
 }
 
 private struct StreakCardView: View {
+    let score: Int
     let currentStreak: Int
     let isLoading: Bool
     let notice: String?
 
     private var streakLabel: String {
         "\(currentStreak) day\(currentStreak == 1 ? "" : "s") streak"
+    }
+
+    private var nextHat: AvatarHat? {
+        AvatarHat.allCases.first { $0.requiredScore > score }
+    }
+
+    private var hatProgressValue: Double {
+        guard let nextHat else { return 10 }
+        return Double(max(0, 10 - (nextHat.requiredScore - score)))
+    }
+
+    private var hatProgressLabel: String {
+        guard let nextHat else { return "All hats unlocked" }
+        return "\(Int(hatProgressValue))/10 points to \(nextHat.name)"
     }
 
     var body: some View {
@@ -209,6 +228,15 @@ private struct StreakCardView: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text(hatProgressLabel)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                ProgressView(value: hatProgressValue, total: 10)
+                    .progressViewStyle(.linear)
+            }
+
             if let notice {
                 Text(notice)
                     .font(.footnote)
@@ -225,6 +253,7 @@ private struct StreakCardView: View {
 
 private struct ProfilePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var scoreStore: ScoreStore
     @State private var displayName = ""
     @State private var avatarConfig = AvatarCatalog.defaultConfig
 
@@ -242,6 +271,7 @@ private struct ProfilePage: View {
                         Label("Cycle Outfit", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .buttonStyle(.bordered)
+                    .disabled(availableHats.count < 2)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -270,7 +300,7 @@ private struct ProfilePage: View {
                 }
 
                 Section {
-                    AvatarPickerView(selection: $avatarConfig)
+                    AvatarPickerView(selection: $avatarConfig, score: scoreStore.score.score)
                 } header: {
                     Text("Outfit")
                 }
@@ -311,6 +341,7 @@ private struct ProfilePage: View {
         }
         .task {
             await sessionStore.loadProfileIfNeeded()
+            await scoreStore.loadScore(for: sessionStore.session)
             syncEditableProfile()
         }
         .onChange(of: sessionStore.profile) {
@@ -322,12 +353,17 @@ private struct ProfilePage: View {
         guard let profile = sessionStore.profile else { return false }
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasValidDisplayName = (1...40).contains(normalizedDisplayName.count)
+        let hasUnlockedHat = avatarConfig.selectedHat.isUnlocked(with: scoreStore.score.score)
         let hasChanges = normalizedDisplayName != profile.displayName || avatarConfig != profile.avatarConfig
-        return hasValidDisplayName && hasChanges
+        return hasValidDisplayName && hasUnlockedHat && hasChanges
+    }
+
+    private var availableHats: [AvatarHat] {
+        AvatarHat.allCases.filter { $0.isUnlocked(with: scoreStore.score.score) }
     }
 
     private var nextHat: AvatarHat {
-        let hats = AvatarHat.allCases
+        let hats = availableHats
         guard let currentIndex = hats.firstIndex(of: avatarConfig.selectedHat) else { return .none }
         return hats[(currentIndex + 1) % hats.count]
     }
