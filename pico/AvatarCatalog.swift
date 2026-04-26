@@ -200,7 +200,11 @@ struct AvatarIdleFrames {
     private let frames: [[SKTexture]]
 
     init(hat: AvatarHat) {
-        let atlasTexture = SKTexture(imageNamed: Self.atlasImageName)
+        self.init(hat: hat, atlasImageName: Self.atlasImageName)
+    }
+
+    fileprivate init(hat: AvatarHat, atlasImageName: String) {
+        let atlasTexture = SKTexture(imageNamed: atlasImageName)
         atlasTexture.filteringMode = .nearest
 
         frames = (0..<Self.rowCount).map { row in
@@ -240,6 +244,24 @@ struct AvatarIdleFrames {
             width: framePixelRect.width / atlasPixelSize.width,
             height: framePixelRect.height / atlasPixelSize.height
         )
+    }
+}
+
+struct AvatarHappyIdleFrames {
+    private static let atlasImageName = "Idle_Character_Happy_Set1.1"
+
+    private let frames: AvatarIdleFrames
+
+    init(hat: AvatarHat) {
+        frames = AvatarIdleFrames(hat: hat, atlasImageName: Self.atlasImageName)
+    }
+
+    func frames(forRow row: Int) -> [SKTexture] {
+        frames.frames(forRow: row)
+    }
+
+    func firstFrame(forRow row: Int = 0) -> SKTexture {
+        frames.firstFrame(forRow: row)
     }
 }
 

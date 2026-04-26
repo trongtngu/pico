@@ -43,6 +43,11 @@ final class VillageStore: ObservableObject {
             hasLoadedResidents = true
             loadState = .loaded
         } catch {
+            if error.isCancellation {
+                loadState = hasLoadedResidents ? .loaded : .idle
+                return
+            }
+
             notice = displayMessage(for: error)
             loadState = .failed
         }

@@ -165,8 +165,9 @@ final class FriendStore: ObservableObject {
     }
     #endif
 
-    private func displayMessage(for error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    private func displayMessage(for error: Error) -> String? {
+        guard !error.isCancellation else { return nil }
+        return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }
 

@@ -77,8 +77,10 @@ struct AppShellView: View {
             if sessionStore.session == nil {
                 villageStore.clear()
                 scoreStore.clear()
+                focusStore.updateKnownVillageResidentIDs(nil)
             } else {
                 await villageStore.loadResidents(for: sessionStore.session)
+                focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
                 await scoreStore.loadScore(for: sessionStore.session)
             }
         }
@@ -91,6 +93,9 @@ struct AppShellView: View {
         .onChange(of: focusStore.completionScoreReceipt) {
             guard let score = focusStore.completionScoreReceipt else { return }
             scoreStore.applyScore(score)
+        }
+        .onChange(of: villageStore.residents) {
+            focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
         }
         .onChange(of: scenePhase) {
             switch scenePhase {
@@ -117,6 +122,10 @@ struct AppShellView: View {
                 await focusStore.handleDeviceDidUnlock(for: sessionStore.session)
             }
         }
+    }
+
+    private var currentVillageResidentIDs: Set<UUID> {
+        Set(villageStore.residents.map(\.profile.userID))
     }
 
     private var usesDrawerNavigation: Bool {
@@ -280,42 +289,50 @@ private struct HomePage: View {
     @State private var startFocusStep = StartFocusSheetStep.modePicker
 
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(spacing: 0) {
-                    VillageHeroSection(
-                        residents: villageStore.residents,
-                        isLoading: villageStore.isLoadingResidents,
-                        notice: villageStore.notice,
-                        height: villageHeight(in: proxy.size)
-                    )
+        ZStack {
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        VillageHeroSection(
+                            residents: villageStore.residents,
+                            isLoading: villageStore.isLoadingResidents,
+                            notice: villageStore.notice,
+                            height: villageHeight(in: proxy.size)
+                        )
 
-                    ActiveSessionTimerSlot(session: focusStore.activeSession)
+                        ActiveSessionTimerSlot(session: focusStore.activeSession)
+                    }
+                    .padding(.horizontal, PicoSpacing.standard)
+                    .padding(.vertical, PicoSpacing.compact)
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .top)
                 }
-                .padding(.horizontal, PicoSpacing.standard)
-                .padding(.vertical, PicoSpacing.compact)
-                .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .top)
-            }
-            .refreshable {
-                await focusStore.refresh(for: sessionStore.session)
-                await friendStore.loadFriends(for: sessionStore.session)
-                await villageStore.loadResidents(for: sessionStore.session)
-                await scoreStore.loadScore(for: sessionStore.session)
-            }
-            .safeAreaInset(edge: .bottom) {
-                if focusStore.activeSession == nil {
-                    HomeFocusBottomBar(
-                        score: scoreStore.score.score,
-                        currentStreak: scoreStore.currentStreak,
-                        isLoadingScore: scoreStore.isLoadingScore,
-                        scoreNotice: scoreStore.notice,
-                        incomingInviteCount: focusStore.incomingInvites.count,
-                        action: presentStartFocusSheet
-                    )
+                .refreshable {
+                    await refreshVillagePage()
                 }
+                .safeAreaInset(edge: .bottom) {
+                    if focusStore.activeSession == nil {
+                        HomeFocusBottomBar(
+                            score: scoreStore.score.score,
+                            currentStreak: scoreStore.currentStreak,
+                            isLoadingScore: scoreStore.isLoadingScore,
+                            scoreNotice: scoreStore.notice,
+                            incomingInviteCount: focusStore.incomingInvites.count,
+                            action: presentStartFocusSheet
+                        )
+                    }
+                }
+                .allowsHitTesting(focusStore.resultSession == nil)
+            }
+
+            if let resultSession = focusStore.resultSession {
+                FocusCompleteOverlay(session: resultSession)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(1)
             }
         }
+        .animation(.snappy(duration: 0.22), value: focusStore.resultSession?.id)
         .picoScreenBackground()
+        .toolbar(focusStore.resultSession == nil ? .visible : .hidden, for: .navigationBar)
         .sheet(isPresented: $isStartFocusSheetPresented) {
             StartFocusSheet(
                 step: $startFocusStep,
@@ -331,7 +348,7 @@ private struct HomePage: View {
         }
         .onChange(of: focusStore.resultSession) {
             guard focusStore.resultSession != nil else { return }
-            isStartFocusSheetPresented = true
+            isStartFocusSheetPresented = false
         }
         .onChange(of: focusStore.activeSession) {
             guard focusStore.activeSession != nil else { return }
@@ -349,6 +366,13 @@ private struct HomePage: View {
         }
 
         isStartFocusSheetPresented = true
+    }
+
+    private func refreshVillagePage() async {
+        await villageStore.loadResidents(for: sessionStore.session)
+        await focusStore.refresh(for: sessionStore.session)
+        await friendStore.loadFriends(for: sessionStore.session)
+        await scoreStore.loadScore(for: sessionStore.session)
     }
 
     private func villageHeight(in size: CGSize) -> CGFloat {
@@ -603,12 +627,7 @@ private struct StartFocusSheet: View {
 
     @ViewBuilder
     private var sheetContent: some View {
-        if let resultSession = focusStore.resultSession {
-            FocusCompleteSheetContent(
-                isPresented: $isPresented,
-                session: resultSession
-            )
-        } else if let lobbySession = focusStore.lobbySession {
+        if let lobbySession = focusStore.lobbySession {
             if lobbySession.mode == .solo {
                 SoloFocusConfigSheetContent(session: lobbySession)
             } else if step == .multiplayerInviteMore {
@@ -1351,6 +1370,12 @@ private struct MultiplayerLobbySheetContent: View {
                 .scrollIndicators(.hidden)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 	                .layoutPriority(1)
+
+                Text("Bond XP and new villagers are earned with friends who stay for the focus session.")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
 	
 	                if focusStore.isCurrentUserHost(sessionStore.session) {
 	                    if let readinessText {
@@ -1459,6 +1484,7 @@ private struct ActiveSessionTimerSlot: View {
 private struct ActiveSessionTimerStrip: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
+    @EnvironmentObject private var villageStore: VillageStore
     @State private var now = Date()
 
     let session: FocusSession
@@ -1495,7 +1521,10 @@ private struct ActiveSessionTimerStrip: View {
             now = date
             guard session.remainingSeconds(at: date) == 0, !focusStore.isFinishing else { return }
             Task {
-                await focusStore.completeCurrentSession(for: sessionStore.session)
+                await focusStore.completeCurrentSession(
+                    for: sessionStore.session,
+                    preCompletionVillageResidentIDs: currentVillageResidentIDs
+                )
             }
         }
     }
@@ -1503,13 +1532,33 @@ private struct ActiveSessionTimerStrip: View {
     private var canLeaveMultiplayer: Bool {
         session.mode == .multiplayer && !focusStore.isCurrentUserHost(sessionStore.session)
     }
+
+    private var currentVillageResidentIDs: Set<UUID> {
+        Set(villageStore.residents.map(\.profile.userID))
+    }
 }
 
-private struct FocusCompleteSheetContent: View {
+private struct FocusCompleteOverlay: View {
+    let session: FocusSession
+
+    var body: some View {
+        ZStack {
+            PicoColors.appBackground
+                .ignoresSafeArea()
+
+            FocusCompleteCard(session: session)
+                .padding(.horizontal, PicoSpacing.standard)
+                .frame(maxWidth: 350)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct FocusCompleteCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var scoreStore: ScoreStore
     @EnvironmentObject private var focusStore: FocusStore
-    @Binding var isPresented: Bool
 
     let session: FocusSession
 
@@ -1517,35 +1566,16 @@ private struct FocusCompleteSheetContent: View {
         sessionStore.profile?.avatarConfig ?? AvatarCatalog.defaultConfig
     }
 
-    private var unlockedHatCount: Int {
-        AvatarHat.allCases.filter { $0 != .none && $0.isUnlocked(with: scoreStore.score.score) }.count
-    }
-
     var body: some View {
         VStack(spacing: PicoSpacing.standard) {
             Text(resultTitle)
-                .font(PicoTypography.cardTitle)
+                .font(PicoTypography.body.weight(.bold))
                 .foregroundStyle(PicoColors.textPrimary)
+                .multilineTextAlignment(.center)
 
-            AvatarBadgeView(config: avatarConfig, size: 112)
+            celebrationContent
 
-            HStack {
-                Label(scoreLabel, systemImage: "plus.circle.fill")
-                    .font(PicoTypography.body.weight(.bold))
-                    .foregroundStyle(PicoColors.textPrimary)
-
-                Spacer()
-
-                Label("\(scoreStore.currentStreak) day streak", systemImage: "flame.fill")
-                    .font(PicoTypography.body.weight(.bold))
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .labelStyle(.titleAndIcon)
-            }
-
-            Text("\(unlockedHatCount) hats unlocked")
-                .font(PicoTypography.caption)
-                .foregroundStyle(PicoColors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            rewardContent
 
             if focusStore.hasPendingResultSync {
                 Button {
@@ -1566,11 +1596,22 @@ private struct FocusCompleteSheetContent: View {
             } else {
                 Button("Done") {
                     focusStore.resetResult()
-                    isPresented = false
                 }
                 .buttonStyle(PicoPrimaryButtonStyle())
             }
         }
+        .padding(.horizontal, PicoSpacing.cardPadding)
+        .padding(.top, PicoSpacing.section)
+        .padding(.bottom, PicoSpacing.compact)
+        .background(
+            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                .fill(PicoColors.surface)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.08), radius: 18, x: 0, y: 10)
     }
 
     private var resultTitle: String {
@@ -1587,7 +1628,359 @@ private struct FocusCompleteSheetContent: View {
     }
 
     private var scoreLabel: String {
-        session.status == .completed ? "+1 point" : "No score"
+        session.status == .completed ? "1 point" : "No score"
+    }
+
+    private var streakLabel: String {
+        let streak = scoreStore.currentStreak
+        return "\(streak) day\(streak == 1 ? "" : "s") streak"
+    }
+
+    private var groupCompletionContext: FocusCompletionContext? {
+        guard session.status == .completed else { return nil }
+        return focusStore.completionContext
+    }
+
+    @ViewBuilder
+    private var celebrationContent: some View {
+        if let groupCompletionContext {
+            FocusCompleteGroupCelebrationView(
+                context: groupCompletionContext,
+                reduceMotion: reduceMotion
+            )
+        } else {
+            ZStack {
+                if session.status == .completed {
+                    FocusCompleteConfettiView(reduceMotion: reduceMotion)
+                        .frame(width: 260, height: 132)
+                        .allowsHitTesting(false)
+                }
+
+                UserAvatar(config: avatarConfig, maxSpriteSide: 116, usesHappyIdle: true)
+                    .frame(width: 132, height: 118)
+            }
+            .frame(height: 132)
+            .clipped()
+            .padding(.vertical, PicoSpacing.tiny)
+        }
+    }
+
+    @ViewBuilder
+    private var rewardContent: some View {
+        if let groupCompletionContext {
+            FocusCompleteRewardGrid(
+                metrics: groupMetrics(for: groupCompletionContext)
+            )
+        } else {
+            HStack(alignment: .center) {
+                FocusCompleteMetric(
+                    title: scoreLabel,
+                    systemImage: "plus",
+                    iconColor: PicoColors.primary
+                )
+
+                Spacer()
+
+                FocusCompleteMetric(
+                    title: streakLabel,
+                    systemImage: "flame.fill",
+                    iconColor: PicoColors.streakAccent
+                )
+            }
+            .padding(.vertical, PicoSpacing.tiny)
+        }
+    }
+
+    private func groupMetrics(for context: FocusCompletionContext) -> [FocusCompleteMetricModel] {
+        var metrics = [
+            FocusCompleteMetricModel(
+                title: scoreLabel,
+                systemImage: "plus",
+                iconColor: PicoColors.primary
+            ),
+            FocusCompleteMetricModel(
+                title: streakLabel,
+                systemImage: "flame.fill",
+                iconColor: PicoColors.streakAccent
+            ),
+            FocusCompleteMetricModel(
+                title: "\(context.bondXP) bond XP",
+                systemImage: "leaf.fill",
+                iconColor: PicoColors.primary
+            )
+        ]
+
+        if context.villageGrew {
+            metrics.append(
+                FocusCompleteMetricModel(
+                    title: "Village grew",
+                    systemImage: "leaf.circle.fill",
+                    iconColor: PicoColors.success
+                )
+            )
+        }
+
+        return metrics
+    }
+}
+
+private struct FocusCompleteGroupCelebrationView: View {
+    let context: FocusCompletionContext
+    let reduceMotion: Bool
+
+    private var usesScrollableMembers: Bool {
+        context.members.count > 3
+    }
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.compact) {
+            ZStack {
+                FocusCompleteConfettiView(reduceMotion: reduceMotion)
+                    .frame(width: 280, height: 132)
+                    .allowsHitTesting(false)
+
+                if usesScrollableMembers {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: PicoSpacing.compact) {
+                            ForEach(context.members) { member in
+                                FocusCompleteGroupMemberPill(member: member)
+                            }
+                        }
+                        .padding(.horizontal, PicoSpacing.compact)
+                    }
+                    .scrollIndicators(.hidden)
+                    .frame(height: 112)
+                } else {
+                    HStack(spacing: -10) {
+                        ForEach(context.members) { member in
+                            UserAvatar(
+                                config: member.profile.avatarConfig,
+                                maxSpriteSide: 92,
+                                usesHappyIdle: true
+                            )
+                            .frame(width: 86, height: 96)
+                            .accessibilityLabel(Text(member.profile.displayName))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 132)
+            .clipped()
+            .padding(.vertical, PicoSpacing.tiny)
+
+            Text(togetherText)
+                .font(PicoTypography.caption.weight(.bold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
+        }
+    }
+
+    private var togetherText: String {
+        let peerNames = context.peerMembers.map(\.profile.displayName)
+
+        switch peerNames.count {
+        case 0:
+            return ""
+        case 1:
+            return "Together with \(peerNames[0])"
+        case 2:
+            return "Together with \(peerNames[0]) and \(peerNames[1])"
+        default:
+            return "Together with \(peerNames.count) others"
+        }
+    }
+}
+
+private struct FocusCompleteGroupMemberPill: View {
+    let member: FocusSessionMember
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.tiny) {
+            UserAvatar(
+                config: member.profile.avatarConfig,
+                maxSpriteSide: 74,
+                usesHappyIdle: true
+            )
+            .frame(width: 70, height: 76)
+
+            Text(member.profile.displayName)
+                .font(PicoTypography.caption.weight(.semibold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(width: 72)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct FocusCompleteMetricModel: Identifiable {
+    let id = UUID()
+    let title: String
+    let systemImage: String
+    let iconColor: Color
+}
+
+private struct FocusCompleteRewardGrid: View {
+    let metrics: [FocusCompleteMetricModel]
+
+    private let columns = [
+        GridItem(.flexible(), spacing: PicoSpacing.standard),
+        GridItem(.flexible(), spacing: PicoSpacing.standard)
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: PicoSpacing.standard) {
+            ForEach(metrics) { metric in
+                FocusCompleteMetric(
+                    title: metric.title,
+                    systemImage: metric.systemImage,
+                    iconColor: metric.iconColor
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, PicoSpacing.tiny)
+    }
+}
+
+private struct FocusCompleteConfettiView: View {
+    let reduceMotion: Bool
+    @State private var startDate = Date()
+
+    private let burstDuration: TimeInterval = 1.9
+    private let cycleDuration: TimeInterval = 3.2
+    private let particles = FocusCompleteConfettiParticle.particles
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                let elapsed = reduceMotion ? 0 : timeline.date.timeIntervalSince(startDate)
+                let cycleElapsed = reduceMotion ? 0 : elapsed.truncatingRemainder(dividingBy: cycleDuration)
+
+                for particle in particles {
+                    let progress = reduceMotion ? 0.34 : particle.progress(at: cycleElapsed)
+                    guard progress > 0 || reduceMotion else { continue }
+
+                    let easedProgress = 1 - pow(1 - progress, 2)
+                    let x = size.width * particle.unitX + particle.drift * CGFloat(easedProgress)
+                    let y = size.height * particle.startY + particle.fall * CGFloat(easedProgress)
+                    let opacity = reduceMotion ? 0.72 : particle.opacity(at: progress)
+                    guard opacity > 0 else { continue }
+
+                    context.drawLayer { layer in
+                        layer.translateBy(x: x, y: y)
+                        layer.rotate(by: .radians(particle.rotation(at: progress)))
+                        layer.fill(
+                            particle.path,
+                            with: .color(particle.color.opacity(opacity))
+                        )
+                    }
+                }
+            }
+        }
+        .onAppear {
+            startDate = Date()
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct FocusCompleteConfettiParticle {
+    enum Shape {
+        case circle
+        case roundedRect
+    }
+
+    let unitX: CGFloat
+    let startY: CGFloat
+    let drift: CGFloat
+    let fall: CGFloat
+    let delay: TimeInterval
+    let duration: TimeInterval
+    let size: CGSize
+    let shape: Shape
+    let color: Color
+    let spin: Double
+
+    var path: Path {
+        let rect = CGRect(
+            x: -size.width / 2,
+            y: -size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+
+        switch shape {
+        case .circle:
+            return Path(ellipseIn: rect)
+        case .roundedRect:
+            return Path(roundedRect: rect, cornerRadius: min(size.width, size.height) * 0.28)
+        }
+    }
+
+    func progress(at elapsed: TimeInterval) -> Double {
+        guard elapsed >= delay else { return 0 }
+        return min(1, max(0, (elapsed - delay) / duration))
+    }
+
+    func opacity(at progress: Double) -> Double {
+        min(1, max(0, 1 - pow(progress, 2.4)))
+    }
+
+    func rotation(at progress: Double) -> Double {
+        spin * progress
+    }
+
+    static let particles: [FocusCompleteConfettiParticle] = [
+        .init(unitX: 0.16, startY: 0.18, drift: -8, fall: 58, delay: 0.00, duration: 1.55, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.warning, spin: 2.4),
+        .init(unitX: 0.24, startY: 0.08, drift: 14, fall: 72, delay: 0.03, duration: 1.68, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.streakAccent, spin: -2.1),
+        .init(unitX: 0.35, startY: 0.12, drift: -12, fall: 66, delay: 0.08, duration: 1.52, size: CGSize(width: 5, height: 5), shape: .circle, color: PicoColors.primary, spin: 1.7),
+        .init(unitX: 0.63, startY: 0.10, drift: 10, fall: 74, delay: 0.02, duration: 1.62, size: CGSize(width: 4, height: 8), shape: .roundedRect, color: PicoColors.error, spin: 2.9),
+        .init(unitX: 0.74, startY: 0.16, drift: -11, fall: 56, delay: 0.11, duration: 1.46, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.warning, spin: -2.7),
+        .init(unitX: 0.86, startY: 0.20, drift: 9, fall: 62, delay: 0.05, duration: 1.58, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.primary, spin: 2.2),
+        .init(unitX: 0.20, startY: 0.42, drift: 18, fall: 42, delay: 0.18, duration: 1.38, size: CGSize(width: 4, height: 4), shape: .circle, color: PicoColors.secondaryAccent, spin: -1.5),
+        .init(unitX: 0.30, startY: 0.36, drift: -13, fall: 48, delay: 0.13, duration: 1.44, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.primary, spin: 2.1),
+        .init(unitX: 0.44, startY: 0.30, drift: 15, fall: 54, delay: 0.21, duration: 1.36, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.warning, spin: -2.8),
+        .init(unitX: 0.57, startY: 0.32, drift: -15, fall: 52, delay: 0.16, duration: 1.42, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.error, spin: 2.5),
+        .init(unitX: 0.70, startY: 0.40, drift: 12, fall: 46, delay: 0.12, duration: 1.50, size: CGSize(width: 5, height: 5), shape: .circle, color: PicoColors.streakAccent, spin: -1.9),
+        .init(unitX: 0.82, startY: 0.38, drift: -18, fall: 44, delay: 0.22, duration: 1.32, size: CGSize(width: 4, height: 8), shape: .roundedRect, color: PicoColors.secondaryAccent, spin: 2.4),
+        .init(unitX: 0.12, startY: 0.60, drift: 13, fall: 28, delay: 0.28, duration: 1.18, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.primary, spin: -2.3),
+        .init(unitX: 0.26, startY: 0.62, drift: -16, fall: 34, delay: 0.24, duration: 1.24, size: CGSize(width: 5, height: 5), shape: .circle, color: PicoColors.warning, spin: 1.8),
+        .init(unitX: 0.38, startY: 0.58, drift: 10, fall: 38, delay: 0.30, duration: 1.20, size: CGSize(width: 4, height: 8), shape: .roundedRect, color: PicoColors.error, spin: 2.6),
+        .init(unitX: 0.62, startY: 0.58, drift: -10, fall: 38, delay: 0.27, duration: 1.22, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.primary, spin: -2.5),
+        .init(unitX: 0.75, startY: 0.64, drift: 16, fall: 32, delay: 0.25, duration: 1.26, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.streakAccent, spin: 2.1),
+        .init(unitX: 0.88, startY: 0.60, drift: -12, fall: 30, delay: 0.31, duration: 1.14, size: CGSize(width: 5, height: 5), shape: .circle, color: PicoColors.warning, spin: -1.6),
+        .init(unitX: 0.18, startY: 0.76, drift: -9, fall: 20, delay: 0.38, duration: 1.02, size: CGSize(width: 4, height: 8), shape: .roundedRect, color: PicoColors.secondaryAccent, spin: 2.0),
+        .init(unitX: 0.34, startY: 0.74, drift: 11, fall: 24, delay: 0.34, duration: 1.10, size: CGSize(width: 5, height: 5), shape: .circle, color: PicoColors.primary, spin: -1.4),
+        .init(unitX: 0.51, startY: 0.78, drift: -7, fall: 22, delay: 0.40, duration: 1.00, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.error, spin: 2.5),
+        .init(unitX: 0.66, startY: 0.76, drift: 9, fall: 24, delay: 0.36, duration: 1.06, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.warning, spin: -2.4),
+        .init(unitX: 0.80, startY: 0.78, drift: -10, fall: 20, delay: 0.42, duration: 0.96, size: CGSize(width: 4, height: 4), shape: .circle, color: PicoColors.primary, spin: 1.5),
+        .init(unitX: 0.47, startY: 0.08, drift: 7, fall: 78, delay: 0.06, duration: 1.72, size: CGSize(width: 4, height: 8), shape: .roundedRect, color: PicoColors.secondaryAccent, spin: -3.0)
+    ]
+}
+
+private struct FocusCompleteMetric: View {
+    let title: String
+    let systemImage: String
+    let iconColor: Color
+
+    var body: some View {
+        Label {
+            Text(title)
+                .font(PicoTypography.caption.weight(.bold))
+                .foregroundStyle(PicoColors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.84)
+        } icon: {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(iconColor)
+        }
+        .labelStyle(.titleAndIcon)
     }
 }
 
@@ -1692,7 +2085,7 @@ private struct ProfilePage: View {
         Form {
             Section {
                 VStack(spacing: 12) {
-                    ProfileIdleCharacterView(hat: avatarConfig.selectedHat)
+                    UserAvatar(config: avatarConfig)
                         .frame(maxWidth: .infinity)
                         .frame(height: 180)
 
@@ -1806,34 +2199,42 @@ private struct ProfilePage: View {
     }
 }
 
-private struct ProfileIdleCharacterView: View {
-    let hat: AvatarHat
+private struct UserAvatar: View {
+    let config: AvatarConfig
+    var maxSpriteSide: CGFloat = 150
+    var usesHappyIdle = false
 
     var body: some View {
         GeometryReader { proxy in
             SpriteView(
-                scene: ProfileIdleCharacterScene(
+                scene: UserAvatarScene(
                     size: proxy.size,
-                    hat: hat
+                    hat: config.selectedHat,
+                    maxSpriteSide: maxSpriteSide,
+                    usesHappyIdle: usesHappyIdle
                 ),
                 options: [.allowsTransparency]
             )
-            .id(hat.id)
+            .id("\(config.selectedHat.id)-\(usesHappyIdle)")
             .frame(width: proxy.size.width, height: proxy.size.height)
             .background(Color.clear)
         }
-        .accessibilityLabel(Text("Animated profile character"))
+        .accessibilityLabel(Text("User character"))
     }
 }
 
-private final class ProfileIdleCharacterScene: SKScene {
+private final class UserAvatarScene: SKScene {
     private static let idleActionKey = "idle"
 
     private let hat: AvatarHat
+    private let maxSpriteSide: CGFloat
+    private let usesHappyIdle: Bool
     private var renderedSize: CGSize = .zero
 
-    init(size: CGSize, hat: AvatarHat) {
+    init(size: CGSize, hat: AvatarHat, maxSpriteSide: CGFloat, usesHappyIdle: Bool) {
         self.hat = hat
+        self.maxSpriteSide = maxSpriteSide
+        self.usesHappyIdle = usesHappyIdle
         super.init(size: size)
         scaleMode = .resizeFill
         backgroundColor = .clear
@@ -1861,11 +2262,16 @@ private final class ProfileIdleCharacterScene: SKScene {
         renderedSize = size
         removeAllChildren()
 
-        let frames = AvatarIdleFrames(hat: hat).frames(forRow: 0)
+        let frames: [SKTexture]
+        if usesHappyIdle {
+            frames = AvatarHappyIdleFrames(hat: hat).frames(forRow: 0)
+        } else {
+            frames = AvatarIdleFrames(hat: hat).frames(forRow: 0)
+        }
         guard let firstFrame = frames.first else { return }
 
         let sprite = SKSpriteNode(texture: firstFrame)
-        let spriteSide = min(size.width * 0.72, size.height * 0.90, 150)
+        let spriteSide = min(size.width * 0.72, size.height * 0.90, maxSpriteSide)
         sprite.size = CGSize(width: spriteSide, height: spriteSide)
         sprite.position = CGPoint(x: size.width / 2, y: size.height / 2)
         sprite.run(

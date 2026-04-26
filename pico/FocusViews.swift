@@ -221,7 +221,7 @@ private struct FocusLobbyView: View {
             }
 
             if session.mode == .multiplayer {
-                MultiplayerMembersSection(detail: focusStore.sessionDetail)
+                MultiplayerMembersSection(detail: focusStore.sessionDetail, showsRewardNotice: true)
                 InviteFriendsSection(
                     availableFriends: availableFriends,
                     canInvite: canManageLobby
@@ -330,6 +330,7 @@ private struct InviteFriendsSection: View {
 
 private struct MultiplayerMembersSection: View {
     let detail: FocusSessionDetail?
+    let showsRewardNotice: Bool
 
     var body: some View {
         Section {
@@ -346,6 +347,10 @@ private struct MultiplayerMembersSection: View {
             }
         } header: {
             Text("Members")
+        } footer: {
+            if showsRewardNotice {
+                Text("Bond XP and new villagers are earned with friends who stay for the focus session.")
+            }
         }
     }
 
@@ -394,6 +399,7 @@ private struct FocusMemberRow: View {
 private struct ActiveFocusSessionView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
+    @EnvironmentObject private var villageStore: VillageStore
     @State private var now = Date()
 
     let session: FocusSession
@@ -432,14 +438,17 @@ private struct ActiveFocusSessionView: View {
             }
 
             if session.mode == .multiplayer {
-                MultiplayerMembersSection(detail: focusStore.sessionDetail)
+                MultiplayerMembersSection(detail: focusStore.sessionDetail, showsRewardNotice: false)
             }
         }
         .onReceive(timer) { date in
             now = date
             guard session.remainingSeconds(at: date) == 0, !focusStore.isFinishing else { return }
             Task {
-                await focusStore.completeCurrentSession(for: sessionStore.session)
+                await focusStore.completeCurrentSession(
+                    for: sessionStore.session,
+                    preCompletionVillageResidentIDs: currentVillageResidentIDs
+                )
             }
         }
     }
@@ -447,6 +456,10 @@ private struct ActiveFocusSessionView: View {
     private var progress: Double {
         let elapsed = Double(session.elapsedSeconds(at: now))
         return min(1, max(0, elapsed / Double(session.durationSeconds)))
+    }
+
+    private var currentVillageResidentIDs: Set<UUID> {
+        Set(villageStore.residents.map(\.profile.userID))
     }
 }
 
@@ -592,6 +605,7 @@ struct FocusViews_Previews: PreviewProvider {
                 .environmentObject(AuthSessionStore.preview(session: AuthSession.preview))
                 .environmentObject(FriendStore.preview)
                 .environmentObject(FocusStore.preview)
+                .environmentObject(VillageStore.preview)
         }
     }
 }

@@ -8,6 +8,25 @@
 import Foundation
 import Combine
 
+struct FocusCompletionContext: Equatable {
+    let members: [FocusSessionMember]
+    let currentUserID: UUID
+    let preCompletionVillageResidentIDs: Set<UUID>?
+
+    var peerMembers: [FocusSessionMember] {
+        members.filter { $0.userID != currentUserID }
+    }
+
+    var bondXP: Int {
+        peerMembers.count
+    }
+
+    var villageGrew: Bool {
+        guard let preCompletionVillageResidentIDs else { return false }
+        return peerMembers.contains { !preCompletionVillageResidentIDs.contains($0.userID) }
+    }
+}
+
 @MainActor
 final class FocusStore: ObservableObject {
     static let defaultDurationSeconds = 30 * 60
@@ -29,6 +48,7 @@ final class FocusStore: ObservableObject {
     @Published private(set) var activeInvitedFriendIDs: Set<UUID> = []
     @Published private(set) var hasPendingResultSync = false
     @Published private(set) var completionScoreReceipt: UserScore?
+    @Published private(set) var completionContext: FocusCompletionContext?
     @Published var notice: String?
 
     private let focusService: FocusService
@@ -40,6 +60,7 @@ final class FocusStore: ObservableObject {
     private var realtimeChannelID: String?
     private var isRealtimeRefreshing = false
     private var isDeviceLocking = false
+    private var knownVillageResidentIDs: Set<UUID>?
 
     init(focusService: FocusService? = nil, userDefaults: UserDefaults = .standard) {
         self.focusService = focusService ?? FocusService()
@@ -56,6 +77,7 @@ final class FocusStore: ObservableObject {
     func restoreSavedState(for authSession: AuthSession?) async {
         guard let authSession, let userID = authSession.user?.id else {
             clearInMemoryState()
+            knownVillageResidentIDs = nil
             return
         }
 
@@ -280,6 +302,7 @@ final class FocusStore: ObservableObject {
             self.sessionDetail = nil
             self.resultSession = nil
             self.completionScoreReceipt = nil
+            self.completionContext = nil
             self.hasPendingResultSync = false
             clearSavedState()
             subscribeToRealtime(for: authSession, sessionID: nil)
@@ -291,14 +314,27 @@ final class FocusStore: ObservableObject {
         }
     }
 
-    func completeCurrentSession(for authSession: AuthSession?) async {
+    func completeCurrentSession(
+        for authSession: AuthSession?,
+        preCompletionVillageResidentIDs: Set<UUID>? = nil
+    ) async {
         guard let authSession, let session = activeSession ?? liveSavedSession() else { return }
-        await finish(session, pendingResult: .complete, authSession: authSession)
+        await finish(
+            session,
+            pendingResult: .complete,
+            authSession: authSession,
+            preCompletionVillageResidentIDs: preCompletionVillageResidentIDs ?? knownVillageResidentIDs
+        )
     }
 
     func interruptCurrentSession(for authSession: AuthSession?) async {
         guard let authSession, let session = activeSession ?? liveSavedSession() else { return }
-        await finish(session, pendingResult: .interrupt, authSession: authSession)
+        await finish(
+            session,
+            pendingResult: .interrupt,
+            authSession: authSession,
+            preCompletionVillageResidentIDs: nil
+        )
     }
 
     func leaveCurrentMultiplayerSession(for authSession: AuthSession?) async {
@@ -323,6 +359,7 @@ final class FocusStore: ObservableObject {
             sessionDetail = nil
             resultSession = nil
             completionScoreReceipt = nil
+            completionContext = nil
             hasPendingResultSync = false
             clearSavedState()
             subscribeToRealtime(for: authSession, sessionID: nil)
@@ -360,6 +397,7 @@ final class FocusStore: ObservableObject {
             subscribeToRealtime(for: authSession, sessionID: nil)
             await loadIncomingInvites(for: authSession)
         } catch {
+            guard !error.isCancellation else { return }
             hasPendingResultSync = true
             notice = "Result saved locally. It will retry when the app opens again."
         }
@@ -410,7 +448,12 @@ final class FocusStore: ObservableObject {
         guard !hasPendingResultSync else { return }
         resultSession = nil
         sessionDetail = nil
+        completionContext = nil
         notice = nil
+    }
+
+    func updateKnownVillageResidentIDs(_ residentIDs: Set<UUID>?) {
+        knownVillageResidentIDs = residentIDs
     }
 
     func isCurrentUserHost(_ authSession: AuthSession?) -> Bool {
@@ -444,11 +487,13 @@ final class FocusStore: ObservableObject {
             lobbySession = session
             activeSession = nil
             resultSession = nil
+            completionContext = nil
             notice = nil
         case .live:
             lobbySession = nil
             activeSession = session
             resultSession = nil
+            completionContext = nil
             notice = nil
         case .completed, .interrupted, .cancelled:
             applyFinishedSession(session)
@@ -461,12 +506,14 @@ final class FocusStore: ObservableObject {
             lobbySession = session
             activeSession = nil
             resultSession = nil
+            completionContext = nil
             notice = nil
             saveState(LocalFocusState(userID: authSession.user?.id ?? session.ownerID, session: session, pendingResult: nil))
         case .live:
             lobbySession = nil
             activeSession = session
             resultSession = nil
+            completionContext = nil
             notice = nil
             saveState(LocalFocusState(userID: authSession.user?.id ?? session.ownerID, session: session, pendingResult: nil))
         case .completed, .interrupted, .cancelled:
@@ -506,19 +553,27 @@ final class FocusStore: ObservableObject {
     private func finish(
         _ session: FocusSession,
         pendingResult: PendingFocusResult,
-        authSession: AuthSession
+        authSession: AuthSession,
+        preCompletionVillageResidentIDs: Set<UUID>?
     ) async {
         guard !isFinishing else { return }
 
         isFinishing = true
         notice = nil
 
+        let capturedCompletionContext = makeCompletionContext(
+            for: session,
+            pendingResult: pendingResult,
+            authSession: authSession,
+            preCompletionVillageResidentIDs: preCompletionVillageResidentIDs
+        )
         let optimisticSession = pendingResult.optimisticSession(from: session)
         lobbySession = nil
         activeSession = nil
         sessionDetail = nil
         resultSession = optimisticSession
         completionScoreReceipt = nil
+        completionContext = capturedCompletionContext
         hasPendingResultSync = true
         saveState(LocalFocusState(
             userID: authSession.user?.id ?? session.ownerID,
@@ -537,10 +592,41 @@ final class FocusStore: ObservableObject {
             subscribeToRealtime(for: authSession, sessionID: nil)
             await loadIncomingInvites(for: authSession)
         } catch {
-            notice = "Result saved locally. It will retry when the app opens again."
+            if !error.isCancellation {
+                notice = "Result saved locally. It will retry when the app opens again."
+            }
         }
 
         isFinishing = false
+    }
+
+    private func makeCompletionContext(
+        for session: FocusSession,
+        pendingResult: PendingFocusResult,
+        authSession: AuthSession,
+        preCompletionVillageResidentIDs: Set<UUID>?
+    ) -> FocusCompletionContext? {
+        guard
+            pendingResult == .complete,
+            session.mode == .multiplayer,
+            let currentUserID = authSession.user?.id,
+            let detail = sessionDetail,
+            detail.session.id == session.id
+        else {
+            return nil
+        }
+
+        let joinedMembers = detail.members.filter { $0.status == .joined }
+        guard joinedMembers.contains(where: { $0.userID == currentUserID }),
+              joinedMembers.contains(where: { $0.userID != currentUserID }) else {
+            return nil
+        }
+
+        return FocusCompletionContext(
+            members: joinedMembers,
+            currentUserID: currentUserID,
+            preCompletionVillageResidentIDs: preCompletionVillageResidentIDs
+        )
     }
 
     private func sync(
@@ -627,13 +713,15 @@ final class FocusStore: ObservableObject {
         incomingInvites = []
         hasPendingResultSync = false
         completionScoreReceipt = nil
+        completionContext = nil
         realtimeSubscription?.stop()
         realtimeSubscription = nil
         realtimeChannelID = nil
     }
 
-    private func displayMessage(for error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    private func displayMessage(for error: Error) -> String? {
+        guard !error.isCancellation else { return nil }
+        return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }
 
