@@ -100,133 +100,78 @@ struct FriendsPage: View {
 private struct AddFriendPage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var friendStore: FriendStore
-    @State private var username = ""
+    @State private var searchText = ""
+    @State private var requestedProfileIDs: Set<UUID> = []
 
-    private var normalizedUsername: String {
-        username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    private var isUsernameValid: Bool {
-        normalizedUsername.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) != nil
-    }
-
-    private var canSearch: Bool {
-        isUsernameValid && !friendStore.isSearching
+    private var normalizedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: PicoSpacing.standard) {
-                VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-                    HStack(spacing: PicoSpacing.compact) {
-                        Image(systemName: "at")
-                            .foregroundStyle(PicoColors.textMuted)
-
-                        TextField("Username", text: $username)
-                            .textInputAutocapitalization(.never)
-                            .textContentType(.username)
-                            .autocorrectionDisabled()
-                            .submitLabel(.search)
-                            .foregroundStyle(PicoColors.textPrimary)
-                            .onSubmit {
-                                Task {
-                                    await search()
-                                }
-                            }
-                            .onChange(of: username) {
-                                let normalized = normalizedUsername
-                                if username != normalized {
-                                    username = normalized
-                                }
-                                friendStore.resetSearch()
-                            }
-                    }
-                    .padding(.horizontal, PicoSpacing.iconTextGap)
-                    .frame(height: 46)
-                    .background(PicoCreamCardStyle.controlBackground)
-                    .clipShape(Capsule(style: .continuous))
-
-                    Text("Enter the exact username.")
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textSecondary)
-
-                    Button {
-                        Task {
-                            await search()
-                        }
-                    } label: {
-                        HStack {
-                            Text("Search")
-                            if friendStore.isSearching {
-                                ProgressView()
-                                    .tint(PicoColors.textOnPrimary)
-                            }
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            UserProfileSearchList(
+                searchText: $searchText,
+                placeholder: "Search users",
+                isLoading: friendStore.isSearching,
+                loadingText: "Searching users",
+                emptyText: emptySearchText,
+                profiles: friendStore.profileSearchResults
+            ) { profile in
+                AddFriendSearchResultRow(
+                    profile: profile,
+                    isAlreadyFriend: isAlreadyFriend(profile),
+                    isRequestSent: requestedProfileIDs.contains(profile.userID),
+                    isSendingRequest: friendStore.activeRequestUserID == profile.userID,
+                    isSendDisabled: friendStore.isSendingRequest
+                ) {
+                    Task {
+                        if await friendStore.sendRequest(to: profile, session: sessionStore.session) {
+                            requestedProfileIDs.insert(profile.userID)
                         }
                     }
-                    .buttonStyle(PicoPrimaryButtonStyle())
-                    .disabled(!canSearch)
-                    .opacity(canSearch ? 1 : 0.62)
-                }
-                .picoCreamCard(padding: PicoCreamCardStyle.contentPadding)
-
-                if let profile = friendStore.searchResult {
-                    VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-                        Text("Result")
-                            .font(PicoTypography.caption.weight(.bold))
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .textCase(.uppercase)
-
-                        FriendProfileRowView(profile: profile)
-
-                        if isAlreadyFriend(profile) {
-                            Text("You are already friends.")
-                                .font(PicoTypography.caption)
-                                .foregroundStyle(PicoColors.textSecondary)
-                        } else {
-                            Button {
-                                Task {
-                                    await friendStore.sendRequest(to: profile, session: sessionStore.session)
-                                }
-                            } label: {
-                                HStack {
-                                    Text("Send friend request")
-                                    if friendStore.isSendingRequest {
-                                        ProgressView()
-                                            .tint(PicoColors.textOnPrimary)
-                                    }
-                                }
-                            }
-                            .buttonStyle(PicoPrimaryButtonStyle())
-                            .disabled(friendStore.isSendingRequest)
-                            .opacity(friendStore.isSendingRequest ? 0.62 : 1)
-                        }
-                    }
-                    .picoCreamCard(padding: PicoCreamCardStyle.contentPadding)
-                }
-
-                if let searchNotice = friendStore.searchNotice {
-                    FriendNoticeCard(text: searchNotice)
                 }
             }
-            .padding(PicoSpacing.standard)
+
+            if let searchNotice = friendStore.searchNotice {
+                FriendNoticeCard(text: searchNotice)
+            }
+
+            Spacer(minLength: 0)
         }
+        .padding(PicoSpacing.standard)
         .background(PicoColors.appBackground.ignoresSafeArea())
         .navigationTitle("Add Friend")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
+        .task {
+            await friendStore.loadFriends(for: sessionStore.session)
+        }
+        .task(id: normalizedSearchText) {
+            await searchProfiles(matching: normalizedSearchText)
+        }
         .onDisappear {
             friendStore.resetSearch()
         }
     }
 
-    private func search() async {
-        guard isUsernameValid else {
-            friendStore.searchNotice = "Username must be 3 to 24 lowercase letters, numbers, or underscores."
+    private var emptySearchText: String? {
+        normalizedSearchText.count < 2 ? nil : "No users match that search."
+    }
+
+    private func searchProfiles(matching query: String) async {
+        guard query.count >= 2 else {
+            friendStore.resetSearch()
             return
         }
 
-        await friendStore.search(
-            username: normalizedUsername,
+        do {
+            try await Task.sleep(nanoseconds: 300_000_000)
+        } catch {
+            return
+        }
+
+        await friendStore.searchProfiles(
+            matching: query,
             currentProfile: sessionStore.profile,
             session: sessionStore.session
         )
@@ -318,25 +263,6 @@ private struct FriendProfilePage: View {
                 .frame(maxWidth: .infinity)
                 .picoCreamCard(padding: PicoSpacing.section)
 
-                HStack(spacing: PicoSpacing.iconTextGap) {
-                    Image(systemName: "person.2.fill")
-                        .font(.system(size: 20, weight: .semibold, design: .rounded))
-                        .foregroundStyle(PicoColors.primary)
-
-                    VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
-                        Text("Friend")
-                            .font(PicoTypography.body.weight(.semibold))
-                            .foregroundStyle(PicoColors.textPrimary)
-
-                        Text("You can invite @\(profile.username) to focus sessions.")
-                            .font(PicoTypography.caption)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .lineLimit(2)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .picoCreamCard(padding: PicoCreamCardStyle.contentPadding)
             }
             .padding(PicoSpacing.standard)
         }
@@ -369,6 +295,132 @@ private struct FriendProfileRowView: View {
             Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
+    }
+}
+
+struct UserProfileSearchList<RowContent: View>: View {
+    @Binding var searchText: String
+    let placeholder: String
+    let isLoading: Bool
+    let loadingText: String
+    let emptyText: String?
+    let profiles: [UserProfile]
+    let rowContent: (UserProfile) -> RowContent
+
+    init(
+        searchText: Binding<String>,
+        placeholder: String,
+        isLoading: Bool,
+        loadingText: String,
+        emptyText: String?,
+        profiles: [UserProfile],
+        @ViewBuilder rowContent: @escaping (UserProfile) -> RowContent
+    ) {
+        _searchText = searchText
+        self.placeholder = placeholder
+        self.isLoading = isLoading
+        self.loadingText = loadingText
+        self.emptyText = emptyText
+        self.profiles = profiles
+        self.rowContent = rowContent
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            HStack(spacing: PicoSpacing.compact) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(PicoColors.textMuted)
+
+                TextField(placeholder, text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .foregroundStyle(PicoColors.textPrimary)
+            }
+            .padding(.horizontal, PicoSpacing.iconTextGap)
+            .frame(height: 42)
+            .background(PicoCreamCardStyle.controlBackground)
+            .clipShape(Capsule(style: .continuous))
+
+            ScrollView {
+                LazyVStack(spacing: PicoSpacing.compact) {
+                    if isLoading && profiles.isEmpty {
+                        ProgressView(loadingText)
+                            .tint(PicoColors.primary)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
+                    } else if profiles.isEmpty, let emptyText {
+                        Text(emptyText)
+                            .font(PicoTypography.caption)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
+                    } else {
+                        ForEach(profiles, id: \.userID) { profile in
+                            rowContent(profile)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+}
+
+private struct AddFriendSearchResultRow: View {
+    let profile: UserProfile
+    let isAlreadyFriend: Bool
+    let isRequestSent: Bool
+    let isSendingRequest: Bool
+    let isSendDisabled: Bool
+    let sendRequest: () -> Void
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.iconTextGap) {
+            FriendProfileRowView(profile: profile)
+
+            trailingAction
+        }
+        .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
+    }
+
+    @ViewBuilder
+    private var trailingAction: some View {
+        if isAlreadyFriend {
+            statusLabel("Friends", systemImage: "checkmark.circle.fill")
+        } else if isRequestSent {
+            statusLabel("Sent", systemImage: "paperplane.fill")
+        } else {
+            Button(action: sendRequest) {
+                HStack(spacing: PicoSpacing.tiny) {
+                    Text("Add")
+                    if isSendingRequest {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(PicoColors.textOnPrimary)
+                    }
+                }
+                .font(PicoTypography.caption.weight(.bold))
+                .foregroundStyle(PicoColors.textOnPrimary)
+                .padding(.horizontal, PicoSpacing.iconTextGap)
+                .frame(height: 34)
+                .background(PicoColors.primary)
+                .clipShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(isSendDisabled)
+            .opacity(isSendDisabled && !isSendingRequest ? 0.62 : 1)
+        }
+    }
+
+    private func statusLabel(_ text: String, systemImage: String) -> some View {
+        HStack(spacing: PicoSpacing.tiny) {
+            Image(systemName: systemImage)
+            Text(text)
+        }
+        .font(PicoTypography.caption.weight(.bold))
+        .foregroundStyle(PicoColors.textSecondary)
+        .lineLimit(1)
     }
 }
 

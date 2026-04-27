@@ -1504,46 +1504,21 @@ private struct MultiplayerInviteFriendsSheetContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-            HStack(spacing: PicoSpacing.compact) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(PicoColors.textMuted)
-
-                TextField("Search friends", text: $searchText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            }
-            .padding(.horizontal, PicoSpacing.iconTextGap)
-            .frame(height: 42)
-            .background(PicoCreamCardStyle.controlBackground)
-            .clipShape(Capsule(style: .continuous))
-
-            ScrollView {
-                LazyVStack(spacing: PicoSpacing.compact) {
-                    if friendStore.isLoadingFriends && availableFriends.isEmpty {
-                        ProgressView("Loading friends")
-                            .tint(PicoColors.primary)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
-                    } else if availableFriends.isEmpty {
-                        Text(searchText.isEmpty ? "No friends available to invite." : "No friends match that search.")
-                            .font(PicoTypography.caption)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
-                    } else {
-                        ForEach(availableFriends, id: \.userID) { friend in
-                            FriendInviteSelectionRow(
-                                friend: friend,
-                                isSelected: selectedFriendIDs.contains(friend.userID)
-                            ) {
-                                toggle(friend)
-                            }
-                        }
-                    }
+            UserProfileSearchList(
+                searchText: $searchText,
+                placeholder: "Search friends",
+                isLoading: friendStore.isLoadingFriends,
+                loadingText: "Loading friends",
+                emptyText: searchText.isEmpty ? "No friends available to invite." : "No friends match that search.",
+                profiles: availableFriends
+            ) { friend in
+                FriendInviteSelectionRow(
+                    friend: friend,
+                    isSelected: selectedFriendIDs.contains(friend.userID)
+                ) {
+                    toggle(friend)
                 }
             }
-            .frame(maxHeight: .infinity)
 
             Button {
                 Task {

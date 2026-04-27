@@ -57,6 +57,34 @@ final class FriendService {
         return response.first?.userProfile
     }
 
+    func searchProfiles(matching query: String, for authSession: AuthSession) async throws -> [UserProfile] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let allowedCharacters = CharacterSet.alphanumerics
+            .union(.whitespaces)
+            .union(CharacterSet(charactersIn: "_-"))
+        let searchTerm = normalizedQuery.unicodeScalars.reduce(into: "") { result, scalar in
+            guard allowedCharacters.contains(scalar) else { return }
+            result.unicodeScalars.append(scalar)
+        }.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !searchTerm.isEmpty else { return [] }
+
+        let pattern = "*\(searchTerm)*"
+        let response: [FriendUserProfileResponse] = try await send(
+            path: "/rest/v1/user_profiles",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "select", value: "user_id,username,display_name,avatar_config"),
+                URLQueryItem(name: "or", value: "(username.ilike.\(pattern),display_name.ilike.\(pattern))"),
+                URLQueryItem(name: "order", value: "display_name.asc,username.asc"),
+                URLQueryItem(name: "limit", value: "20")
+            ],
+            accessToken: authSession.accessToken,
+            bodyData: nil
+        )
+
+        return response.map(\.userProfile)
+    }
+
     func sendFriendRequest(to username: String, for authSession: AuthSession) async throws {
         let _: FriendRPCResponse = try await send(
             path: "/rest/v1/rpc/send_friend_request",
@@ -129,6 +157,7 @@ final class FriendService {
         try await send(
             path: path,
             method: method,
+            queryItems: nil,
             accessToken: accessToken,
             bodyData: nil
         )
@@ -137,6 +166,7 @@ final class FriendService {
     private func send<ResponseBody: Decodable>(
         path: String,
         method: String,
+        queryItems: [URLQueryItem]? = nil,
         accessToken: String,
         bodyData: Data?
     ) async throws -> ResponseBody {
@@ -144,8 +174,21 @@ final class FriendService {
             throw FriendServiceError.missingConfiguration
         }
 
-        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
+        guard let baseRequestURL = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
             throw FriendServiceError.missingConfiguration
+        }
+
+        var url = baseRequestURL
+        if let queryItems {
+            guard var components = URLComponents(url: baseRequestURL, resolvingAgainstBaseURL: false) else {
+                throw FriendServiceError.missingConfiguration
+            }
+            components.queryItems = queryItems
+
+            guard let componentURL = components.url else {
+                throw FriendServiceError.missingConfiguration
+            }
+            url = componentURL
         }
 
         var request = URLRequest(url: url)

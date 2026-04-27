@@ -13,15 +13,18 @@ final class FriendStore: ObservableObject {
     @Published private(set) var friends: [UserProfile] = []
     @Published private(set) var incomingRequests: [FriendRequest] = []
     @Published private(set) var searchResult: UserProfile?
+    @Published private(set) var profileSearchResults: [UserProfile] = []
     @Published private(set) var isLoadingFriends = false
     @Published private(set) var isLoadingIncomingRequests = false
     @Published private(set) var isSearching = false
     @Published private(set) var isSendingRequest = false
     @Published private(set) var activeRequestID: UUID?
+    @Published private(set) var activeRequestUserID: UUID?
     @Published var notice: String?
     @Published var searchNotice: String?
 
     private let friendService: FriendService
+    private var activeProfileSearchID: UUID?
 
     init(friendService: FriendService? = nil) {
         self.friendService = friendService ?? FriendService()
@@ -60,6 +63,7 @@ final class FriendStore: ObservableObject {
         let normalizedUsername = username.normalizedFriendUsername
         guard !normalizedUsername.isEmpty else {
             searchResult = nil
+            profileSearchResults = []
             searchNotice = nil
             return
         }
@@ -86,19 +90,59 @@ final class FriendStore: ObservableObject {
         }
     }
 
-    func sendRequest(to profile: UserProfile, session: AuthSession?) async {
-        guard let session, !isSendingRequest else { return }
+    func searchProfiles(matching query: String, currentProfile: UserProfile?, session: AuthSession?) async {
+        guard let session else { return }
+        let normalizedQuery = query.normalizedFriendUsername
+        guard normalizedQuery.count >= 2 else {
+            resetSearch()
+            return
+        }
+
+        let searchID = UUID()
+        activeProfileSearchID = searchID
+        isSearching = true
+        searchResult = nil
+        searchNotice = nil
+        defer {
+            if activeProfileSearchID == searchID {
+                activeProfileSearchID = nil
+                isSearching = false
+            }
+        }
+
+        do {
+            let profiles = try await friendService.searchProfiles(matching: normalizedQuery, for: session)
+            guard activeProfileSearchID == searchID else { return }
+
+            profileSearchResults = profiles.filter { $0.userID != currentProfile?.userID }
+        } catch {
+            guard activeProfileSearchID == searchID else { return }
+            profileSearchResults = []
+            searchNotice = displayMessage(for: error)
+        }
+    }
+
+    @discardableResult
+    func sendRequest(to profile: UserProfile, session: AuthSession?) async -> Bool {
+        guard let session, !isSendingRequest else { return false }
 
         isSendingRequest = true
+        activeRequestUserID = profile.userID
         searchNotice = nil
-        defer { isSendingRequest = false }
+        defer {
+            isSendingRequest = false
+            activeRequestUserID = nil
+        }
 
         do {
             try await friendService.sendFriendRequest(to: profile.username, for: session)
             searchResult = nil
+            profileSearchResults.removeAll { $0.userID == profile.userID }
             searchNotice = "Friend request sent to @\(profile.username)."
+            return true
         } catch {
             searchNotice = displayMessage(for: error)
+            return false
         }
     }
 
@@ -134,8 +178,11 @@ final class FriendStore: ObservableObject {
     }
 
     func resetSearch() {
+        activeProfileSearchID = nil
         searchResult = nil
+        profileSearchResults = []
         searchNotice = nil
+        isSearching = false
     }
 
     #if DEBUG
