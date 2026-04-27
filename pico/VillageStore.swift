@@ -60,6 +60,14 @@ final class VillageStore: ObservableObject {
         hasLoadedResidents = false
     }
 
+    func scarf(for userID: UUID) -> AvatarScarf? {
+        guard let resident = residents.first(where: { $0.profile.userID == userID }) else {
+            return nil
+        }
+
+        return AvatarScarf(bondLevel: resident.bondLevel)
+    }
+
     #if DEBUG
     static var preview: VillageStore {
         let store = VillageStore()

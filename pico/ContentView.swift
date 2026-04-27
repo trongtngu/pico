@@ -601,7 +601,11 @@ private struct BondRowView: View {
 
     var body: some View {
         HStack(spacing: PicoSpacing.standard) {
-            AvatarBadgeView(config: resident.profile.avatarConfig, size: 56)
+            AvatarBadgeView(
+                config: resident.profile.avatarConfig,
+                size: 56,
+                scarf: AvatarScarf(bondLevel: resident.bondLevel)
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(resident.profile.displayName)
@@ -1124,6 +1128,7 @@ private struct IncomingFocusInvitesSheetContent: View {
 private struct IncomingFocusInviteSheetRow: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
+    @EnvironmentObject private var villageStore: VillageStore
 
     let invite: FocusSessionInvite
     private let avatarColumnSize: CGFloat = 42
@@ -1138,7 +1143,11 @@ private struct IncomingFocusInviteSheetRow: View {
     private var inviteCardContent: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
             HStack(alignment: .center, spacing: PicoSpacing.iconTextGap) {
-                AvatarBadgeView(config: invite.host.avatarConfig, size: avatarSize)
+                AvatarBadgeView(
+                    config: invite.host.avatarConfig,
+                    size: avatarSize,
+                    scarf: villageStore.scarf(for: invite.host.userID)
+                )
                     .frame(width: avatarColumnSize, height: avatarColumnSize, alignment: .center)
 
                 VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
@@ -1600,6 +1609,8 @@ private struct MultiplayerInviteFriendsSheetContent: View {
 }
 
 private struct FriendInviteSelectionRow: View {
+    @EnvironmentObject private var villageStore: VillageStore
+
     let friend: UserProfile
     let isSelected: Bool
     let action: () -> Void
@@ -1607,7 +1618,11 @@ private struct FriendInviteSelectionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: PicoSpacing.iconTextGap) {
-                AvatarBadgeView(config: friend.avatarConfig, size: 40)
+                AvatarBadgeView(
+                    config: friend.avatarConfig,
+                    size: 40,
+                    scarf: villageStore.scarf(for: friend.userID)
+                )
 
                 VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                     Text(friend.displayName)
@@ -2094,6 +2109,8 @@ private enum FocusCompleteAvatarLayout {
 }
 
 private struct FocusCompleteGroupCelebrationView: View {
+    @EnvironmentObject private var villageStore: VillageStore
+
     let context: FocusCompletionContext
     let reduceMotion: Bool
     let showsConfetti: Bool
@@ -2128,7 +2145,8 @@ private struct FocusCompleteGroupCelebrationView: View {
                             UserAvatar(
                                 config: member.profile.avatarConfig,
                                 maxSpriteSide: FocusCompleteAvatarLayout.spriteSide,
-                                usesHappyIdle: true
+                                usesHappyIdle: true,
+                                scarf: villageStore.scarf(for: member.userID)
                             )
                             .frame(
                                 width: FocusCompleteAvatarLayout.avatarWidth,
@@ -2151,6 +2169,8 @@ private struct FocusCompleteGroupCelebrationView: View {
 }
 
 private struct FocusCompleteGroupMemberPill: View {
+    @EnvironmentObject private var villageStore: VillageStore
+
     let member: FocusSessionMember
 
     var body: some View {
@@ -2158,7 +2178,8 @@ private struct FocusCompleteGroupMemberPill: View {
             UserAvatar(
                 config: member.profile.avatarConfig,
                 maxSpriteSide: FocusCompleteAvatarLayout.spriteSide,
-                usesHappyIdle: true
+                usesHappyIdle: true,
+                scarf: villageStore.scarf(for: member.userID)
             )
             .frame(
                 width: FocusCompleteAvatarLayout.avatarWidth,
@@ -2345,11 +2366,17 @@ private struct FocusCompleteMetric: View {
 }
 
 private struct FocusMemberStatusRow: View {
+    @EnvironmentObject private var villageStore: VillageStore
+
     let member: FocusSessionMember
 
     var body: some View {
         HStack(spacing: PicoSpacing.iconTextGap) {
-            AvatarBadgeView(config: member.profile.avatarConfig, size: 40)
+            AvatarBadgeView(
+                config: member.profile.avatarConfig,
+                size: 40,
+                scarf: villageStore.scarf(for: member.userID)
+            )
 
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                 HStack(spacing: PicoSpacing.tiny) {
@@ -2599,6 +2626,7 @@ private struct UserAvatar: View {
     let config: AvatarConfig
     var maxSpriteSide: CGFloat = 150
     var usesHappyIdle = false
+    var scarf: AvatarScarf? = nil
 
     var body: some View {
         GeometryReader { proxy in
@@ -2607,11 +2635,12 @@ private struct UserAvatar: View {
                     size: proxy.size,
                     hat: config.selectedHat,
                     maxSpriteSide: maxSpriteSide,
-                    usesHappyIdle: usesHappyIdle
+                    usesHappyIdle: usesHappyIdle,
+                    scarf: scarf
                 ),
                 options: [.allowsTransparency]
             )
-            .id("\(config.selectedHat.id)-\(usesHappyIdle)")
+            .id("\(config.selectedHat.id)-\(usesHappyIdle)-\(scarf?.rawValue ?? 0)")
             .frame(width: proxy.size.width, height: proxy.size.height)
             .background(Color.clear)
         }
@@ -2625,12 +2654,14 @@ private final class UserAvatarScene: SKScene {
     private let hat: AvatarHat
     private let maxSpriteSide: CGFloat
     private let usesHappyIdle: Bool
+    private let scarf: AvatarScarf?
     private var renderedSize: CGSize = .zero
 
-    init(size: CGSize, hat: AvatarHat, maxSpriteSide: CGFloat, usesHappyIdle: Bool) {
+    init(size: CGSize, hat: AvatarHat, maxSpriteSide: CGFloat, usesHappyIdle: Bool, scarf: AvatarScarf?) {
         self.hat = hat
         self.maxSpriteSide = maxSpriteSide
         self.usesHappyIdle = usesHappyIdle
+        self.scarf = scarf
         super.init(size: size)
         scaleMode = .resizeFill
         backgroundColor = .clear
@@ -2660,9 +2691,9 @@ private final class UserAvatarScene: SKScene {
 
         let frames: [SKTexture]
         if usesHappyIdle {
-            frames = AvatarHappyIdleFrames(hat: hat).frames(forRow: 0)
+            frames = AvatarHappyIdleFrames(hat: hat, scarf: scarf).frames(forRow: 0)
         } else {
-            frames = AvatarIdleFrames(hat: hat).frames(forRow: 0)
+            frames = AvatarIdleFrames(hat: hat, scarf: scarf).frames(forRow: 0)
         }
         guard let firstFrame = frames.first else { return }
 

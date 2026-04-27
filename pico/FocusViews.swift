@@ -12,6 +12,7 @@ struct FocusPage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var focusStore: FocusStore
+    @EnvironmentObject private var villageStore: VillageStore
 
     var body: some View {
         List {
@@ -36,10 +37,12 @@ struct FocusPage: View {
         .task(id: sessionStore.session?.user?.id) {
             await focusStore.restoreSavedState(for: sessionStore.session)
             await friendStore.loadFriends(for: sessionStore.session)
+            await villageStore.loadResidents(for: sessionStore.session)
         }
         .refreshable {
             await focusStore.refresh(for: sessionStore.session)
             await friendStore.loadFriends(for: sessionStore.session)
+            await villageStore.loadResidents(for: sessionStore.session)
         }
     }
 }
@@ -89,6 +92,7 @@ private struct CreateFocusLobbyView: View {
 private struct IncomingFocusInvitesView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
+    @EnvironmentObject private var villageStore: VillageStore
 
     var body: some View {
         if !focusStore.incomingInvites.isEmpty || focusStore.isLoadingInvites {
@@ -104,7 +108,11 @@ private struct IncomingFocusInvitesView: View {
                 ForEach(focusStore.incomingInvites) { invite in
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 12) {
-                            AvatarBadgeView(config: invite.host.avatarConfig, size: 42)
+                            AvatarBadgeView(
+                                config: invite.host.avatarConfig,
+                                size: 42,
+                                scarf: villageStore.scarf(for: invite.host.userID)
+                            )
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(invite.host.displayName)
@@ -287,6 +295,7 @@ private struct FocusLobbyView: View {
 private struct InviteFriendsSection: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
+    @EnvironmentObject private var villageStore: VillageStore
 
     let availableFriends: [UserProfile]
     let canInvite: Bool
@@ -305,7 +314,11 @@ private struct InviteFriendsSection: View {
                             }
                         } label: {
                             HStack(spacing: 12) {
-                                AvatarBadgeView(config: friend.avatarConfig, size: 36)
+                                AvatarBadgeView(
+                                    config: friend.avatarConfig,
+                                    size: 36,
+                                    scarf: villageStore.scarf(for: friend.userID)
+                                )
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(friend.displayName)
                                     Text("@\(friend.username)")
@@ -365,11 +378,17 @@ private struct MultiplayerMembersSection: View {
 }
 
 private struct FocusMemberRow: View {
+    @EnvironmentObject private var villageStore: VillageStore
+
     let member: FocusSessionMember
 
     var body: some View {
         HStack(spacing: 12) {
-            AvatarBadgeView(config: member.profile.avatarConfig, size: 38)
+            AvatarBadgeView(
+                config: member.profile.avatarConfig,
+                size: 38,
+                scarf: villageStore.scarf(for: member.userID)
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {

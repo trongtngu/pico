@@ -10,6 +10,7 @@ import SwiftUI
 struct FriendsPage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var friendStore: FriendStore
+    @EnvironmentObject private var villageStore: VillageStore
 
     var body: some View {
         ScrollView {
@@ -94,6 +95,7 @@ struct FriendsPage: View {
     private func loadFriendsData() async {
         await friendStore.loadFriends(for: sessionStore.session)
         await friendStore.loadIncomingRequests(for: sessionStore.session)
+        await villageStore.loadResidents(for: sessionStore.session)
     }
 }
 
@@ -239,13 +241,19 @@ private struct IncomingRequestsPage: View {
 }
 
 private struct FriendProfilePage: View {
+    @EnvironmentObject private var villageStore: VillageStore
+
     let profile: UserProfile
 
     var body: some View {
         ScrollView {
             VStack(spacing: PicoSpacing.standard) {
                 VStack(spacing: PicoSpacing.standard) {
-                    AvatarBadgeView(config: profile.avatarConfig, size: 112)
+                    AvatarBadgeView(
+                        config: profile.avatarConfig,
+                        size: 112,
+                        scarf: villageStore.scarf(for: profile.userID)
+                    )
 
                     VStack(spacing: PicoSpacing.tiny) {
                         Text(profile.displayName)
@@ -274,11 +282,17 @@ private struct FriendProfilePage: View {
 }
 
 private struct FriendProfileRowView: View {
+    @EnvironmentObject private var villageStore: VillageStore
+
     let profile: UserProfile
 
     var body: some View {
         HStack(spacing: PicoSpacing.iconTextGap) {
-            AvatarBadgeView(config: profile.avatarConfig, size: 48)
+            AvatarBadgeView(
+                config: profile.avatarConfig,
+                size: 48,
+                scarf: villageStore.scarf(for: profile.userID)
+            )
 
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                 Text(profile.displayName)
@@ -627,6 +641,7 @@ struct FriendViews_Previews: PreviewProvider {
             FriendsPage()
                 .environmentObject(AuthSessionStore.preview(session: AuthSession.preview))
                 .environmentObject(FriendStore.preview)
+                .environmentObject(VillageStore.preview)
         }
     }
 }

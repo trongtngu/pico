@@ -69,7 +69,7 @@ struct VillageView: View {
 
     private var sceneID: String {
         gridResidents
-            .map { "\($0.id.uuidString)-\($0.profile.avatarConfig.selectedHat.rawValue)" }
+            .map { "\($0.id.uuidString)-\($0.profile.avatarConfig.selectedHat.rawValue)-\($0.bondLevel)" }
             .joined(separator: "|")
     }
 
@@ -202,8 +202,9 @@ private final class VillageScene: SKScene {
             let tile = startingTile(for: index)
             let startPosition = layout.characterPosition(for: tile)
             let selectedHat = resident.profile.avatarConfig.selectedHat
-            let idleFrames = AvatarIdleFrames(hat: selectedHat)
-            let walkFrames = VillagerWalkFrames(hat: selectedHat)
+            let scarf = AvatarScarf(bondLevel: resident.bondLevel)
+            let idleFrames = AvatarIdleFrames(hat: selectedHat, scarf: scarf)
+            let walkFrames = VillagerWalkFrames(hat: selectedHat, scarf: scarf)
             let villager = VillagerNode(
                 currentPosition: startPosition,
                 walkFrames: walkFrames,
@@ -420,8 +421,8 @@ private struct VillagerWalkFrames {
 
     private let frames: [[SKTexture]]
 
-    init(hat: AvatarHat) {
-        let atlasTexture = SKTexture(imageNamed: Self.atlasImageName)
+    init(hat: AvatarHat, scarf: AvatarScarf? = nil) {
+        let atlasTexture = SKTexture(imageNamed: scarf?.walkRegularAtlasImageName ?? Self.atlasImageName)
         atlasTexture.filteringMode = .linear
 
         frames = (0..<Self.rowCount).map { row in

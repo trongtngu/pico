@@ -179,6 +179,48 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Equatable {
     }
 }
 
+enum AvatarScarf: Int, Equatable {
+    case green = 2
+    case blue = 3
+    case orange = 4
+
+    init?(bondLevel: Int) {
+        switch bondLevel {
+        case 2:
+            self = .green
+        case 3:
+            self = .blue
+        case 4...:
+            self = .orange
+        default:
+            return nil
+        }
+    }
+
+    var idleRegularAtlasImageName: String {
+        "Char__Idle_Scarf_\(assetName)_Regular.1"
+    }
+
+    var idleHappyAtlasImageName: String {
+        "Char__Idle_Scarf_\(assetName)_Happy.1"
+    }
+
+    var walkRegularAtlasImageName: String {
+        "Char__Walk_Scarf_\(assetName)_Regular.1"
+    }
+
+    private var assetName: String {
+        switch self {
+        case .green:
+            "Green"
+        case .blue:
+            "Blue"
+        case .orange:
+            "Orange"
+        }
+    }
+}
+
 struct AvatarIdleAtlasSlot {
     let row: Int
     let column: Int
@@ -199,8 +241,8 @@ struct AvatarIdleFrames {
 
     private let frames: [[SKTexture]]
 
-    init(hat: AvatarHat) {
-        self.init(hat: hat, atlasImageName: Self.atlasImageName)
+    init(hat: AvatarHat, scarf: AvatarScarf? = nil) {
+        self.init(hat: hat, atlasImageName: scarf?.idleRegularAtlasImageName ?? Self.atlasImageName)
     }
 
     fileprivate init(hat: AvatarHat, atlasImageName: String) {
@@ -252,8 +294,8 @@ struct AvatarHappyIdleFrames {
 
     private let frames: AvatarIdleFrames
 
-    init(hat: AvatarHat) {
-        frames = AvatarIdleFrames(hat: hat, atlasImageName: Self.atlasImageName)
+    init(hat: AvatarHat, scarf: AvatarScarf? = nil) {
+        frames = AvatarIdleFrames(hat: hat, atlasImageName: scarf?.idleHappyAtlasImageName ?? Self.atlasImageName)
     }
 
     func frames(forRow row: Int) -> [SKTexture] {
@@ -278,13 +320,13 @@ private final class AvatarPortraitImageCache {
 
     private let cache = NSCache<NSNumber, UIImage>()
 
-    func image(for hat: AvatarHat) -> UIImage? {
-        let key = NSNumber(value: hat.rawValue)
+    func image(for hat: AvatarHat, scarf: AvatarScarf?) -> UIImage? {
+        let key = NSNumber(value: hat.rawValue * 10 + (scarf?.rawValue ?? 0))
         if let cachedImage = cache.object(forKey: key) {
             return cachedImage
         }
 
-        guard let image = Self.makeImage(for: hat) else {
+        guard let image = Self.makeImage(for: hat, scarf: scarf) else {
             return nil
         }
 
@@ -292,7 +334,8 @@ private final class AvatarPortraitImageCache {
         return image
     }
 
-    private static func makeImage(for hat: AvatarHat) -> UIImage? {
+    private static func makeImage(for hat: AvatarHat, scarf: AvatarScarf?) -> UIImage? {
+        let atlasImageName = scarf?.idleRegularAtlasImageName ?? Self.atlasImageName
         guard let atlasImage = UIImage(named: atlasImageName),
               let atlasCGImage = atlasImage.cgImage else {
             return nil
@@ -321,13 +364,14 @@ private final class AvatarPortraitImageCache {
 struct AvatarBadgeView: View {
     let config: AvatarConfig
     var size: CGFloat = 56
+    var scarf: AvatarScarf? = nil
 
     private var hat: AvatarHat {
         config.selectedHat
     }
 
     private var portraitImage: UIImage? {
-        AvatarPortraitImageCache.shared.image(for: hat)
+        AvatarPortraitImageCache.shared.image(for: hat, scarf: scarf)
     }
 
     var body: some View {
