@@ -31,6 +31,9 @@ private struct AuthRootView: View {
             AuthFormView(mode: $mode)
                 .navigationTitle(mode.title)
                 .toolbarTitleDisplayMode(.large)
+                .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
+                .background(PicoColors.appBackground.ignoresSafeArea())
+                .tint(PicoColors.primary)
         }
     }
 }
@@ -79,6 +82,7 @@ private struct AuthFormView: View {
                 }
                 .pickerStyle(.segmented)
             }
+            .listRowBackground(PicoColors.softSurface)
 
             Section {
                 TextField("Email", text: $email)
@@ -95,6 +99,7 @@ private struct AuthFormView: View {
                         .textContentType(.newPassword)
                 }
             }
+            .listRowBackground(PicoColors.softSurface)
 
             if mode == .signup {
                 Section {
@@ -113,15 +118,18 @@ private struct AuthFormView: View {
                     Text("Profile")
                 } footer: {
                     Text("Username can use lowercase letters, numbers, and underscores.")
+                        .foregroundStyle(PicoColors.textSecondary)
                 }
+                .listRowBackground(PicoColors.softSurface)
 
             }
 
             if let notice = sessionStore.notice {
                 Section {
                     Text(notice)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PicoColors.textSecondary)
                 }
+                .listRowBackground(PicoColors.softSurface)
             }
 
             Section {
@@ -139,8 +147,13 @@ private struct AuthFormView: View {
                     }
                 }
                 .disabled(!canSubmit || sessionStore.isLoading)
+                .foregroundStyle(PicoColors.primary)
             }
+            .listRowBackground(PicoColors.softSurface)
         }
+        .scrollContentBackground(.hidden)
+        .background(PicoColors.appBackground.ignoresSafeArea())
+        .tint(PicoColors.primary)
         .onChange(of: mode) {
             sessionStore.notice = nil
             confirmPassword = ""

@@ -9,6 +9,12 @@ import SwiftUI
 
 @main
 struct picoApp: App {
+    init() {
+        #if canImport(UIKit)
+        PicoSegmentedControlAppearance.configure()
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

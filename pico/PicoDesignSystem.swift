@@ -6,6 +6,9 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 enum PicoColors {
     static let primary = Color(hex: 0x7BAE3B)
@@ -90,6 +93,30 @@ enum PicoCreamCardStyle {
     static let contentPadding = PicoSpacing.cardPadding
     static let sheetCardPadding = PicoSpacing.standard
 }
+
+#if canImport(UIKit)
+enum PicoUIColors {
+    static let appBackground = UIColor(red: 0xFA / 255, green: 0xF8 / 255, blue: 0xF2 / 255, alpha: 1)
+    static let softSurface = UIColor(red: 0xF1 / 255, green: 0xED / 255, blue: 0xE4 / 255, alpha: 1)
+    static let textPrimary = UIColor(red: 0x17 / 255, green: 0x17 / 255, blue: 0x17 / 255, alpha: 1)
+}
+
+enum PicoSegmentedControlAppearance {
+    static func configure() {
+        let segmentedControl = UISegmentedControl.appearance()
+        segmentedControl.backgroundColor = PicoUIColors.softSurface
+        segmentedControl.selectedSegmentTintColor = PicoUIColors.appBackground
+        segmentedControl.setTitleTextAttributes(
+            [.foregroundColor: PicoUIColors.textPrimary],
+            for: .normal
+        )
+        segmentedControl.setTitleTextAttributes(
+            [.foregroundColor: PicoUIColors.textPrimary],
+            for: .selected
+        )
+    }
+}
+#endif
 
 extension Color {
     init(hex: UInt, alpha: Double = 1) {

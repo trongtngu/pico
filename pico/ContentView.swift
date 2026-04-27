@@ -184,7 +184,7 @@ private struct PicoSideNavigation: View {
     var body: some View {
         VStack(alignment: isPersistent ? .center : .leading, spacing: PicoSpacing.compact) {
             if !isPersistent {
-                Text("Pico")
+                Text("pico")
                     .font(PicoTypography.sectionTitle)
                     .foregroundStyle(PicoColors.textPrimary)
                     .padding(.bottom, PicoSpacing.standard)
