@@ -322,6 +322,7 @@ private struct HomePage: View {
                     GeometryReader { viewport in
                         VillageHeroSection(
                             residents: gridResidents,
+                            currentUserProfile: sessionStore.profile,
                             isLoading: villageStore.isLoadingResidents,
                             notice: villageStore.notice,
                             height: max(0, viewport.size.height - PicoSpacing.compact * 2)
@@ -648,13 +649,17 @@ private enum StartFocusSheetStep {
 
 private struct VillageHeroSection: View {
     let residents: [VillageResident]
+    let currentUserProfile: UserProfile?
     let isLoading: Bool
     let notice: String?
     let height: CGFloat
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            VillageView(residents: residents)
+            VillageView(
+                residents: residents,
+                currentUserProfile: currentUserProfile
+            )
                 .frame(maxWidth: .infinity)
                 .frame(height: height)
 

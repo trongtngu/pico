@@ -15,7 +15,10 @@ struct VillagePage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .center, spacing: 12) {
-                VillageView(residents: villageStore.residents)
+                VillageView(
+                    residents: villageStore.residents,
+                    currentUserProfile: sessionStore.profile
+                )
                     .frame(maxWidth: .infinity)
                     .frame(height: 430)
                     .padding(.horizontal, 6)
@@ -49,10 +52,23 @@ struct VillagePage: View {
 
 struct VillageView: View {
     let residents: [VillageResident]
+    let currentUserProfile: UserProfile?
 
     private static let gridSize = 6
+    private var gridResidents: [VillageResident] {
+        guard let currentUserProfile else { return residents }
+
+        let currentUserResident = VillageResident(
+            profile: currentUserProfile,
+            bondLevel: 0,
+            completedPairSessions: 0,
+            unlockedAt: nil
+        )
+        return [currentUserResident] + residents.filter { $0.profile.userID != currentUserProfile.userID }
+    }
+
     private var sceneID: String {
-        residents
+        gridResidents
             .map { "\($0.id.uuidString)-\($0.profile.avatarConfig.selectedHat.rawValue)" }
             .joined(separator: "|")
     }
@@ -63,7 +79,7 @@ struct VillageView: View {
                 scene: VillageScene(
                     size: proxy.size,
                     gridSize: Self.gridSize,
-                    residents: residents
+                    residents: gridResidents
                 ),
                 options: [.allowsTransparency]
             )
