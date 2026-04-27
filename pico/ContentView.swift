@@ -350,11 +350,13 @@ private struct HomePage: View {
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
-                HomeTopBar(
-                    currentStreak: scoreStore.currentStreak,
-                    showsMenuButton: showsMenuButton,
-                    openNavigation: openNavigation
-                )
+                if focusStore.activeSession == nil {
+                    HomeTopBar(
+                        currentStreak: scoreStore.currentStreak,
+                        showsMenuButton: showsMenuButton,
+                        openNavigation: openNavigation
+                    )
+                }
             }
             .allowsHitTesting(focusStore.resultSession == nil)
 
