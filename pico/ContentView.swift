@@ -2434,90 +2434,42 @@ private struct ProfilePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var scoreStore: ScoreStore
     @State private var displayName = ""
+    @State private var draftDisplayName = ""
     @State private var avatarConfig = AvatarCatalog.defaultConfig
+    @State private var isNameEditorPresented = false
 
     var body: some View {
-        Form {
-            Section {
-                VStack(spacing: 12) {
-                    UserAvatar(config: avatarConfig)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 180)
+        ScrollView {
+            VStack(spacing: PicoSpacing.standard) {
+                profileContent
 
-                    Button {
-                        avatarConfig = avatarConfig.withHat(nextHat)
-                    } label: {
-                        Label("Cycle Outfit", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(availableHats.count < 2)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-            }
+                if sessionStore.profile != nil {
+                    ProfileAvatarOutfitCard(
+                        avatarConfig: avatarConfig,
+                        canCycleHats: availableHats.count >= 2,
+                        previousHat: selectPreviousHat,
+                        nextHat: selectNextHat
+                    )
 
-            Section {
-                if let profile = sessionStore.profile {
-                    ProfileCardView(profile: profile)
-                } else if sessionStore.isProfileLoading {
-                    ProgressView("Loading profile")
-                } else {
-                    ProfileUnavailableView()
-                }
-            }
+                    ProfileHatCollectionCard(selection: $avatarConfig, hats: availableHats)
 
-            if let profile = sessionStore.profile {
-                Section {
-                    Text("@\(profile.username)")
-                        .foregroundStyle(.secondary)
-
-                    TextField("Display name", text: $displayName)
-                        .textContentType(.name)
-                        .autocorrectionDisabled()
-                } header: {
-                    Text("Profile")
+                    saveProfileButton
                 }
 
-                Section {
-                    AvatarPickerView(selection: $avatarConfig, score: scoreStore.score.score)
-                } header: {
-                    Text("Outfit")
+                if let profileNotice = sessionStore.profileNotice {
+                    ProfileNoticeCard(text: profileNotice)
                 }
 
-                Section {
-                    Button {
-                        Task {
-                            await sessionStore.updateProfile(
-                                displayName: displayName,
-                                avatarConfig: avatarConfig
-                            )
-                        }
-                    } label: {
-                        HStack {
-                            Text("Save Profile")
-                            Spacer()
-                            if sessionStore.isProfileSaving {
-                                ProgressView()
-                            }
-                        }
-                    }
-                    .disabled(!canSave || sessionStore.isProfileSaving)
-                }
-            }
-
-            if let profileNotice = sessionStore.profileNotice {
-                Section {
-                    Text(profileNotice)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section {
-                Button("Sign Out", role: .destructive) {
+                ProfileSignOutBar {
                     sessionStore.signOut()
                 }
+                .padding(.top, PicoSpacing.section)
             }
+            .padding(.horizontal, PicoSpacing.standard)
+            .padding(.vertical, PicoSpacing.section)
+            .padding(.bottom, PicoSpacing.largeSection)
         }
+        .picoScreenBackground()
         .task {
             await sessionStore.loadProfileIfNeeded()
             await scoreStore.loadScore(for: sessionStore.session)
@@ -2526,6 +2478,74 @@ private struct ProfilePage: View {
         .onChange(of: sessionStore.profile) {
             syncEditableProfile()
         }
+        .sheet(isPresented: $isNameEditorPresented) {
+            if let profile = sessionStore.profile {
+                ProfileNameEditorSheet(
+                    profile: profile,
+                    displayName: $draftDisplayName
+                ) {
+                    displayName = draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    isNameEditorPresented = false
+                } cancel: {
+                    isNameEditorPresented = false
+                }
+                .presentationDetents([.height(280)])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(PicoColors.appBackground)
+                .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var profileContent: some View {
+        if let profile = sessionStore.profile {
+            Button {
+                draftDisplayName = displayName
+                isNameEditorPresented = true
+            } label: {
+                ProfileCardView(profile: profile, displayName: displayName, avatarConfig: avatarConfig)
+            }
+            .buttonStyle(.plain)
+        } else if sessionStore.isProfileLoading {
+            ProgressView("Loading profile")
+                .font(PicoTypography.caption)
+                .tint(PicoColors.primary)
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .picoCreamCard(
+                    padding: PicoCreamCardStyle.contentPadding
+                )
+        } else {
+            ProfileUnavailableView()
+                .picoCreamCard(
+                    showsShadow: false,
+                    padding: PicoCreamCardStyle.contentPadding
+                )
+        }
+    }
+
+    private var saveProfileButton: some View {
+        Button {
+            Task {
+                await sessionStore.updateProfile(
+                    displayName: displayName,
+                    avatarConfig: avatarConfig
+                )
+            }
+        } label: {
+            HStack(spacing: PicoSpacing.compact) {
+                Text("Save Profile")
+
+                if sessionStore.isProfileSaving {
+                    ProgressView()
+                        .tint(PicoColors.textOnPrimary)
+                }
+            }
+        }
+        .buttonStyle(PicoPrimaryButtonStyle())
+        .disabled(!canSave || sessionStore.isProfileSaving)
+        .opacity((canSave && !sessionStore.isProfileSaving) ? 1 : 0.62)
     }
 
     private var canSave: Bool {
@@ -2541,16 +2561,32 @@ private struct ProfilePage: View {
         AvatarHat.allCases.filter { $0.isUnlocked(with: scoreStore.score.score) }
     }
 
-    private var nextHat: AvatarHat {
-        let hats = availableHats
-        guard let currentIndex = hats.firstIndex(of: avatarConfig.selectedHat) else { return .none }
-        return hats[(currentIndex + 1) % hats.count]
-    }
-
     private func syncEditableProfile() {
         guard let profile = sessionStore.profile else { return }
         displayName = profile.displayName
+        draftDisplayName = profile.displayName
         avatarConfig = profile.avatarConfig
+    }
+
+    private func selectPreviousHat() {
+        selectHat(offset: -1)
+    }
+
+    private func selectNextHat() {
+        selectHat(offset: 1)
+    }
+
+    private func selectHat(offset: Int) {
+        let hats = availableHats
+        guard hats.count >= 2 else { return }
+
+        guard let currentIndex = hats.firstIndex(of: avatarConfig.selectedHat) else {
+            avatarConfig = avatarConfig.withHat(hats[0])
+            return
+        }
+
+        let nextIndex = (currentIndex + offset + hats.count) % hats.count
+        avatarConfig = avatarConfig.withHat(hats[nextIndex])
     }
 }
 
@@ -2639,25 +2675,220 @@ private final class UserAvatarScene: SKScene {
 
 private struct ProfileCardView: View {
     let profile: UserProfile
+    let displayName: String
+    let avatarConfig: AvatarConfig
 
     var body: some View {
         HStack(spacing: 14) {
-            AvatarBadgeView(config: profile.avatarConfig, size: 64)
+            AvatarBadgeView(config: avatarConfig, size: 64)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(profile.displayName)
-                    .font(.headline)
+                Text(displayName)
+                    .font(PicoTypography.body.weight(.semibold))
+                    .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
 
                 Text("@\(profile.username)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
                     .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
+
+            Image(systemName: "pencil")
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(width: 36, height: 36)
         }
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous))
+        .picoCreamCard(
+            padding: PicoCreamCardStyle.contentPadding
+        )
+        .accessibilityLabel(Text("\(displayName), @\(profile.username), edit display name"))
+    }
+}
+
+private struct ProfileAvatarOutfitCard: View {
+    let avatarConfig: AvatarConfig
+    let canCycleHats: Bool
+    let previousHat: () -> Void
+    let nextHat: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            UserAvatar(config: avatarConfig)
+                .frame(maxWidth: .infinity)
+                .frame(height: 210)
+                .padding(.top, PicoSpacing.standard)
+                .padding(.horizontal, PicoSpacing.cardPadding)
+                .padding(.bottom, PicoSpacing.compact)
+
+            PicoCardDivider(horizontalPadding: 0)
+
+            HStack(spacing: PicoSpacing.standard) {
+                Text("Hats")
+                    .font(PicoTypography.body.weight(.semibold))
+                    .foregroundStyle(PicoColors.textPrimary)
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: PicoSpacing.compact) {
+                    hatButton(systemImage: "chevron.left", action: previousHat)
+                    hatButton(systemImage: "chevron.right", action: nextHat)
+                }
+            }
+            .padding(.horizontal, PicoCreamCardStyle.contentPadding)
+            .padding(.vertical, PicoSpacing.standard)
+        }
+        .picoCreamCard()
+    }
+
+    private func hatButton(systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundStyle(canCycleHats ? PicoColors.textPrimary : PicoColors.textMuted)
+                .frame(width: 42, height: 42)
+        }
+        .buttonStyle(.plain)
+        .disabled(!canCycleHats)
+    }
+}
+
+private struct ProfileHatCollectionCard: View {
+    @Binding var selection: AvatarConfig
+    let hats: [AvatarHat]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            Text("Hat Collection")
+                .font(PicoTypography.body.weight(.semibold))
+                .foregroundStyle(PicoColors.textPrimary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: PicoSpacing.standard) {
+                    ForEach(hats) { hat in
+                        hatCollectionItem(hat)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .picoCreamCard(
+            padding: PicoCreamCardStyle.contentPadding
+        )
+    }
+
+    private func hatCollectionItem(_ hat: AvatarHat) -> some View {
+        let isSelected = selection.selectedHat == hat
+
+        return Button {
+            selection = selection.withHat(hat)
+        } label: {
+            VStack(spacing: PicoSpacing.compact) {
+                AvatarBadgeView(config: selection.withHat(hat), size: 58)
+                    .overlay {
+                        if isSelected {
+                            Circle()
+                                .stroke(PicoColors.primary, lineWidth: 3)
+                        }
+                    }
+
+                Text(hat.name)
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(isSelected ? PicoColors.textPrimary : PicoColors.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+            .frame(width: 82)
+            .frame(minHeight: 96)
+            .contentShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("\(hat.name) hat"))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct ProfileNameEditorSheet: View {
+    let profile: UserProfile
+    @Binding var displayName: String
+    let save: () -> Void
+    let cancel: () -> Void
+
+    private var normalizedDisplayName: String {
+        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isDisplayNameValid: Bool {
+        (1...40).contains(normalizedDisplayName.count)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            Text("Display Name")
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+
+            Text("@\(profile.username)")
+                .font(PicoTypography.caption)
+                .foregroundStyle(PicoColors.textSecondary)
+
+            TextField("Display name", text: $displayName)
+                .textContentType(.name)
+                .autocorrectionDisabled()
+                .font(PicoTypography.body)
+                .foregroundStyle(PicoColors.textPrimary)
+                .padding(.horizontal, PicoSpacing.standard)
+                .frame(height: 52)
+                .background(PicoCreamCardStyle.controlBackground)
+                .clipShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous))
+
+            HStack(spacing: PicoSpacing.compact) {
+                Button("Cancel", action: cancel)
+                    .buttonStyle(PicoCreamBorderedButtonStyle())
+
+                Button("Save", action: save)
+                    .buttonStyle(PicoPrimaryButtonStyle())
+                    .disabled(!isDisplayNameValid)
+                    .opacity(isDisplayNameValid ? 1 : 0.62)
+            }
+        }
+        .padding(PicoSpacing.section)
+        .picoScreenBackground()
+    }
+}
+
+private struct ProfileNoticeCard: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(PicoTypography.caption)
+            .foregroundStyle(PicoColors.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .picoCreamCard(
+                showsShadow: false,
+                padding: PicoCreamCardStyle.contentPadding
+            )
+    }
+}
+
+private struct ProfileSignOutBar: View {
+    let signOut: () -> Void
+
+    var body: some View {
+        Button(role: .destructive, action: signOut) {
+            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                .font(PicoTypography.body.weight(.semibold))
+                .foregroundStyle(PicoColors.error)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, PicoSpacing.standard)
+        }
+        .buttonStyle(.plain)
+        .background(PicoColors.appBackground)
     }
 }
 
