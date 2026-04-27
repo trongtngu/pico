@@ -1000,8 +1000,6 @@ private struct StartFocusSheet: View {
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundStyle(PicoColors.textPrimary)
                         .frame(width: 36, height: 36)
-                        .background(PicoCreamCardStyle.controlBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("Back"))
@@ -1028,8 +1026,6 @@ private struct StartFocusSheet: View {
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(PicoColors.textPrimary)
                     .frame(width: 36, height: 36)
-                    .background(PicoCreamCardStyle.controlBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(Text("Close"))
@@ -1125,26 +1121,42 @@ private struct IncomingFocusInviteSheetRow: View {
     @EnvironmentObject private var focusStore: FocusStore
 
     let invite: FocusSessionInvite
+    private let avatarColumnSize: CGFloat = 42
+    private let avatarSize: CGFloat = 38
 
     var body: some View {
+        inviteCardContent
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
+    }
+
+    private var inviteCardContent: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-            HStack(alignment: .top, spacing: PicoSpacing.iconTextGap) {
-                AvatarBadgeView(config: invite.host.avatarConfig, size: 40)
+            HStack(alignment: .center, spacing: PicoSpacing.iconTextGap) {
+                AvatarBadgeView(config: invite.host.avatarConfig, size: avatarSize)
+                    .frame(width: avatarColumnSize, height: avatarColumnSize, alignment: .center)
 
                 VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                     Text(invite.host.displayName)
                         .font(PicoTypography.body.weight(.semibold))
                         .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
 
-                    Text("@\(invite.host.username) invited you")
+                    Text("@\(invite.host.username)")
                         .font(PicoTypography.caption)
                         .foregroundStyle(PicoColors.textSecondary)
+                        .lineLimit(1)
                 }
 
                 Spacer(minLength: 0)
 
                 FocusDurationBadge(seconds: invite.session.durationSeconds)
             }
+
+            Text("Invited you to a focus session")
+                .font(PicoTypography.caption)
+                .foregroundStyle(PicoColors.textSecondary)
+                .lineLimit(2)
 
             HStack(spacing: PicoSpacing.iconTextGap) {
                 Button {
@@ -1170,16 +1182,12 @@ private struct IncomingFocusInviteSheetRow: View {
                     }
                 } label: {
                     Text("Decline")
-                        .font(PicoTypography.caption.weight(.semibold))
-                        .foregroundStyle(PicoColors.textSecondary)
-                        .frame(maxWidth: .infinity, minHeight: 52)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PicoCreamBorderedButtonStyle())
                 .frame(maxWidth: .infinity)
                 .disabled(focusStore.activeInviteID != nil)
             }
         }
-        .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
     }
 }
 
@@ -1221,8 +1229,6 @@ private struct FocusModeRow: View {
                     .font(.system(size: 23, weight: .semibold, design: .rounded))
                     .foregroundStyle(iconColor)
                     .frame(width: 42, height: 42)
-                    .background(iconBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
 
                 VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                     Text(title)
@@ -1253,11 +1259,7 @@ private struct FocusModeRow: View {
     }
 
     private var iconColor: Color {
-        PicoColors.primary
-    }
-
-    private var iconBackground: Color {
-        isHighlighted ? PicoColors.textOnPrimary : PicoCreamCardStyle.controlBackground
+        isHighlighted ? PicoColors.textOnPrimary : PicoColors.primary
     }
 
     private var chevronColor: Color {
@@ -1713,10 +1715,14 @@ private struct MultiplayerLobbySheetContent: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 	                .layoutPriority(1)
 
-                Text("Bond XP and new villagers are earned with friends who stay for the focus session.")
-                    .font(PicoTypography.caption)
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .multilineTextAlignment(.center)
+                HStack(spacing: 5) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+
+                    Text("Rewards unlock when everyone finishes")
+                        .font(PicoTypography.caption)
+                }
+                .foregroundStyle(PicoColors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .center)
 	
 	                if focusStore.isCurrentUserHost(sessionStore.session) {

@@ -214,6 +214,27 @@ struct PicoSecondaryButtonStyle: ButtonStyle {
     }
 }
 
+struct PicoCreamBorderedButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(PicoTypography.button)
+            .foregroundStyle(PicoColors.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .padding(.horizontal, PicoSpacing.standard)
+            .background(
+                RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous)
+                    .fill(PicoCreamCardStyle.background.opacity(configuration.isPressed ? 0.72 : 1))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous)
+                    .stroke(PicoCreamCardStyle.border, lineWidth: PicoCreamCardStyle.borderWidth)
+            )
+            .opacity(isEnabled ? 1 : 0.62)
+    }
+}
+
 struct PicoDestructiveButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
