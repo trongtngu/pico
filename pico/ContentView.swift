@@ -424,7 +424,7 @@ private struct HomeTopBar: View {
 
     var body: some View {
         PicoScreenTopBar(
-            title: "pico",
+            title: "",
             leading: {
                 VStack(alignment: .leading, spacing: 2) {
                     if showsMenuButton {
