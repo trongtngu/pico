@@ -89,13 +89,13 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Equatable {
         case .none:
             0
         case .bambooHat:
-            10
+            3
         case .beanie:
-            20
+            10
         case .bow:
-            30
+            20
         case .helmet:
-            40
+            30
         }
     }
 
@@ -442,10 +442,12 @@ struct AvatarPickerView: View {
                             .foregroundStyle(isUnlocked ? PicoColors.textPrimary : PicoColors.textSecondary)
                             .lineLimit(1)
 
-                        Text("\(hat.requiredScore) pts")
+                        Text("\(hat.requiredScore) points")
                             .font(.caption2)
                             .foregroundStyle(PicoColors.textSecondary)
                             .opacity(isUnlocked ? 0 : 1)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
                     }
                     .frame(maxWidth: .infinity, minHeight: 104)
                     .contentShape(Rectangle())

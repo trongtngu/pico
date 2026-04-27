@@ -574,7 +574,17 @@ private struct BondsPage: View {
             .padding(PicoSpacing.cardPadding)
             .picoCreamCard()
         } else {
-            BondsListCard(residents: bonds)
+            VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+                Text("Complete sessions together to earn XP.")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("1 group session session = 1 bond xp.")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                BondsListCard(residents: bonds)
+            }
         }
     }
 }
@@ -599,47 +609,159 @@ private struct BondsListCard: View {
 private struct BondRowView: View {
     let resident: VillageResident
 
+    private var xp: Int {
+        resident.completedPairSessions
+    }
+
+    private var scarfProgress: BondScarfProgress {
+        BondScarfProgress(xp: xp)
+    }
+
     var body: some View {
-        HStack(spacing: PicoSpacing.standard) {
-            AvatarBadgeView(
-                config: resident.profile.avatarConfig,
-                size: 56,
-                scarf: AvatarScarf(bondLevel: resident.bondLevel)
-            )
+        VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+            HStack(spacing: PicoSpacing.standard) {
+                AvatarBadgeView(
+                    config: resident.profile.avatarConfig,
+                    size: 56,
+                    scarf: AvatarScarf(bondLevel: resident.bondLevel)
+                )
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(resident.profile.displayName)
-                    .font(PicoTypography.body.weight(.semibold))
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(resident.profile.displayName)
+                        .font(PicoTypography.body.weight(.semibold))
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
 
-                Text("@\(resident.profile.username)")
-                    .font(PicoTypography.caption)
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .lineLimit(1)
+                    Text("@\(resident.profile.username)")
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 12)
+
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("Level \(resident.bondLevel)")
+                        .font(PicoTypography.caption.weight(.semibold))
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
+
+                    Text("\(xp) xp")
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .lineLimit(1)
+                }
             }
 
-            Spacer(minLength: 12)
+            BondScarfProgressBar(progress: scarfProgress)
+                .padding(.leading, 56 + PicoSpacing.standard)
+                .accessibilityHidden(true)
 
-            VStack(alignment: .trailing, spacing: 3) {
-                Text("Level \(resident.bondLevel)")
-                    .font(PicoTypography.caption.weight(.semibold))
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .lineLimit(1)
-
-                Text("\(resident.completedPairSessions) sessions")
-                    .font(PicoTypography.caption)
+            if let progressLabel = scarfProgress.caption {
+                Text(progressLabel)
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(PicoColors.textSecondary)
                     .lineLimit(1)
+                    .padding(.leading, 56 + PicoSpacing.standard)
             }
         }
         .padding(.horizontal, PicoSpacing.cardPadding)
         .padding(.vertical, PicoSpacing.standard)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            Text("\(resident.profile.displayName), bond level \(resident.bondLevel), \(resident.completedPairSessions) completed sessions")
+            Text("\(resident.profile.displayName), bond level \(resident.bondLevel), \(xp) XP, \(scarfProgress.accessibilitySummary)")
         )
     }
+}
+
+private struct BondScarfProgressBar: View {
+    let progress: BondScarfProgress
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<progress.segmentCount, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(index < progress.filledSegmentCount ? progress.tint : PicoColors.softSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .stroke(PicoColors.border.opacity(index < progress.filledSegmentCount ? 0 : 1), lineWidth: 1)
+                    )
+                    .frame(height: 6)
+            }
+        }
+    }
+}
+
+private struct BondScarfProgress {
+    let xp: Int
+
+    private var targetMilestone: BondScarfMilestone? {
+        BondScarfMilestone.all.first { xp < $0.requiredXP }
+    }
+
+    private var previousRequiredXP: Int {
+        guard let targetMilestone else {
+            return BondScarfMilestone.all.last?.requiredXP ?? 0
+        }
+
+        return BondScarfMilestone.all.last { $0.requiredXP < targetMilestone.requiredXP }?.requiredXP ?? 0
+    }
+
+    private var requiredDelta: Int {
+        guard let targetMilestone else {
+            return 1
+        }
+
+        return max(targetMilestone.requiredXP - previousRequiredXP, 1)
+    }
+
+    private var currentDelta: Int {
+        min(max(xp - previousRequiredXP, 0), requiredDelta)
+    }
+
+    var segmentCount: Int {
+        requiredDelta
+    }
+
+    var filledSegmentCount: Int {
+        guard targetMilestone != nil else {
+            return segmentCount
+        }
+
+        return currentDelta
+    }
+
+    var tint: Color {
+        PicoColors.primary
+    }
+
+    var caption: String? {
+        guard let targetMilestone else {
+            return "All rewards unlocked"
+        }
+
+        let remainingXP = max(targetMilestone.requiredXP - xp, 0)
+        return "\(remainingXP) xp to next scarf"
+    }
+
+    var accessibilitySummary: String {
+        guard let targetMilestone else {
+            return "top scarf unlocked"
+        }
+
+        return "\(xp) of \(targetMilestone.requiredXP) XP toward \(targetMilestone.name) scarf"
+    }
+}
+
+private struct BondScarfMilestone {
+    let name: String
+    let requiredXP: Int
+
+    static let all: [BondScarfMilestone] = [
+        BondScarfMilestone(name: "green", requiredXP: 3),
+        BondScarfMilestone(name: "blue", requiredXP: 6),
+        BondScarfMilestone(name: "orange", requiredXP: 9)
+    ]
 }
 
 private enum StartFocusSheetStep {
@@ -2478,12 +2600,16 @@ private struct ProfilePage: View {
                 if sessionStore.profile != nil {
                     ProfileAvatarOutfitCard(
                         avatarConfig: avatarConfig,
+                        score: scoreStore.score.score,
                         canCycleHats: availableHats.count >= 2,
                         previousHat: selectPreviousHat,
                         nextHat: selectNextHat
                     )
 
-                    ProfileHatCollectionCard(selection: $avatarConfig, hats: availableHats)
+                    ProfileHatCollectionCard(
+                        selection: $avatarConfig,
+                        score: scoreStore.score.score
+                    )
 
                     saveProfileButton
                 }
@@ -2748,15 +2874,38 @@ private struct ProfileCardView: View {
 
 private struct ProfileAvatarOutfitCard: View {
     let avatarConfig: AvatarConfig
+    let score: Int
     let canCycleHats: Bool
     let previousHat: () -> Void
     let nextHat: () -> Void
+    @State private var isShowingPointsInfo = false
 
     var body: some View {
         VStack(spacing: 0) {
-            UserAvatar(config: avatarConfig)
-                .frame(maxWidth: .infinity)
-                .frame(height: 210)
+            VStack(spacing: PicoSpacing.compact) {
+                HStack(spacing: PicoSpacing.tiny) {
+                    Text("\(score) points")
+                        .font(PicoTypography.body.weight(.bold))
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .accessibilityLabel(Text("\(score) points"))
+
+                    Button {
+                        isShowingPointsInfo = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("How points work"))
+                }
+
+                UserAvatar(config: avatarConfig)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 190)
+            }
+            .frame(maxWidth: .infinity)
                 .padding(.top, PicoSpacing.standard)
                 .padding(.horizontal, PicoSpacing.cardPadding)
                 .padding(.bottom, PicoSpacing.compact)
@@ -2779,6 +2928,11 @@ private struct ProfileAvatarOutfitCard: View {
             .padding(.vertical, PicoSpacing.standard)
         }
         .picoCreamCard()
+        .alert("How points work", isPresented: $isShowingPointsInfo) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Points are earned by completing any focus session. 1 session = 1 point.")
+        }
     }
 
     private func hatButton(systemImage: String, action: @escaping () -> Void) -> some View {
@@ -2795,7 +2949,7 @@ private struct ProfileAvatarOutfitCard: View {
 
 private struct ProfileHatCollectionCard: View {
     @Binding var selection: AvatarConfig
-    let hats: [AvatarHat]
+    let score: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
@@ -2804,8 +2958,8 @@ private struct ProfileHatCollectionCard: View {
                 .foregroundStyle(PicoColors.textPrimary)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: PicoSpacing.standard) {
-                    ForEach(hats) { hat in
+                HStack(alignment: .top, spacing: PicoSpacing.standard) {
+                    ForEach(AvatarHat.allCases) { hat in
                         hatCollectionItem(hat)
                     }
                 }
@@ -2819,8 +2973,10 @@ private struct ProfileHatCollectionCard: View {
 
     private func hatCollectionItem(_ hat: AvatarHat) -> some View {
         let isSelected = selection.selectedHat == hat
+        let isUnlocked = hat.isUnlocked(with: score)
 
         return Button {
+            guard isUnlocked else { return }
             selection = selection.withHat(hat)
         } label: {
             VStack(spacing: PicoSpacing.compact) {
@@ -2831,19 +2987,38 @@ private struct ProfileHatCollectionCard: View {
                                 .stroke(PicoColors.primary, lineWidth: 3)
                         }
                     }
+                    .overlay {
+                        if !isUnlocked {
+                            Circle()
+                                .fill(.black.opacity(0.42))
+
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white)
+                        }
+                    }
 
                 Text(hat.name)
                     .font(PicoTypography.caption)
                     .foregroundStyle(isSelected ? PicoColors.textPrimary : PicoColors.textSecondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
+
+                if !isUnlocked {
+                    Text("\(hat.requiredScore) points")
+                        .font(.caption2)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
             }
-            .frame(width: 82)
-            .frame(minHeight: 96)
+            .frame(width: 82, height: 112, alignment: .top)
             .contentShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
+            .opacity(isUnlocked ? 1 : 0.72)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text("\(hat.name) hat"))
+        .disabled(!isUnlocked)
+        .accessibilityLabel(Text(isUnlocked ? "\(hat.name) hat" : "\(hat.name) hat, locked until \(hat.requiredScore) points"))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

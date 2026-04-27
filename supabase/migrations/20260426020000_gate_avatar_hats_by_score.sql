@@ -6,10 +6,10 @@ set search_path = public
 as $$
     select case hat
         when 0 then 0
-        when 1 then 10
-        when 2 then 20
-        when 3 then 30
-        when 4 then 40
+        when 1 then 3
+        when 2 then 10
+        when 3 then 20
+        when 4 then 30
         else null
     end;
 $$;
