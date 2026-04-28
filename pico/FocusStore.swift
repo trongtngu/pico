@@ -84,6 +84,7 @@ final class FocusStore: ObservableObject {
         subscribeToRealtime(for: authSession, sessionID: nil)
 
         guard let savedState = loadSavedState(), savedState.userID == userID else {
+            _ = await reconcileOpenSessions(for: authSession)
             await loadIncomingInvites(for: authSession)
             return
         }
@@ -100,6 +101,15 @@ final class FocusStore: ObservableObject {
         }
 
         applyRestoredSession(savedState.session)
+        let reconciliation = await reconcileOpenSessions(for: authSession)
+        if savedState.session.isLobby, reconciliation?.changedOpenSessionState == true {
+            lobbySession = nil
+            sessionDetail = nil
+            clearSavedState()
+            await loadIncomingInvites(for: authSession)
+            return
+        }
+
         await refreshDetailIfNeeded(for: savedState.session, authSession: authSession)
         subscribeToRealtime(for: authSession, sessionID: savedState.session.id)
         await loadIncomingInvites(for: authSession)
@@ -112,6 +122,16 @@ final class FocusStore: ObservableObject {
     func refresh(for authSession: AuthSession?) async {
         await retryPendingResult(for: authSession)
         guard let authSession else { return }
+
+        let reconciliation = await reconcileOpenSessions(for: authSession)
+        if lobbySession?.isLobby == true, reconciliation?.changedOpenSessionState == true {
+            lobbySession = nil
+            sessionDetail = nil
+            clearSavedState()
+            subscribeToRealtime(for: authSession, sessionID: nil)
+            await loadIncomingInvites(for: authSession)
+            return
+        }
 
         if let session = lobbySession ?? activeSession {
             await refreshDetailIfNeeded(for: session, authSession: authSession)
@@ -548,6 +568,16 @@ final class FocusStore: ObservableObject {
     private func completeIfDue(for authSession: AuthSession?) async {
         guard let session = activeSession, session.isLive, session.remainingSeconds() == 0 else { return }
         await completeCurrentSession(for: authSession)
+    }
+
+    private func reconcileOpenSessions(for authSession: AuthSession) async -> FocusReconciliationResult? {
+        do {
+            return try await focusService.reconcileOpenSessions(for: authSession)
+        } catch {
+            guard !error.isCancellation else { return nil }
+            notice = displayMessage(for: error)
+            return nil
+        }
     }
 
     private func finish(

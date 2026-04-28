@@ -169,8 +169,8 @@ private final class VillageScene: SKScene {
             gridSize: gridSize,
             tileAnchorPoint: Self.tileAnchorPoint
         )
-        let atlas = SKTextureAtlas(named: "grass_tiles")
-        let grassBlockTexture = atlas.textureNamed("dirt_with_grass.png")
+        let atlas = SKTextureAtlas(named: "GrassBlock_New")
+        let grassBlockTexture = atlas.textureNamed("GrassBlock_1.png")
         grassBlockTexture.filteringMode = .linear
 
         for tile in TileCoordinate.all(in: gridSize) {

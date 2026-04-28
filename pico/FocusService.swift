@@ -137,6 +137,16 @@ struct FocusSessionInvite: Identifiable, Equatable {
     let createdAt: Date?
 }
 
+struct FocusReconciliationResult: Equatable {
+    let completedSessions: Int
+    let cancelledLobbies: Int
+    let leftLobbies: Int
+
+    var changedOpenSessionState: Bool {
+        completedSessions > 0 || cancelledLobbies > 0 || leftLobbies > 0
+    }
+}
+
 enum FocusServiceError: LocalizedError {
     case missingConfiguration
     case invalidResponse
@@ -240,6 +250,17 @@ final class FocusService {
         )
 
         return response.compactMap(\.focusSessionInvite)
+    }
+
+    func reconcileOpenSessions(for authSession: AuthSession) async throws -> FocusReconciliationResult {
+        let response: ReconcileOpenFocusSessionsResponse = try await send(
+            path: "/rest/v1/rpc/reconcile_open_focus_sessions",
+            method: "POST",
+            body: EmptyFocusRequest(),
+            accessToken: authSession.accessToken
+        )
+
+        return response.focusReconciliationResult
     }
 
     func joinSession(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
@@ -423,6 +444,20 @@ private struct FocusSessionIDRequest: Encodable {
 }
 
 private struct EmptyFocusRequest: Encodable {}
+
+private struct ReconcileOpenFocusSessionsResponse: Decodable {
+    let completedSessions: Int
+    let cancelledLobbies: Int
+    let leftLobbies: Int
+
+    var focusReconciliationResult: FocusReconciliationResult {
+        FocusReconciliationResult(
+            completedSessions: completedSessions,
+            cancelledLobbies: cancelledLobbies,
+            leftLobbies: leftLobbies
+        )
+    }
+}
 
 private struct FocusSessionResponse: Decodable, Equatable {
     let id: UUID
