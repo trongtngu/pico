@@ -411,53 +411,19 @@ private struct VillagerWalkDirection: Equatable {
 }
 
 private struct VillagerWalkFrames {
-    private static let atlasImageName = "CharacterWalk_Set1.1"
-    private static let atlasPixelSize = CGSize(width: 1388, height: 1737)
-    private static let sheetPixelSize = CGSize(width: 690, height: 575)
-    private static let atlasInset: CGFloat = 2
-    private static let sheetSpacing: CGFloat = 4
-    private static let rowCount = 5
-    private static let frameCount = 6
-
     private let frames: [[SKTexture]]
 
     init(hat: AvatarHat, scarf: AvatarScarf? = nil) {
-        let atlasTexture = SKTexture(imageNamed: scarf?.walkRegularAtlasImageName ?? Self.atlasImageName)
-        atlasTexture.filteringMode = .linear
-
-        frames = (0..<Self.rowCount).map { row in
-            (0..<Self.frameCount).map { frame in
-                let texture = SKTexture(rect: Self.normalizedFrameRect(hat: hat, row: row, frame: frame), in: atlasTexture)
-                texture.filteringMode = .linear
-                return texture
-            }
-        }
+        frames = AvatarFinalAtlas.frames(
+            kind: .walkRegular,
+            hat: hat,
+            scarf: scarf,
+            filteringMode: .linear
+        )
     }
 
     func frames(forRow row: Int) -> [SKTexture] {
-        frames[min(max(row, 0), Self.rowCount - 1)]
-    }
-
-    private static func normalizedFrameRect(hat: AvatarHat, row: Int, frame: Int) -> CGRect {
-        let slot = hat.walkAtlasSlot
-        let framePixelWidth = sheetPixelSize.width / CGFloat(frameCount)
-        let framePixelHeight = sheetPixelSize.height / CGFloat(rowCount)
-        let framePixelRect = CGRect(
-            x: atlasInset
-                + CGFloat(slot.column) * (sheetPixelSize.width + sheetSpacing)
-                + CGFloat(frame) * framePixelWidth,
-            y: atlasInset
-                + CGFloat(slot.row) * (sheetPixelSize.height + sheetSpacing)
-                + CGFloat(row) * framePixelHeight,
-            width: framePixelWidth,
-            height: framePixelHeight
-        )
-        return CGRect(
-            x: framePixelRect.minX / atlasPixelSize.width,
-            y: (atlasPixelSize.height - framePixelRect.maxY) / atlasPixelSize.height,
-            width: framePixelRect.width / atlasPixelSize.width,
-            height: framePixelRect.height / atlasPixelSize.height
-        )
+        frames[min(max(row, 0), AvatarFinalAtlasKind.walkRegular.rowCount - 1)]
     }
 }
 
