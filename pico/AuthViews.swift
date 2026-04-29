@@ -12,13 +12,21 @@ struct AuthGateView: View {
 
     var body: some View {
         Group {
-            if sessionStore.session == nil {
+            if sessionStore.isRestoringSession {
+                ProgressView()
+                    .tint(PicoColors.primary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(PicoColors.appBackground.ignoresSafeArea())
+            } else if sessionStore.session == nil {
                 AuthRootView()
                     .environmentObject(sessionStore)
             } else {
                 AppShellView()
                     .environmentObject(sessionStore)
             }
+        }
+        .task {
+            await sessionStore.restoreSessionIfNeeded()
         }
     }
 }

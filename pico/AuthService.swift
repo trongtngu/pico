@@ -146,6 +146,20 @@ final class AuthService {
         )
     }
 
+    func refreshSession(refreshToken: String) async throws -> AuthSession {
+        let response: SignInResponse = try await send(
+            path: "/auth/v1/token?grant_type=refresh_token",
+            method: "POST",
+            body: RefreshSessionRequest(refreshToken: refreshToken)
+        )
+
+        return AuthSession(
+            accessToken: response.accessToken,
+            refreshToken: response.refreshToken,
+            user: response.user
+        )
+    }
+
     func fetchProfile(for authSession: AuthSession) async throws -> UserProfile {
         guard let userID = authSession.user?.id else {
             throw AuthServiceError.invalidResponse
@@ -332,6 +346,10 @@ private extension String {
 private struct AuthCredentials: Encodable {
     let email: String
     let password: String
+}
+
+private struct RefreshSessionRequest: Encodable {
+    let refreshToken: String
 }
 
 private struct SignUpRequest: Encodable {

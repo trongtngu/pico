@@ -13,16 +13,20 @@ final class AuthSessionStore: ObservableObject {
     @Published private(set) var session: AuthSession?
     @Published private(set) var profile: UserProfile?
     @Published private(set) var isLoading = false
+    @Published private(set) var isRestoringSession = true
     @Published private(set) var isProfileLoading = false
     @Published private(set) var isProfileSaving = false
     @Published private(set) var profileNotice: String?
     @Published var notice: String?
 
     private let authService: AuthService
+    private let sessionStorage: AuthSessionStorage
     private var hasLoadedProfile = false
+    private var hasAttemptedSessionRestore = false
 
-    init(authService: AuthService? = nil) {
+    init(authService: AuthService? = nil, sessionStorage: AuthSessionStorage? = nil) {
         self.authService = authService ?? AuthService()
+        self.sessionStorage = sessionStorage ?? AuthSessionStorage()
     }
 
     func signUp(
@@ -50,9 +54,16 @@ final class AuthSessionStore: ObservableObject {
     }
 
     func signOut() {
+        sessionStorage.deleteSession()
         session = nil
         notice = nil
         resetProfile()
+    }
+
+    func restoreSessionIfNeeded() async {
+        guard !hasAttemptedSessionRestore else { return }
+        hasAttemptedSessionRestore = true
+        await restoreSession()
     }
 
     func loadProfileIfNeeded() async {
@@ -91,6 +102,7 @@ final class AuthSessionStore: ObservableObject {
         let store = AuthSessionStore()
         store.session = session
         store.notice = notice
+        store.isRestoringSession = false
         store.profile = UserProfile(
             userID: AuthUser.preview.id,
             username: "tommy",
@@ -113,11 +125,53 @@ final class AuthSessionStore: ObservableObject {
             notice = result.message
             resetProfile()
             if let session = result.session {
+                try? sessionStorage.saveSession(session)
                 try? await authService.syncUserTimezone(for: session)
                 await loadProfileIfNeeded()
+            } else {
+                sessionStorage.deleteSession()
             }
         } catch {
             notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func restoreSession() async {
+        isRestoringSession = true
+        defer { isRestoringSession = false }
+
+        let storedSession: AuthSession?
+        do {
+            storedSession = try sessionStorage.loadSession()
+        } catch {
+            sessionStorage.deleteSession()
+            return
+        }
+
+        guard let storedSession else {
+            return
+        }
+
+        guard let refreshToken = storedSession.refreshToken else {
+            sessionStorage.deleteSession()
+            return
+        }
+
+        do {
+            let refreshedSession = try await authService.refreshSession(refreshToken: refreshToken)
+            try? sessionStorage.saveSession(refreshedSession)
+            session = refreshedSession
+            resetProfile()
+            try? await authService.syncUserTimezone(for: refreshedSession)
+            await loadProfileIfNeeded()
+        } catch AuthServiceError.requestFailed {
+            sessionStorage.deleteSession()
+            session = nil
+            resetProfile()
+        } catch {
+            session = storedSession
+            resetProfile()
+            await loadProfileIfNeeded()
         }
     }
 
