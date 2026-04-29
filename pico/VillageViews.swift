@@ -34,7 +34,7 @@ struct VillagePage: View {
 
                 if let notice = villageStore.notice {
                     Text(notice)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PicoColors.textSecondary)
                         .padding(.horizontal)
                 }
             }

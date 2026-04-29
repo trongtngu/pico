@@ -30,7 +30,7 @@ struct FocusPage: View {
             if let notice = focusStore.notice {
                 Section {
                     Text(notice)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PicoColors.textSecondary)
                 }
             }
         }
@@ -62,7 +62,7 @@ private struct CreateFocusLobbyView: View {
                     .font(.headline)
 
                 Text(selectedMode == .solo ? "Create a lobby, choose a duration, then start when ready." : "Create a lobby, invite friends, then start when ready.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(PicoColors.textSecondary)
             }
             .padding(.vertical, 4)
 
@@ -122,14 +122,14 @@ private struct IncomingFocusInvitesView: View {
                                     .font(.headline)
                                 Text("@\(invite.host.username) invited you")
                                     .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(PicoColors.textSecondary)
                             }
 
                             Spacer()
 
                             Text(formattedDuration(invite.session.durationSeconds))
                                 .font(.subheadline.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(PicoColors.textSecondary)
                         }
 
                         HStack {
@@ -189,7 +189,7 @@ private struct FocusLobbyView: View {
                         .font(.headline)
 
                     Text(lobbySubtitle)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PicoColors.textSecondary)
                 }
                 .padding(.vertical, 4)
 
@@ -323,7 +323,7 @@ private struct InviteFriendsSection: View {
             Section {
                 if availableFriends.isEmpty {
                     Text("No available friends to invite.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PicoColors.textSecondary)
                 } else {
                     ForEach(availableFriends, id: \.userID) { friend in
                         Button {
@@ -341,7 +341,7 @@ private struct InviteFriendsSection: View {
                                     Text(friend.displayName)
                                     Text("@\(friend.username)")
                                         .font(.subheadline)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(PicoColors.textSecondary)
                                 }
                                 Spacer()
                                 if focusStore.activeInvitedFriendIDs.contains(friend.userID) {
@@ -414,13 +414,13 @@ private struct FocusMemberRow: View {
                     if member.role == .host {
                         Image(systemName: "star.fill")
                             .font(.caption)
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(PicoColors.warning)
                     }
                 }
 
                 Text("@\(member.profile.username)")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(PicoColors.textSecondary)
             }
 
             Spacer()
@@ -519,7 +519,7 @@ private struct FocusResultView: View {
                     .font(.headline)
 
                 Text(subtitle)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(PicoColors.textSecondary)
 
                 LabeledContent("Duration", value: formattedDuration(session.elapsedSeconds()))
             }
@@ -619,18 +619,18 @@ private func memberStatusText(_ member: FocusSessionMember) -> String {
 
 private func memberStatusColor(_ member: FocusSessionMember) -> Color {
     if member.isInterrupted || member.status == .left {
-        return .secondary
+        return PicoColors.textSecondary
     }
 
     if member.isCompleted {
-        return .green
+        return PicoColors.success
     }
 
     if member.status == .joined {
-        return .blue
+        return PicoColors.info
     }
 
-    return .secondary
+    return PicoColors.textSecondary
 }
 
 private func formattedDuration(_ seconds: Int) -> String {

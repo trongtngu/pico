@@ -93,19 +93,31 @@ private struct AuthFormView: View {
             .listRowBackground(PicoColors.softSurface)
 
             Section {
-                TextField("Email", text: $email)
+                TextField(
+                    "",
+                    text: $email,
+                    prompt: Text("Email").foregroundStyle(PicoColors.textMuted)
+                )
                     .textInputAutocapitalization(.never)
                     .keyboardType(.emailAddress)
                     .textContentType(.emailAddress)
                     .autocorrectionDisabled()
                     .foregroundStyle(PicoColors.textPrimary)
 
-                SecureField("Password", text: $password)
+                SecureField(
+                    "",
+                    text: $password,
+                    prompt: Text("Password").foregroundStyle(PicoColors.textMuted)
+                )
                     .textContentType(mode == .login ? .password : .newPassword)
                     .foregroundStyle(PicoColors.textPrimary)
 
                 if mode == .signup {
-                    SecureField("Confirm password", text: $confirmPassword)
+                    SecureField(
+                        "",
+                        text: $confirmPassword,
+                        prompt: Text("Confirm password").foregroundStyle(PicoColors.textMuted)
+                    )
                         .textContentType(.newPassword)
                         .foregroundStyle(PicoColors.textPrimary)
                 }
@@ -114,7 +126,11 @@ private struct AuthFormView: View {
 
             if mode == .signup {
                 Section {
-                    TextField("Username", text: $username)
+                    TextField(
+                        "",
+                        text: $username,
+                        prompt: Text("Username").foregroundStyle(PicoColors.textMuted)
+                    )
                         .textInputAutocapitalization(.never)
                         .textContentType(.username)
                         .autocorrectionDisabled()
@@ -123,7 +139,11 @@ private struct AuthFormView: View {
                         }
                         .foregroundStyle(PicoColors.textPrimary)
 
-                    TextField("Display name", text: $displayName)
+                    TextField(
+                        "",
+                        text: $displayName,
+                        prompt: Text("Display name").foregroundStyle(PicoColors.textMuted)
+                    )
                         .textContentType(.name)
                         .autocorrectionDisabled()
                         .foregroundStyle(PicoColors.textPrimary)

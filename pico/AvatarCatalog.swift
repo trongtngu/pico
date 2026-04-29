@@ -494,14 +494,14 @@ struct AvatarBadgeView: View {
             } else {
                 Image(systemName: hat.systemImage)
                     .font(.system(size: size * 0.42, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(PicoColors.textOnPrimary)
             }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
         .overlay {
             Circle()
-                .stroke(.white.opacity(0.28), lineWidth: max(1, size * 0.025))
+                .stroke(PicoColors.textOnPrimary.opacity(0.28), lineWidth: max(1, size * 0.025))
         }
         .accessibilityLabel(Text("\(hat.name) avatar"))
     }
@@ -539,7 +539,7 @@ struct AvatarPickerView: View {
 
                                     Image(systemName: "lock.fill")
                                         .font(.system(size: 18, weight: .semibold))
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(PicoColors.textOnPrimary)
                                 }
                             }
 

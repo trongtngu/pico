@@ -13,7 +13,9 @@ import Combine
 struct ContentView: View {
     var body: some View {
         AuthGateView()
+            .foregroundStyle(PicoColors.textPrimary)
             .tint(PicoColors.primary)
+            .toolbarColorScheme(.light, for: .navigationBar)
     }
 }
 
@@ -75,6 +77,7 @@ struct AppShellView: View {
         .environmentObject(bondRewardClaimStore)
         .environmentObject(scoreStore)
         .task(id: sessionStore.session?.user?.id) {
+            await sessionStore.refreshSessionIfNeeded()
             await focusStore.restoreSavedState(for: sessionStore.session)
             if sessionStore.session == nil {
                 villageStore.clear()
@@ -103,6 +106,7 @@ struct AppShellView: View {
             switch scenePhase {
             case .active:
                 Task {
+                    await sessionStore.refreshSessionIfNeeded()
                     await focusStore.handleSceneBecameActive(for: sessionStore.session)
                 }
             case .background:
@@ -3331,7 +3335,7 @@ private struct ProfileHatCollectionCard: View {
 
                             Image(systemName: "lock.fill")
                                 .font(.system(size: 17, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(PicoColors.textOnPrimary)
                         }
                     }
                     .frame(width: 66, height: 66, alignment: .center)
@@ -3385,7 +3389,11 @@ private struct ProfileNameEditorSheet: View {
                 .font(PicoTypography.caption)
                 .foregroundStyle(PicoColors.textSecondary)
 
-            TextField("Display name", text: $displayName)
+            TextField(
+                "",
+                text: $displayName,
+                prompt: Text("Display name").foregroundStyle(PicoColors.textMuted)
+            )
                 .textContentType(.name)
                 .autocorrectionDisabled()
                 .font(PicoTypography.body)

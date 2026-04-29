@@ -345,7 +345,11 @@ struct UserProfileSearchList<RowContent: View>: View {
                 PicoIcon(.magnifyingGlassRegular, size: 16)
                     .foregroundStyle(PicoColors.textMuted)
 
-                TextField(placeholder, text: $searchText)
+                TextField(
+                    "",
+                    text: $searchText,
+                    prompt: Text(placeholder).foregroundStyle(PicoColors.textMuted)
+                )
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .foregroundStyle(PicoColors.textPrimary)

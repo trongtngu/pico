@@ -6,11 +6,30 @@
 //
 
 import Foundation
+import Security
+import Supabase
 
 struct AuthSession: Codable, Equatable {
     let accessToken: String
     let refreshToken: String?
     let user: AuthUser?
+    let expiresAt: Date?
+
+    init(accessToken: String, refreshToken: String?, user: AuthUser?, expiresAt: Date? = nil) {
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.user = user
+        self.expiresAt = expiresAt
+    }
+
+    init(supabaseSession: Session) {
+        self.init(
+            accessToken: supabaseSession.accessToken,
+            refreshToken: supabaseSession.refreshToken,
+            user: AuthUser(supabaseUser: supabaseSession.user),
+            expiresAt: Date(timeIntervalSince1970: supabaseSession.expiresAt)
+        )
+    }
 
     #if DEBUG
     static let preview = AuthSession(
@@ -24,6 +43,15 @@ struct AuthSession: Codable, Equatable {
 struct AuthUser: Codable, Equatable {
     let id: UUID
     let email: String?
+
+    init(id: UUID, email: String?) {
+        self.id = id
+        self.email = email
+    }
+
+    init(supabaseUser: User) {
+        self.init(id: supabaseUser.id, email: supabaseUser.email)
+    }
 
     #if DEBUG
     static let preview = AuthUser(
@@ -69,11 +97,24 @@ enum AuthServiceError: LocalizedError {
 }
 
 final class AuthService {
+    private let client: SupabaseClient?
     private let session: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
     init(session: URLSession = .shared) {
+        if SupabaseConfig.isConfigured, let projectURL = SupabaseConfig.projectURL {
+            client = SupabaseClient(
+                supabaseURL: projectURL,
+                supabaseKey: SupabaseConfig.anonKey,
+                options: SupabaseClientOptions(
+                    auth: .init(autoRefreshToken: true)
+                )
+            )
+        } else {
+            client = nil
+        }
+
         self.session = session
 
         let decoder = JSONDecoder()
@@ -97,67 +138,101 @@ final class AuthService {
             throw AuthServiceError.usernameUnavailable
         }
 
-        let response: SignUpResponse = try await send(
-            path: "/auth/v1/signup",
-            method: "POST",
-            body: SignUpRequest(
-                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-                password: password,
-                data: SignUpMetadata(
-                    username: normalizedUsername,
-                    displayName: displayName.normalizedDisplayName,
-                    avatarConfig: avatarConfig,
-                    timeZone: TimeZone.current.identifier
-                )
-            )
-        )
-
-        if let accessToken = response.session?.accessToken ?? response.accessToken {
-            return AuthResult(
-                session: AuthSession(
-                    accessToken: accessToken,
-                    refreshToken: response.session?.refreshToken ?? response.refreshToken,
-                    user: response.user ?? response.session?.user
-                ),
-                message: nil
-            )
+        guard let client else {
+            throw AuthServiceError.missingConfiguration
         }
 
-        return AuthResult(
-            session: nil,
-            message: "Account created. Check your email to confirm your account before logging in."
-        )
+        do {
+            let response = try await client.auth.signUp(
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                password: password,
+                data: [
+                    "username": .string(normalizedUsername),
+                    "display_name": .string(displayName.normalizedDisplayName),
+                    "avatar_config": .object(avatarConfig.supabaseMetadataJSON),
+                    "time_zone": .string(TimeZone.current.identifier)
+                ]
+            )
+
+            guard let session = response.session else {
+                return AuthResult(
+                    session: nil,
+                    message: "Account created. Check your email to confirm your account before logging in."
+                )
+            }
+
+            return AuthResult(
+                session: AuthSession(supabaseSession: session),
+                message: nil
+            )
+        } catch {
+            throw AuthServiceError.requestFailed(friendlyMessage(from: error))
+        }
     }
 
     func signIn(email: String, password: String) async throws -> AuthResult {
-        let response: SignInResponse = try await send(
-            path: "/auth/v1/token?grant_type=password",
-            method: "POST",
-            body: AuthCredentials(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
-        )
+        guard let client else {
+            throw AuthServiceError.missingConfiguration
+        }
 
-        return AuthResult(
-            session: AuthSession(
-                accessToken: response.accessToken,
-                refreshToken: response.refreshToken,
-                user: response.user
-            ),
-            message: nil
-        )
+        do {
+            let session = try await client.auth.signIn(
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                password: password
+            )
+
+            return AuthResult(session: AuthSession(supabaseSession: session), message: nil)
+        } catch {
+            throw AuthServiceError.requestFailed(friendlyMessage(from: error))
+        }
     }
 
-    func refreshSession(refreshToken: String) async throws -> AuthSession {
-        let response: SignInResponse = try await send(
-            path: "/auth/v1/token?grant_type=refresh_token",
-            method: "POST",
-            body: RefreshSessionRequest(refreshToken: refreshToken)
-        )
+    func restoreSession() async throws -> AuthSession? {
+        guard let client else {
+            throw AuthServiceError.missingConfiguration
+        }
 
-        return AuthSession(
-            accessToken: response.accessToken,
-            refreshToken: response.refreshToken,
-            user: response.user
-        )
+        do {
+            return try await AuthSession(supabaseSession: client.auth.session)
+        } catch AuthError.sessionMissing {
+            do {
+                return try await migrateLegacySessionIfNeeded(using: client)
+            } catch {
+                throw AuthServiceError.requestFailed(friendlyMessage(from: error))
+            }
+        } catch {
+            throw AuthServiceError.requestFailed(friendlyMessage(from: error))
+        }
+    }
+
+    func validSession() async throws -> AuthSession? {
+        try await restoreSession()
+    }
+
+    func signOut() async throws {
+        guard let client else { return }
+        try await client.auth.signOut()
+    }
+
+    func authSessionChanges() -> AsyncStream<AuthSession?> {
+        guard let client else {
+            return AsyncStream { continuation in
+                continuation.finish()
+            }
+        }
+
+        return AsyncStream { continuation in
+            let task = Task {
+                for await change in client.auth.authStateChanges {
+                    continuation.yield(change.session.map(AuthSession.init(supabaseSession:)))
+                }
+                continuation.finish()
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 
     func fetchProfile(for authSession: AuthSession) async throws -> UserProfile {
@@ -331,6 +406,72 @@ final class AuthService {
 
         return message
     }
+
+    private func friendlyMessage(from error: Error) -> String {
+        friendlyMessage(from: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+    }
+
+    private func migrateLegacySessionIfNeeded(using client: SupabaseClient) async throws -> AuthSession? {
+        let legacyStorage = LegacyAuthSessionStorage()
+        guard let legacySession = legacyStorage.loadSession() else { return nil }
+        guard let refreshToken = legacySession.refreshToken else {
+            legacyStorage.deleteSession()
+            return nil
+        }
+
+        do {
+            let session = try await client.auth.setSession(
+                accessToken: legacySession.accessToken,
+                refreshToken: refreshToken
+            )
+            legacyStorage.deleteSession()
+            return AuthSession(supabaseSession: session)
+        } catch {
+            legacyStorage.deleteSession()
+            throw error
+        }
+    }
+}
+
+private extension AvatarConfig {
+    var supabaseMetadataJSON: [String: AnyJSON] {
+        [
+            "version": .integer(version),
+            "character": .string(character),
+            "hat": .integer(hat)
+        ]
+    }
+}
+
+private final class LegacyAuthSessionStorage {
+    private let service = "\(Bundle.main.bundleIdentifier ?? "trongpapaya.pico").auth-session"
+    private let account = "supabase-session"
+
+    func loadSession() -> AuthSession? {
+        var query = baseQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(AuthSession.self, from: data)
+    }
+
+    func deleteSession() {
+        SecItemDelete(baseQuery as CFDictionary)
+    }
+
+    private var baseQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+    }
 }
 
 private extension String {
@@ -341,47 +482,6 @@ private extension String {
     var normalizedDisplayName: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }
-}
-
-private struct AuthCredentials: Encodable {
-    let email: String
-    let password: String
-}
-
-private struct RefreshSessionRequest: Encodable {
-    let refreshToken: String
-}
-
-private struct SignUpRequest: Encodable {
-    let email: String
-    let password: String
-    let data: SignUpMetadata
-}
-
-private struct SignUpMetadata: Encodable {
-    let username: String
-    let displayName: String
-    let avatarConfig: AvatarConfig
-    let timeZone: String
-}
-
-private struct SignUpResponse: Decodable {
-    let accessToken: String?
-    let refreshToken: String?
-    let user: AuthUser?
-    let session: SessionPayload?
-}
-
-private struct SignInResponse: Decodable {
-    let accessToken: String
-    let refreshToken: String?
-    let user: AuthUser?
-}
-
-private struct SessionPayload: Decodable {
-    let accessToken: String
-    let refreshToken: String?
-    let user: AuthUser?
 }
 
 private struct UserProfileResponse: Decodable {

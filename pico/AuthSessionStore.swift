@@ -20,13 +20,17 @@ final class AuthSessionStore: ObservableObject {
     @Published var notice: String?
 
     private let authService: AuthService
-    private let sessionStorage: AuthSessionStorage
     private var hasLoadedProfile = false
     private var hasAttemptedSessionRestore = false
+    private var hasStartedAuthSessionObservation = false
+    private var authSessionTask: Task<Void, Never>?
 
-    init(authService: AuthService? = nil, sessionStorage: AuthSessionStorage? = nil) {
+    init(authService: AuthService? = nil) {
         self.authService = authService ?? AuthService()
-        self.sessionStorage = sessionStorage ?? AuthSessionStorage()
+    }
+
+    deinit {
+        authSessionTask?.cancel()
     }
 
     func signUp(
@@ -54,13 +58,16 @@ final class AuthSessionStore: ObservableObject {
     }
 
     func signOut() {
-        sessionStorage.deleteSession()
         session = nil
         notice = nil
         resetProfile()
+        Task {
+            try? await authService.signOut()
+        }
     }
 
     func restoreSessionIfNeeded() async {
+        startAuthSessionObservationIfNeeded()
         guard !hasAttemptedSessionRestore else { return }
         hasAttemptedSessionRestore = true
         await restoreSession()
@@ -74,6 +81,16 @@ final class AuthSessionStore: ObservableObject {
     func reloadProfile() async {
         hasLoadedProfile = false
         await loadProfile()
+    }
+
+    func refreshSessionIfNeeded() async {
+        do {
+            if let session = try await authService.validSession() {
+                applySession(session)
+            }
+        } catch {
+            notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
     }
 
     func updateProfile(displayName: String, avatarConfig: AvatarConfig) async {
@@ -121,15 +138,15 @@ final class AuthSessionStore: ObservableObject {
 
         do {
             let result = try await operation()
-            session = result.session
             notice = result.message
             resetProfile()
             if let session = result.session {
-                try? sessionStorage.saveSession(session)
+                applySession(session)
                 try? await authService.syncUserTimezone(for: session)
                 await loadProfileIfNeeded()
             } else {
-                sessionStorage.deleteSession()
+                session = nil
+                resetProfile()
             }
         } catch {
             notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -140,38 +157,47 @@ final class AuthSessionStore: ObservableObject {
         isRestoringSession = true
         defer { isRestoringSession = false }
 
-        let storedSession: AuthSession?
         do {
-            storedSession = try sessionStorage.loadSession()
-        } catch {
-            sessionStorage.deleteSession()
-            return
-        }
+            guard let restoredSession = try await authService.restoreSession() else {
+                return
+            }
 
-        guard let storedSession else {
-            return
-        }
-
-        guard let refreshToken = storedSession.refreshToken else {
-            sessionStorage.deleteSession()
-            return
-        }
-
-        do {
-            let refreshedSession = try await authService.refreshSession(refreshToken: refreshToken)
-            try? sessionStorage.saveSession(refreshedSession)
-            session = refreshedSession
+            applySession(restoredSession)
             resetProfile()
-            try? await authService.syncUserTimezone(for: refreshedSession)
+            try? await authService.syncUserTimezone(for: restoredSession)
             await loadProfileIfNeeded()
-        } catch AuthServiceError.requestFailed {
-            sessionStorage.deleteSession()
+        } catch {
             session = nil
             resetProfile()
-        } catch {
-            session = storedSession
+        }
+    }
+
+    private func applySession(_ nextSession: AuthSession) {
+        if session?.user?.id != nextSession.user?.id {
             resetProfile()
-            await loadProfileIfNeeded()
+        }
+        session = nextSession
+    }
+
+    private func startAuthSessionObservationIfNeeded() {
+        guard !hasStartedAuthSessionObservation else { return }
+        hasStartedAuthSessionObservation = true
+
+        authSessionTask = Task { [weak self] in
+            guard let authService = await self?.authService else { return }
+
+            for await session in authService.authSessionChanges() {
+                await MainActor.run {
+                    guard let self else { return }
+
+                    if let session {
+                        self.applySession(session)
+                    } else {
+                        self.session = nil
+                        self.resetProfile()
+                    }
+                }
+            }
         }
     }
 
