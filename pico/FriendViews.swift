@@ -21,7 +21,7 @@ struct FriendsPage: View {
                     } label: {
                         FriendActionButtonContent(
                             title: "Add friend",
-                            systemImage: "person.badge.plus"
+                            icon: .userPlusRegular
                         )
                     }
                     .buttonStyle(.plain)
@@ -31,8 +31,8 @@ struct FriendsPage: View {
                         IncomingRequestsPage()
                     } label: {
                         FriendActionButtonContent(
-                            title: "Incoming requests",
-                            systemImage: "tray",
+                            title: "Requests",
+                            icon: .inboxRegular,
                             badgeCount: friendStore.incomingRequests.count
                         )
                     }
@@ -85,7 +85,7 @@ struct FriendsPage: View {
             FriendEmptyStateCard(
                 title: "No friends yet",
                 message: "Add a friend by searching for their username.",
-                systemImage: "person.2"
+                icon: .usersRegular
             )
         } else {
             FriendsListCard(friends: friendStore.friends)
@@ -230,7 +230,7 @@ private struct IncomingRequestsPage: View {
             FriendEmptyStateCard(
                 title: "No incoming requests",
                 message: "Friend requests sent to you will appear here.",
-                systemImage: "tray"
+                icon: .inboxRegular
             )
         } else {
             ForEach(friendStore.incomingRequests) { request in
@@ -342,7 +342,7 @@ struct UserProfileSearchList<RowContent: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
             HStack(spacing: PicoSpacing.compact) {
-                Image(systemName: "magnifyingglass")
+                PicoIcon(.magnifyingGlassRegular, size: 16)
                     .foregroundStyle(PicoColors.textMuted)
 
                 TextField(placeholder, text: $searchText)
@@ -401,9 +401,9 @@ private struct AddFriendSearchResultRow: View {
     @ViewBuilder
     private var trailingAction: some View {
         if isAlreadyFriend {
-            statusLabel("Friends", systemImage: "checkmark.circle.fill")
+            statusLabel("Friends", icon: .usersSolid)
         } else if isRequestSent {
-            statusLabel("Sent", systemImage: "paperplane.fill")
+            statusLabel("Sent", icon: .paperAirplaneRegular)
         } else {
             Button(action: sendRequest) {
                 HStack(spacing: PicoSpacing.tiny) {
@@ -427,9 +427,9 @@ private struct AddFriendSearchResultRow: View {
         }
     }
 
-    private func statusLabel(_ text: String, systemImage: String) -> some View {
+    private func statusLabel(_ text: String, icon: PicoIconAsset) -> some View {
         HStack(spacing: PicoSpacing.tiny) {
-            Image(systemName: systemImage)
+            PicoIcon(icon, size: 14)
             Text(text)
         }
         .font(PicoTypography.caption.weight(.bold))
@@ -440,13 +440,12 @@ private struct AddFriendSearchResultRow: View {
 
 private struct FriendActionButtonContent: View {
     let title: String
-    let systemImage: String
+    let icon: PicoIconAsset
     var badgeCount: Int = 0
 
     var body: some View {
-        HStack(spacing: PicoSpacing.tiny) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
+        HStack(spacing: PicoSpacing.iconTextGap) {
+            PicoIcon(icon, size: 15)
                 .foregroundStyle(PicoColors.primary)
 
             Text(title)
@@ -489,8 +488,7 @@ private struct FriendsListCard: View {
                     HStack(spacing: PicoSpacing.iconTextGap) {
                         FriendProfileRowView(profile: friend)
 
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                        PicoIcon(.chevronRightRegular, size: 14)
                             .foregroundStyle(PicoColors.textMuted)
                     }
                     .padding(.horizontal, PicoSpacing.cardPadding)
@@ -590,12 +588,11 @@ private struct FriendCompactCardButtonStyle: ButtonStyle {
 private struct FriendEmptyStateCard: View {
     let title: String
     let message: String
-    let systemImage: String
+    let icon: PicoIconAsset
 
     var body: some View {
         VStack(spacing: PicoSpacing.compact) {
-            Image(systemName: systemImage)
-                .font(.system(size: 28, weight: .semibold, design: .rounded))
+            PicoIcon(icon, size: 28)
                 .foregroundStyle(PicoColors.primary)
 
             Text(title)

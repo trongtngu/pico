@@ -1,0 +1,155 @@
+alter table public.focus_sessions
+    drop constraint if exists focus_sessions_duration_seconds;
+
+update public.focus_sessions
+set duration_seconds = 600,
+    planned_end_at = case
+        when status in ('launched', 'live') and started_at is not null
+            then started_at + make_interval(secs => 600)
+        else planned_end_at
+    end
+where status in ('lobby', 'launched', 'live')
+    and duration_seconds < 600;
+
+alter table public.focus_sessions
+    add constraint focus_sessions_duration_seconds
+        check (duration_seconds between 600 and 86400);
+
+create or replace function public.create_focus_session(
+    session_mode text default 'solo',
+    duration_seconds integer default 1800
+)
+returns jsonb
+security definer
+set search_path = public
+language plpgsql
+as $$
+declare
+    requester uuid := auth.uid();
+    new_session_id uuid;
+    normalized_mode text := lower(btrim(session_mode));
+begin
+    if requester is null then
+        raise exception 'You must be signed in to create a focus session.' using errcode = '28000';
+    end if;
+
+    perform pg_advisory_xact_lock(hashtextextended(requester::text, 0));
+    perform public.reconcile_open_focus_sessions();
+
+    if normalized_mode is null or normalized_mode not in ('solo', 'multiplayer') then
+        raise exception 'Focus session mode must be solo or multiplayer.' using errcode = '22023';
+    end if;
+
+    if duration_seconds is null or duration_seconds < 600 or duration_seconds > 86400 then
+        raise exception 'Focus session duration must be between 10 minutes and 24 hours.' using errcode = '22023';
+    end if;
+
+    if exists (
+        select 1
+        from public.session_members
+        join public.focus_sessions
+            on focus_sessions.id = session_members.session_id
+        where session_members.user_id = requester
+            and session_members.status = 'joined'
+            and (
+                focus_sessions.status = 'lobby'
+                or (
+                    focus_sessions.mode = 'solo'
+                    and focus_sessions.status = 'live'
+                )
+                or (
+                    focus_sessions.mode = 'multiplayer'
+                    and focus_sessions.status = 'launched'
+                    and focus_sessions.planned_end_at > now()
+                    and not exists (
+                        select 1
+                        from public.session_events
+                        where session_events.session_id = focus_sessions.id
+                            and session_events.user_id = requester
+                            and session_events.event_type in ('member_completed', 'member_interrupted')
+                    )
+                )
+            )
+    ) then
+        raise exception 'You already have an open focus session.' using errcode = '23505';
+    end if;
+
+    insert into public.focus_sessions (
+        owner_id,
+        mode,
+        duration_seconds
+    )
+    values (
+        requester,
+        normalized_mode,
+        duration_seconds
+    )
+    returning id into new_session_id;
+
+    insert into public.session_members (
+        session_id,
+        user_id,
+        role,
+        status
+    )
+    values (
+        new_session_id,
+        requester,
+        'host',
+        'joined'
+    );
+
+    insert into public.session_events (session_id, user_id, event_type)
+    values (new_session_id, requester, 'member_joined');
+
+    return public.focus_session_payload(new_session_id);
+end;
+$$;
+
+revoke all on function public.create_focus_session(text, integer) from public, anon, authenticated;
+grant execute on function public.create_focus_session(text, integer) to authenticated;
+
+create or replace function public.update_focus_session_config(
+    target_session_id uuid,
+    duration_seconds integer
+)
+returns jsonb
+security definer
+set search_path = public
+language plpgsql
+as $$
+declare
+    requester uuid := auth.uid();
+begin
+    if requester is null then
+        raise exception 'You must be signed in to update a focus session.' using errcode = '28000';
+    end if;
+
+    if duration_seconds is null or duration_seconds < 600 or duration_seconds > 86400 then
+        raise exception 'Focus session duration must be between 10 minutes and 24 hours.' using errcode = '22023';
+    end if;
+
+    update public.focus_sessions
+    set duration_seconds = update_focus_session_config.duration_seconds
+    where id = target_session_id
+        and owner_id = requester
+        and status = 'lobby'
+        and exists (
+            select 1
+            from public.session_members
+            where session_members.session_id = target_session_id
+                and session_members.user_id = requester
+                and session_members.role = 'host'
+                and session_members.status = 'joined'
+        );
+
+    if not found then
+        raise exception 'No configurable focus lobby was found.' using errcode = 'P0002';
+    end if;
+
+    return public.focus_session_payload(target_session_id);
+end;
+$$;
+
+revoke all on function public.update_focus_session_config(uuid, integer) from public, anon, authenticated;
+grant execute on function public.update_focus_session_config(uuid, integer) to authenticated;

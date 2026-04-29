@@ -30,8 +30,7 @@ struct FocusCompletionContext: Equatable {
 @MainActor
 final class FocusStore: ObservableObject {
     static let defaultDurationSeconds = 30 * 60
-    // TODO: REVERT THIS - restore the 60-second minimum after short-session testing.
-    static let minimumDurationSeconds = 5
+    static let minimumDurationSeconds = 10 * 60
     static let maximumDurationSeconds = 120 * 60
 
     @Published private(set) var lobbySession: FocusSession?
@@ -84,15 +83,8 @@ final class FocusStore: ObservableObject {
 
         subscribeToRealtime(for: authSession, sessionID: nil)
 
-        guard let savedState = loadSavedState(), savedState.userID == userID else {
-            _ = await reconcileOpenSessions(for: authSession)
-            await loadIncomingInvites(for: authSession)
-            return
-        }
-
-        hasPendingResultSync = savedState.pendingResult != nil
-
-        if let pendingResult = savedState.pendingResult {
+        if let savedState = loadSavedState(), savedState.userID == userID, let pendingResult = savedState.pendingResult {
+            hasPendingResultSync = true
             lobbySession = nil
             activeSession = nil
             sessionDetail = nil
@@ -101,21 +93,12 @@ final class FocusStore: ObservableObject {
             return
         }
 
-        applyRestoredSession(savedState.session)
-        let reconciliation = await reconcileOpenSessions(for: authSession)
-        if savedState.session.isLobby, reconciliation?.changedOpenSessionState == true {
-            lobbySession = nil
-            sessionDetail = nil
-            clearSavedState()
-            await loadIncomingInvites(for: authSession)
-            return
+        if let savedState = loadSavedState(), savedState.userID == userID {
+            applyRestoredSession(savedState.session)
         }
 
-        await refreshDetailIfNeeded(for: savedState.session, authSession: authSession)
-        subscribeToRealtime(for: authSession, sessionID: savedState.session.id)
-        await loadIncomingInvites(for: authSession)
-
-        if savedState.session.isLive, savedState.session.remainingSeconds() == 0 {
+        await syncOpenSessionState(for: authSession)
+        if activeSession?.remainingSeconds() == 0 {
             await completeCurrentSession(for: authSession)
         }
     }
@@ -124,20 +107,7 @@ final class FocusStore: ObservableObject {
         await retryPendingResult(for: authSession)
         guard let authSession else { return }
 
-        let reconciliation = await reconcileOpenSessions(for: authSession)
-        if lobbySession?.isLobby == true, reconciliation?.changedOpenSessionState == true {
-            lobbySession = nil
-            sessionDetail = nil
-            clearSavedState()
-            subscribeToRealtime(for: authSession, sessionID: nil)
-            await loadIncomingInvites(for: authSession)
-            return
-        }
-
-        if let session = lobbySession ?? activeSession {
-            await refreshDetailIfNeeded(for: session, authSession: authSession)
-        }
-        await loadIncomingInvites(for: authSession)
+        await syncOpenSessionState(for: authSession)
     }
 
     func loadIncomingInvites(for authSession: AuthSession?) async {
@@ -254,6 +224,11 @@ final class FocusStore: ObservableObject {
             let session = try await focusService.joinSession(invite.id, for: authSession)
             incomingInvites.removeAll { $0.id == invite.id }
             applyOpenSession(session, authSession: authSession)
+            guard !session.isFinished else {
+                subscribeToRealtime(for: authSession, sessionID: nil)
+                await loadIncomingInvites(for: authSession)
+                return
+            }
             await refreshDetailIfNeeded(for: session, authSession: authSession)
             subscribeToRealtime(for: authSession, sessionID: session.id)
         } catch {
@@ -510,7 +485,7 @@ final class FocusStore: ObservableObject {
             resultSession = nil
             completionContext = nil
             notice = nil
-        case .live:
+        case .launched, .live:
             lobbySession = nil
             activeSession = session
             resultSession = nil
@@ -530,7 +505,7 @@ final class FocusStore: ObservableObject {
             completionContext = nil
             notice = nil
             saveState(LocalFocusState(userID: authSession.user?.id ?? session.ownerID, session: session, pendingResult: nil))
-        case .live:
+        case .launched, .live:
             lobbySession = nil
             activeSession = session
             resultSession = nil
@@ -544,6 +519,11 @@ final class FocusStore: ObservableObject {
     }
 
     private func applyFinishedSession(_ session: FocusSession) {
+        if session.status == .cancelled {
+            clearFocusSessionState()
+            return
+        }
+
         lobbySession = nil
         activeSession = nil
         sessionDetail = nil
@@ -559,9 +539,50 @@ final class FocusStore: ObservableObject {
 
         do {
             let detail = try await focusService.fetchSessionDetail(session.id, for: authSession)
+            if detail.session.isFinished {
+                applyOpenSession(detail.session, authSession: authSession)
+                subscribeToRealtime(for: authSession, sessionID: nil)
+                await loadIncomingInvites(for: authSession)
+                return
+            }
+
             sessionDetail = detail
             applyOpenSession(detail.session, authSession: authSession)
         } catch {
+            if error.isMissingFocusSessionState {
+                clearFocusSessionState()
+                subscribeToRealtime(for: authSession, sessionID: nil)
+                _ = await reconcileOpenSessions(for: authSession)
+                await loadIncomingInvites(for: authSession)
+                return
+            }
+
+            notice = displayMessage(for: error)
+        }
+    }
+
+    private func syncOpenSessionState(for authSession: AuthSession) async {
+        do {
+            let detail = try await focusService.fetchCurrentSessionDetail(for: authSession)
+            guard let detail, !detail.session.isFinished else {
+                clearFocusSessionState()
+                subscribeToRealtime(for: authSession, sessionID: nil)
+                await loadIncomingInvites(for: authSession)
+                return
+            }
+
+            applyOpenSession(detail.session, authSession: authSession)
+            sessionDetail = detail.session.mode == .multiplayer ? detail : nil
+            subscribeToRealtime(for: authSession, sessionID: detail.session.id)
+            await loadIncomingInvites(for: authSession)
+        } catch {
+            if error.isMissingFocusSessionState {
+                clearFocusSessionState()
+                subscribeToRealtime(for: authSession, sessionID: nil)
+                await loadIncomingInvites(for: authSession)
+                return
+            }
+
             notice = displayMessage(for: error)
         }
     }
@@ -700,14 +721,10 @@ final class FocusStore: ObservableObject {
         isRealtimeRefreshing = true
         defer { isRealtimeRefreshing = false }
 
-        if let session = lobbySession ?? activeSession {
-            await refreshDetailIfNeeded(for: session, authSession: authSession)
-            if let updatedSession = lobbySession ?? activeSession, updatedSession.isLive, updatedSession.remainingSeconds() == 0 {
-                await completeCurrentSession(for: authSession)
-            }
+        await syncOpenSessionState(for: authSession)
+        if let updatedSession = activeSession, updatedSession.isLive, updatedSession.remainingSeconds() == 0 {
+            await completeCurrentSession(for: authSession)
         }
-
-        await loadIncomingInvites(for: authSession)
     }
 
     private func liveSavedSession() -> FocusSession? {
@@ -736,6 +753,20 @@ final class FocusStore: ObservableObject {
         userDefaults.removeObject(forKey: legacySavedStateKey)
     }
 
+    private func clearFocusSessionState() {
+        pendingBackgroundInterruptionTask?.cancel()
+        pendingBackgroundInterruptionTask = nil
+        lobbySession = nil
+        activeSession = nil
+        resultSession = nil
+        sessionDetail = nil
+        hasPendingResultSync = false
+        completionScoreReceipt = nil
+        completionContext = nil
+        notice = nil
+        clearSavedState()
+    }
+
     private func clearInMemoryState() {
         lobbySession = nil
         activeSession = nil
@@ -753,6 +784,23 @@ final class FocusStore: ObservableObject {
     private func displayMessage(for error: Error) -> String? {
         guard !error.isCancellation else { return nil }
         return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+private extension Error {
+    var isMissingFocusSessionState: Bool {
+        guard
+            let focusError = self as? FocusServiceError,
+            case let .requestFailed(message) = focusError
+        else {
+            return false
+        }
+
+        return message.localizedCaseInsensitiveContains("P0002")
+            || message.localizedCaseInsensitiveContains("No focus session")
+            || message.localizedCaseInsensitiveContains("No focus lobby")
+            || message.localizedCaseInsensitiveContains("No joined focus session membership")
+            || message.localizedCaseInsensitiveContains("No open focus session")
     }
 }
 

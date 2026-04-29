@@ -176,11 +176,31 @@ private struct PicoSideNavigation: View {
     let onSelect: (AppTab) -> Void
 
     private var width: CGFloat {
-        isPersistent ? 78 : 286
+        isPersistent ? 84 : 286
     }
 
     private var horizontalPadding: CGFloat {
         isPersistent ? PicoSpacing.iconTextGap : PicoSpacing.standard
+    }
+
+    private var rowIconSize: CGFloat {
+        isPersistent ? 25 : 26
+    }
+
+    private var rowIconFrameSize: CGFloat {
+        32
+    }
+
+    private var rowContentSpacing: CGFloat {
+        isPersistent ? 0 : PicoSpacing.standard
+    }
+
+    private var rowHorizontalPadding: CGFloat {
+        isPersistent ? 0 : PicoSpacing.standard
+    }
+
+    private var rowWidth: CGFloat? {
+        isPersistent ? 58 : nil
     }
 
     var body: some View {
@@ -197,9 +217,9 @@ private struct PicoSideNavigation: View {
                 Button {
                     onSelect(tab)
                 } label: {
-                    HStack(spacing: PicoSpacing.iconTextGap) {
-                        tab.icon
-                            .frame(width: 24, height: 24)
+                    HStack(spacing: rowContentSpacing) {
+                        tab.icon(isSelected: selectedTab == tab, size: rowIconSize)
+                            .frame(width: rowIconFrameSize, height: rowIconFrameSize)
 
                         if !isPersistent {
                             Text(tab.title)
@@ -208,10 +228,10 @@ private struct PicoSideNavigation: View {
                             Spacer(minLength: 0)
                         }
                     }
-                    .padding(.horizontal, isPersistent ? PicoSpacing.compact : PicoSpacing.standard)
+                    .padding(.horizontal, rowHorizontalPadding)
                     .foregroundStyle(selectedTab == tab ? PicoColors.primary : PicoColors.textPrimary)
-                    .frame(maxWidth: isPersistent ? 52 : .infinity)
-                    .frame(height: 52)
+                    .frame(maxWidth: rowWidth ?? .infinity)
+                    .frame(height: 56)
                     .background {
                         if selectedTab == tab {
                             RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
@@ -266,21 +286,20 @@ private enum AppTab: String, CaseIterable, Identifiable {
         }
     }
 
-    @ViewBuilder
-    var icon: some View {
+    func icon(isSelected: Bool, size: CGFloat = 20) -> some View {
+        PicoIcon(iconAsset(isSelected: isSelected), size: size)
+    }
+
+    private func iconAsset(isSelected: Bool) -> PicoIconAsset {
         switch self {
         case .home:
-            Image(systemName: "square.grid.3x3")
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
+            isSelected ? .homeSolid : .homeRegular
         case .bonds:
-            Image(systemName: "leaf.fill")
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
+            isSelected ? .sparklesSolid : .sparklesRegular
         case .friends:
-            Image(systemName: "person.2")
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
+            isSelected ? .usersSolid : .usersRegular
         case .settings:
-            Image(systemName: "person.crop.circle")
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
+            isSelected ? .userCircleSolid : .userCircleRegular
         }
     }
 
@@ -316,6 +335,7 @@ private struct HomePage: View {
     let openNavigation: () -> Void
     @State private var isStartFocusSheetPresented = false
     @State private var startFocusStep = StartFocusSheetStep.modePicker
+    @State private var startFocusSheetHeight: CGFloat = 360
 
     var body: some View {
         ZStack {
@@ -374,9 +394,11 @@ private struct HomePage: View {
         .sheet(isPresented: $isStartFocusSheetPresented) {
             StartFocusSheet(
                 step: $startFocusStep,
-                isPresented: $isStartFocusSheetPresented
+                isPresented: $isStartFocusSheetPresented,
+                measuredHeight: $startFocusSheetHeight,
+                usesContentSizedLayout: usesContentSizedStartFocusSheet
             )
-            .presentationDetents([.medium, .large])
+            .presentationDetents(startFocusSheetDetents)
             .presentationDragIndicator(.visible)
             .presentationBackground(PicoColors.appBackground)
             .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
@@ -393,6 +415,24 @@ private struct HomePage: View {
             guard focusStore.activeSession != nil else { return }
             isStartFocusSheetPresented = false
         }
+    }
+
+    private var usesContentSizedStartFocusSheet: Bool {
+        if focusStore.lobbySession?.mode == .solo {
+            return true
+        }
+        guard focusStore.lobbySession == nil else { return false }
+        return startFocusStep == .modePicker
+            || startFocusStep == .soloConfig
+            || startFocusStep == .multiplayerConfig
+    }
+
+    private var startFocusSheetDetents: Set<PresentationDetent> {
+        guard usesContentSizedStartFocusSheet else {
+            return [.medium, .large]
+        }
+        let height = max(220, ceil(startFocusSheetHeight))
+        return [.height(height)]
     }
 
     private var gridResidents: [VillageResident] {
@@ -452,7 +492,7 @@ private struct HomeTopBar: View {
             },
             trailing: {
                 HStack(spacing: PicoSpacing.tiny) {
-                    Image(systemName: "flame.fill")
+                    PicoIcon(.fireSolid, size: 16)
                         .foregroundStyle(PicoColors.streakAccent)
 
                     Text("\(currentStreak)")
@@ -498,8 +538,7 @@ private struct PicoNavigationMenuButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
+            PicoIcon(.bars3Solid, size: 22)
                 .foregroundStyle(PicoColors.textPrimary)
                 .frame(width: 44, height: 44, alignment: .leading)
         }
@@ -593,8 +632,7 @@ private struct BondsPage: View {
             .picoCreamCard()
         } else if bonds.isEmpty {
             VStack(spacing: PicoSpacing.compact) {
-                Image(systemName: "leaf.fill")
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                PicoIcon(.sparklesRegular, size: 28)
                     .foregroundStyle(PicoColors.primary)
 
                 Text("No bonds yet")
@@ -1072,7 +1110,7 @@ private struct VillageHeroSection: View {
                         .font(PicoTypography.caption)
                         .foregroundStyle(PicoColors.textSecondary)
                 } else if let notice {
-                    Image(systemName: "exclamationmark.circle")
+                    PicoIcon(.infoRegular, size: 16)
                         .foregroundStyle(PicoColors.warning)
 
                     Text(notice)
@@ -1245,19 +1283,40 @@ private struct SegmentedScoreProgressBar: View {
     }
 }
 
+private struct StartFocusSheetHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct StartFocusSheet: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var focusStore: FocusStore
     @Binding var step: StartFocusSheetStep
     @Binding var isPresented: Bool
+    @Binding var measuredHeight: CGFloat
+    let usesContentSizedLayout: Bool
     @State private var multiplayerDurationSeconds = FocusStore.defaultDurationSeconds
 
     var body: some View {
         VStack(spacing: PicoSpacing.standard) {
             sheetHeader
 
-            if usesPinnedSheetContent {
+            if usesContentSizedLayout {
+                VStack(spacing: PicoSpacing.standard) {
+                    if usesPinnedSheetContent {
+                        noticeText
+                        sheetContent
+                    } else {
+                        sheetContent
+                        noticeText
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if usesPinnedSheetContent {
                 VStack(spacing: PicoSpacing.standard) {
                     noticeText
                     sheetContent
@@ -1277,8 +1336,19 @@ private struct StartFocusSheet: View {
         .padding(.horizontal, PicoCreamCardStyle.contentPadding)
         .padding(.top, PicoSpacing.section)
         .padding(.bottom, PicoSpacing.section)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxHeight: usesContentSizedLayout ? nil : .infinity, alignment: .top)
         .background(PicoColors.appBackground.ignoresSafeArea())
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: StartFocusSheetHeightPreferenceKey.self, value: proxy.size.height)
+            }
+        )
+        .onPreferenceChange(StartFocusSheetHeightPreferenceKey.self) { height in
+            guard usesContentSizedLayout, height > 0 else { return }
+            let roundedHeight = ceil(height)
+            guard abs(measuredHeight - roundedHeight) > 0.5 else { return }
+            measuredHeight = roundedHeight
+        }
         .task {
             await friendStore.loadFriends(for: sessionStore.session)
             await focusStore.refresh(for: sessionStore.session)
@@ -1342,16 +1412,16 @@ private struct StartFocusSheet: View {
         }
     }
 
-	    private var usesPinnedSheetContent: Bool {
-	        guard focusStore.resultSession == nil else { return false }
-	        if focusStore.lobbySession != nil {
-	            return true
-	        }
-	        return step == .soloConfig
-	            || step == .multiplayerConfig
-	            || step == .multiplayerInviteMore
-	            || step == .multiplayerLobby
-	    }
+    private var usesPinnedSheetContent: Bool {
+        guard focusStore.resultSession == nil else { return false }
+        if focusStore.lobbySession != nil {
+            return true
+        }
+        return step == .soloConfig
+            || step == .multiplayerConfig
+            || step == .multiplayerInviteMore
+            || step == .multiplayerLobby
+    }
 
     private var title: String {
         if focusStore.resultSession != nil {
@@ -1390,8 +1460,7 @@ private struct StartFocusSheet: View {
                         step = .modePicker
                     }
                 } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                    PicoIcon(.chevronLeftRegular, size: 18)
                         .foregroundStyle(PicoColors.textPrimary)
                         .frame(width: 36, height: 36)
                 }
@@ -1416,8 +1485,7 @@ private struct StartFocusSheet: View {
             Button {
                 isPresented = false
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                PicoIcon(.xMarkRegular, size: 18)
                     .foregroundStyle(PicoColors.textPrimary)
                     .frame(width: 36, height: 36)
             }
@@ -1439,41 +1507,34 @@ private struct FocusModePickerSheetContent: View {
     @EnvironmentObject private var focusStore: FocusStore
     @Binding var step: StartFocusSheetStep
 
-	    var body: some View {
-	        VStack(spacing: 0) {
-	            Spacer(minLength: 0)
-	
-	            VStack(spacing: PicoSpacing.iconTextGap) {
-	                FocusModeRow(
-	                    icon: "timer",
-	                    title: "Solo"
-	                ) {
-	                    step = .soloConfig
-	                }
-	
-	                FocusModeRow(
-	                    icon: "person.2",
-	                    title: "With friends"
-	                ) {
-	                    step = .multiplayerConfig
-	                }
+    var body: some View {
+        VStack(spacing: PicoSpacing.iconTextGap) {
+            FocusModeRow(
+                icon: .clockRegular,
+                title: "Solo"
+            ) {
+                step = .soloConfig
+            }
 
-	                if !focusStore.incomingInvites.isEmpty {
-	                    FocusModeRow(
-	                        icon: "envelope",
-	                        title: "Invites",
-	                        isHighlighted: true
-	                    ) {
-	                        step = .invites
-	                    }
-	                }
-	            }
-	            .frame(maxWidth: .infinity)
-	
-	            Spacer(minLength: 0)
-	        }
-	        .frame(maxWidth: .infinity, minHeight: 260)
-	    }
+            FocusModeRow(
+                icon: .usersRegular,
+                title: "With friends"
+            ) {
+                step = .multiplayerConfig
+            }
+
+            if !focusStore.incomingInvites.isEmpty {
+                FocusModeRow(
+                    icon: .envelopeRegular,
+                    title: "Invites",
+                    isHighlighted: true
+                ) {
+                    step = .invites
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
 }
 
 private struct IncomingFocusInvitesSheetContent: View {
@@ -1595,8 +1656,7 @@ private struct FocusDurationBadge: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "clock")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+            PicoIcon(.clockRegular, size: 13)
                 .foregroundStyle(PicoColors.primary)
 
             Text(homeFormattedDurationMinutes(seconds))
@@ -1616,18 +1676,20 @@ private struct FocusDurationBadge: View {
 }
 
 private struct FocusModeRow: View {
-    let icon: String
+    let icon: PicoIconAsset
     let title: String
     var isHighlighted = false
     let action: () -> Void
+    private let iconSize: CGFloat = 28
+    private let iconFrameSize: CGFloat = 36
+    private let chevronSize: CGFloat = 17
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: PicoSpacing.iconTextGap) {
-                Image(systemName: icon)
-                    .font(.system(size: 23, weight: .semibold, design: .rounded))
+            HStack(spacing: PicoSpacing.standard) {
+                PicoIcon(icon, size: iconSize)
                     .foregroundStyle(iconColor)
-                    .frame(width: 42, height: 42)
+                    .frame(width: iconFrameSize, height: iconFrameSize)
 
                 VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                     Text(title)
@@ -1637,11 +1699,12 @@ private struct FocusModeRow: View {
 
                 Spacer(minLength: 0)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                PicoIcon(.chevronRightRegular, size: chevronSize)
                     .foregroundStyle(chevronColor)
+                    .frame(width: 24, height: 24)
             }
-            .padding(PicoCreamCardStyle.sheetCardPadding)
+            .padding(.horizontal, PicoCreamCardStyle.sheetCardPadding)
+            .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(rowBackground)
             .clipShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous))
@@ -1674,6 +1737,47 @@ private struct FocusModeRow: View {
     }
 }
 
+private enum FocusSheetActionIconPlacement {
+    case leading
+    case trailing
+}
+
+private struct FocusSheetActionLabel: View {
+    let title: String
+    let icon: PicoIconAsset
+    var placement: FocusSheetActionIconPlacement = .leading
+    var showsProgress = false
+    var progressTint: Color = PicoColors.textPrimary
+
+    private let iconSize: CGFloat = 22
+    private let iconFrameSize: CGFloat = 28
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.iconTextGap) {
+            if placement == .leading {
+                iconView
+            }
+
+            Text(title)
+
+            if placement == .trailing {
+                iconView
+            }
+
+            if showsProgress {
+                ProgressView()
+                    .tint(progressTint)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var iconView: some View {
+        PicoIcon(icon, size: iconSize)
+            .frame(width: iconFrameSize, height: iconFrameSize)
+    }
+}
+
 private struct FocusDurationSlider: View {
     @Binding var durationSeconds: Int
     let isDisabled: Bool
@@ -1696,7 +1800,7 @@ private struct FocusDurationSlider: View {
             PicoRangeSlider(
                 value: sliderValue,
                 bounds: Double(FocusStore.minimumDurationSeconds)...Double(FocusStore.maximumDurationSeconds),
-                step: 5,
+                step: Double(5 * 60),
                 isDisabled: isDisabled
             )
             .padding(.horizontal, PicoSpacing.standard)
@@ -1789,8 +1893,6 @@ private struct SoloFocusConfigSheetContent: View {
 
     var body: some View {
         VStack(spacing: PicoSpacing.section) {
-            Spacer(minLength: 0)
-
             VStack(alignment: .center, spacing: PicoSpacing.standard) {
                 Text("Duration")
                     .font(PicoTypography.caption)
@@ -1804,8 +1906,6 @@ private struct SoloFocusConfigSheetContent: View {
                 padding: PicoCreamCardStyle.sheetCardPadding,
                 border: .clear
             )
-
-            Spacer(minLength: 0)
 
             Button {
                 Task {
@@ -1824,7 +1924,7 @@ private struct SoloFocusConfigSheetContent: View {
             .disabled(isBusy || focusStore.hasPendingResultSync)
             .opacity(isBusy || focusStore.hasPendingResultSync ? 0.62 : 1)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
         .onAppear {
             durationSeconds = clampedDurationSeconds(from: session?.durationSeconds ?? FocusStore.defaultDurationSeconds)
         }
@@ -1859,8 +1959,6 @@ private struct MultiplayerDurationSheetContent: View {
 
     var body: some View {
         VStack(spacing: PicoSpacing.section) {
-            Spacer(minLength: 0)
-
             VStack(alignment: .center, spacing: PicoSpacing.standard) {
                 Text("Duration")
                     .font(PicoTypography.caption)
@@ -1875,18 +1973,19 @@ private struct MultiplayerDurationSheetContent: View {
                 border: .clear
             )
 
-            Spacer(minLength: 0)
-
             Button {
                 step = .multiplayerInviteMore
             } label: {
-                Label("Invite friends", systemImage: "person.badge.plus")
+                FocusSheetActionLabel(
+                    title: "Invite friends",
+                    icon: .userPlusRegular
+                )
             }
             .buttonStyle(PicoSecondaryButtonStyle())
             .disabled(focusStore.hasPendingResultSync)
             .opacity(focusStore.hasPendingResultSync ? 0.62 : 1)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -1923,13 +2022,13 @@ private struct MultiplayerInviteFriendsSheetContent: View {
                     await sendInvites()
                 }
             } label: {
-                HStack {
-                    Label(buttonTitle, systemImage: "paperplane.fill")
-                    if isBusy {
-                        ProgressView()
-                            .tint(PicoColors.textPrimary)
-                    }
-                }
+                FocusSheetActionLabel(
+                    title: buttonTitle,
+                    icon: .paperAirplaneRegular,
+                    placement: .trailing,
+                    showsProgress: isBusy,
+                    progressTint: PicoColors.textPrimary
+                )
             }
             .buttonStyle(PicoSecondaryButtonStyle())
             .disabled(selectedFriendIDs.isEmpty || isBusy || focusStore.hasPendingResultSync)
@@ -2061,7 +2160,11 @@ private struct MultiplayerLobbySheetContent: View {
                         Button {
                             step = .multiplayerInviteMore
                         } label: {
-                            Label("Invite", systemImage: "person.badge.plus")
+                            HStack(spacing: PicoSpacing.compact) {
+                                PicoIcon(.userPlusRegular, size: 17)
+                                    .frame(width: 22, height: 22)
+                                Text("Invite")
+                            }
                                 .font(PicoTypography.caption.weight(.semibold))
                         }
                         .buttonStyle(.plain)
@@ -2095,8 +2198,7 @@ private struct MultiplayerLobbySheetContent: View {
 	                .layoutPriority(1)
 
                 HStack(spacing: 5) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    PicoIcon(.infoRegular, size: 13)
 
                     Text("Bond rewards unlock when both players finish")
                         .font(PicoTypography.caption)
@@ -2150,6 +2252,7 @@ private struct MultiplayerLobbySheetContent: View {
                     Text("Waiting for host to start")
                         .font(PicoTypography.caption)
                         .foregroundStyle(PicoColors.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
 
                     Button("Leave Lobby", role: .destructive) {
                         Task {
@@ -2353,7 +2456,7 @@ private struct FocusCompleteCard: View {
             return "Session Interrupted"
         case .cancelled:
             return "Session Cancelled"
-        case .lobby, .live:
+        case .lobby, .launched, .live:
             return "Session"
         }
     }
@@ -2433,7 +2536,7 @@ private struct FocusCompleteCard: View {
             HStack(alignment: .center) {
                 FocusCompleteMetric(
                     title: scoreLabel,
-                    systemImage: "plus",
+                    icon: .sparklesSolid,
                     iconColor: PicoColors.primary
                 )
 
@@ -2441,7 +2544,7 @@ private struct FocusCompleteCard: View {
 
                 FocusCompleteMetric(
                     title: streakLabel,
-                    systemImage: "flame.fill",
+                    icon: .fireSolid,
                     iconColor: PicoColors.streakAccent
                 )
             }
@@ -2453,12 +2556,12 @@ private struct FocusCompleteCard: View {
         [
             FocusCompleteMetricModel(
                 title: scoreLabel,
-                systemImage: "plus",
+                icon: .sparklesSolid,
                 iconColor: PicoColors.primary
             ),
             FocusCompleteMetricModel(
                 title: streakLabel,
-                systemImage: "flame.fill",
+                icon: .fireSolid,
                 iconColor: PicoColors.streakAccent
             )
         ]
@@ -2561,7 +2664,7 @@ private struct FocusCompleteGroupMemberPill: View {
 private struct FocusCompleteMetricModel: Identifiable {
     let id = UUID()
     let title: String
-    let systemImage: String
+    let icon: PicoIconAsset
     let iconColor: Color
 }
 
@@ -2578,7 +2681,7 @@ private struct FocusCompleteRewardGrid: View {
             ForEach(metrics) { metric in
                 FocusCompleteMetric(
                     title: metric.title,
-                    systemImage: metric.systemImage,
+                    icon: metric.icon,
                     iconColor: metric.iconColor
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2706,7 +2809,7 @@ private struct FocusCompleteConfettiParticle {
 
 private struct FocusCompleteMetric: View {
     let title: String
-    let systemImage: String
+    let icon: PicoIconAsset
     let iconColor: Color
 
     var body: some View {
@@ -2717,8 +2820,7 @@ private struct FocusCompleteMetric: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.84)
         } icon: {
-            Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+            PicoIcon(icon, size: 14)
                 .foregroundStyle(iconColor)
         }
         .labelStyle(.titleAndIcon)
@@ -3096,8 +3198,7 @@ private struct ProfileCardView: View {
 
             Spacer(minLength: 0)
 
-            Image(systemName: "pencil")
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
+            PicoIcon(.pencilRegular, size: 17)
                 .foregroundStyle(PicoColors.textSecondary)
                 .frame(width: 36, height: 36)
         }
@@ -3130,8 +3231,7 @@ private struct ProfileAvatarOutfitCard: View {
                     Button {
                         isShowingPointsInfo = true
                     } label: {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        PicoIcon(.infoRegular, size: 15)
                             .foregroundStyle(PicoColors.textSecondary)
                             .frame(width: 28, height: 28)
                     }
@@ -3158,8 +3258,8 @@ private struct ProfileAvatarOutfitCard: View {
                 Spacer(minLength: 0)
 
                 HStack(spacing: PicoSpacing.compact) {
-                    hatButton(systemImage: "chevron.left", action: previousHat)
-                    hatButton(systemImage: "chevron.right", action: nextHat)
+                    hatButton(icon: .chevronLeftRegular, action: previousHat)
+                    hatButton(icon: .chevronRightRegular, action: nextHat)
                 }
             }
             .padding(.horizontal, PicoCreamCardStyle.contentPadding)
@@ -3173,10 +3273,9 @@ private struct ProfileAvatarOutfitCard: View {
         }
     }
 
-    private func hatButton(systemImage: String, action: @escaping () -> Void) -> some View {
+    private func hatButton(icon: PicoIconAsset, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+            PicoIcon(icon, size: 17)
                 .foregroundStyle(canCycleHats ? PicoColors.textPrimary : PicoColors.textMuted)
                 .frame(width: 42, height: 42)
         }
@@ -3235,6 +3334,7 @@ private struct ProfileHatCollectionCard: View {
                                 .foregroundStyle(.white)
                         }
                     }
+                    .frame(width: 66, height: 66, alignment: .center)
 
                 Text(hat.name)
                     .font(PicoTypography.caption)
@@ -3250,7 +3350,7 @@ private struct ProfileHatCollectionCard: View {
                         .minimumScaleFactor(0.72)
                 }
             }
-            .frame(width: 82, height: 112, alignment: .top)
+            .frame(width: 82, height: 120, alignment: .top)
             .contentShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
             .opacity(isUnlocked ? 1 : 0.72)
         }
@@ -3330,7 +3430,10 @@ private struct ProfileSignOutBar: View {
 
     var body: some View {
         Button(role: .destructive, action: signOut) {
-            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+            HStack(spacing: PicoSpacing.tiny) {
+                PicoIcon(.logoutRegular, size: 18)
+                Text("Sign Out")
+            }
                 .font(PicoTypography.body.weight(.semibold))
                 .foregroundStyle(PicoColors.error)
                 .frame(maxWidth: .infinity)
@@ -3344,7 +3447,10 @@ private struct ProfileSignOutBar: View {
 private struct ProfileUnavailableView: View {
     var body: some View {
         ContentUnavailableView {
-            Label("Profile unavailable", systemImage: "person.crop.circle.badge.exclamationmark")
+            HStack(spacing: PicoSpacing.compact) {
+                PicoIcon(.userCircleRegular, size: 28)
+                Text("Profile unavailable")
+            }
         } description: {
             Text("Your public profile could not be loaded.")
         }

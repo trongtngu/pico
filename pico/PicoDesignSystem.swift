@@ -81,6 +81,52 @@ enum PicoTabStyle {
     static let barBorder = PicoColors.border
 }
 
+enum PicoIconAsset: String {
+    case bars3Solid = "bars-3_solid"
+    case chevronLeftRegular = "chevron-left_regular"
+    case chevronRightRegular = "chevron-right_regular"
+    case clockRegular = "clock_regular"
+    case envelopeRegular = "envelope_regular"
+    case fireRegular = "fire_regular"
+    case fireSolid = "fire_solid"
+    case homeRegular = "home_regular"
+    case homeSolid = "home_solid"
+    case inboxRegular = "inbox_regular"
+    case infoRegular = "info_regular"
+    case logoutRegular = "logout_regular"
+    case magnifyingGlassRegular = "magnifying-glass_regular"
+    case paperAirplaneRegular = "paper-airplane_regular"
+    case pencilRegular = "pencil_regular"
+    case sparklesRegular = "sparkles_regular"
+    case sparklesSolid = "sparkles_solid"
+    case userCircleRegular = "user_circle_regular"
+    case userCircleSolid = "user-circle_solid"
+    case userGroupRegular = "user_group_regular"
+    case userGroupSolid = "user-group_solid"
+    case userPlusRegular = "user_plus_regular"
+    case usersRegular = "users_regular"
+    case usersSolid = "users_solid"
+    case xMarkRegular = "x-mark_regular"
+}
+
+struct PicoIcon: View {
+    let asset: PicoIconAsset
+    var size: CGFloat
+
+    init(_ asset: PicoIconAsset, size: CGFloat = 20) {
+        self.asset = asset
+        self.size = size
+    }
+
+    var body: some View {
+        Image(asset.rawValue)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+    }
+}
+
 enum PicoCreamCardStyle {
     static let background = PicoColors.appBackground
     static let border = PicoColors.border
@@ -114,6 +160,23 @@ enum PicoSegmentedControlAppearance {
             [.foregroundColor: PicoUIColors.textPrimary],
             for: .selected
         )
+    }
+}
+
+enum PicoNavigationBarAppearance {
+    static func configure() {
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = PicoUIColors.appBackground
+        appearance.shadowColor = .clear
+        appearance.titleTextAttributes = [.foregroundColor: PicoUIColors.textPrimary]
+        appearance.largeTitleTextAttributes = [.foregroundColor: PicoUIColors.textPrimary]
+
+        let navigationBar = UINavigationBar.appearance()
+        navigationBar.standardAppearance = appearance
+        navigationBar.scrollEdgeAppearance = appearance
+        navigationBar.compactAppearance = appearance
+        navigationBar.tintColor = PicoUIColors.textPrimary
     }
 }
 #endif

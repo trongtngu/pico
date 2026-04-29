@@ -12,6 +12,7 @@ struct picoApp: App {
     init() {
         #if canImport(UIKit)
         PicoSegmentedControlAppearance.configure()
+        PicoNavigationBarAppearance.configure()
         #endif
     }
 

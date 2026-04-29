@@ -55,7 +55,10 @@ private struct CreateFocusLobbyView: View {
     var body: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Focus lobby", systemImage: selectedMode == .solo ? "timer" : "person.2")
+                HStack(spacing: PicoSpacing.compact) {
+                    PicoIcon(selectedMode == .solo ? .clockRegular : .usersRegular, size: 18)
+                    Text("Focus lobby")
+                }
                     .font(.headline)
 
                 Text(selectedMode == .solo ? "Create a lobby, choose a duration, then start when ready." : "Create a lobby, invite friends, then start when ready.")
@@ -172,14 +175,17 @@ private struct FocusLobbyView: View {
 
     init(session: FocusSession) {
         self.session = session
-        _durationMinutes = State(initialValue: max(1, session.durationSeconds / 60))
+        _durationMinutes = State(initialValue: Self.durationMinutes(from: session.durationSeconds))
     }
 
     var body: some View {
         Group {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(session.mode == .solo ? "Solo lobby" : "Multiplayer lobby", systemImage: session.mode == .solo ? "timer" : "person.2")
+                    HStack(spacing: PicoSpacing.compact) {
+                        PicoIcon(session.mode == .solo ? .clockRegular : .usersRegular, size: 18)
+                        Text(session.mode == .solo ? "Solo lobby" : "Multiplayer lobby")
+                    }
                         .font(.headline)
 
                     Text(lobbySubtitle)
@@ -188,7 +194,7 @@ private struct FocusLobbyView: View {
                 .padding(.vertical, 4)
 
                 if canManageLobby {
-                    Stepper(value: $durationMinutes, in: 1...180, step: 5) {
+                    Stepper(value: $durationMinutes, in: Self.minimumDurationMinutes...Self.maximumDurationMinutes, step: 5) {
                         LabeledContent("Duration", value: "\(durationMinutes) min")
                     }
 
@@ -248,11 +254,23 @@ private struct FocusLobbyView: View {
             }
         }
         .onChange(of: session.id) {
-            durationMinutes = max(1, session.durationSeconds / 60)
+            durationMinutes = Self.durationMinutes(from: session.durationSeconds)
         }
         .onChange(of: session.durationSeconds) {
-            durationMinutes = max(1, session.durationSeconds / 60)
+            durationMinutes = Self.durationMinutes(from: session.durationSeconds)
         }
+    }
+
+    private static var minimumDurationMinutes: Int {
+        FocusStore.minimumDurationSeconds / 60
+    }
+
+    private static var maximumDurationMinutes: Int {
+        FocusStore.maximumDurationSeconds / 60
+    }
+
+    private static func durationMinutes(from seconds: Int) -> Int {
+        min(maximumDurationMinutes, max(minimumDurationMinutes, seconds / 60))
     }
 
     private var canManageLobby: Bool {
@@ -428,7 +446,10 @@ private struct ActiveFocusSessionView: View {
         Group {
             Section {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label(session.mode == .solo ? "Focus in progress" : "Multiplayer focus", systemImage: session.mode == .solo ? "timer" : "person.2")
+                    HStack(spacing: PicoSpacing.compact) {
+                        PicoIcon(session.mode == .solo ? .clockRegular : .usersRegular, size: 18)
+                        Text(session.mode == .solo ? "Focus in progress" : "Multiplayer focus")
+                    }
                         .font(.headline)
 
                     Text(formattedDuration(session.remainingSeconds(at: now)))
@@ -491,7 +512,10 @@ private struct FocusResultView: View {
     var body: some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
-                Label(title, systemImage: icon)
+                HStack(spacing: PicoSpacing.compact) {
+                    PicoIcon(icon, size: 18)
+                    Text(title)
+                }
                     .font(.headline)
 
                 Text(subtitle)
@@ -532,7 +556,7 @@ private struct FocusResultView: View {
         switch session.status {
         case .lobby:
             "Session Lobby"
-        case .live:
+        case .launched, .live:
             "Session Live"
         case .completed:
             "Session Completed"
@@ -547,7 +571,7 @@ private struct FocusResultView: View {
         switch session.status {
         case .lobby:
             "This session has not started."
-        case .live:
+        case .launched, .live:
             "This session is still running."
         case .completed:
             "The full focus window was completed."
@@ -558,18 +582,18 @@ private struct FocusResultView: View {
         }
     }
 
-    private var icon: String {
+    private var icon: PicoIconAsset {
         switch session.status {
         case .lobby:
-            "person.crop.circle.badge.clock"
-        case .live:
-            "timer"
+            .usersRegular
+        case .launched, .live:
+            .clockRegular
         case .completed:
-            "checkmark.circle"
+            .sparklesSolid
         case .interrupted:
-            "xmark.circle"
+            .xMarkRegular
         case .cancelled:
-            "minus.circle"
+            .xMarkRegular
         }
     }
 }

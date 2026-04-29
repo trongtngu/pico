@@ -90,13 +90,16 @@ private struct AuthFormView: View {
                     .keyboardType(.emailAddress)
                     .textContentType(.emailAddress)
                     .autocorrectionDisabled()
+                    .foregroundStyle(PicoColors.textPrimary)
 
                 SecureField("Password", text: $password)
                     .textContentType(mode == .login ? .password : .newPassword)
+                    .foregroundStyle(PicoColors.textPrimary)
 
                 if mode == .signup {
                     SecureField("Confirm password", text: $confirmPassword)
                         .textContentType(.newPassword)
+                        .foregroundStyle(PicoColors.textPrimary)
                 }
             }
             .listRowBackground(PicoColors.softSurface)
@@ -110,12 +113,15 @@ private struct AuthFormView: View {
                         .onChange(of: username) {
                             username = normalizedUsername
                         }
+                        .foregroundStyle(PicoColors.textPrimary)
 
                     TextField("Display name", text: $displayName)
                         .textContentType(.name)
                         .autocorrectionDisabled()
+                        .foregroundStyle(PicoColors.textPrimary)
                 } header: {
                     Text("Profile")
+                        .foregroundStyle(PicoColors.textSecondary)
                 } footer: {
                     Text("Username can use lowercase letters, numbers, and underscores.")
                         .foregroundStyle(PicoColors.textSecondary)
@@ -154,6 +160,8 @@ private struct AuthFormView: View {
         .scrollContentBackground(.hidden)
         .background(PicoColors.appBackground.ignoresSafeArea())
         .tint(PicoColors.primary)
+        .toolbarColorScheme(.light, for: .navigationBar)
+        .preferredColorScheme(.light)
         .onChange(of: mode) {
             sessionStore.notice = nil
             confirmPassword = ""

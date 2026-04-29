@@ -14,6 +14,7 @@ enum FocusSessionMode: String, Codable, Equatable {
 
 enum FocusSessionStatus: String, Codable, Equatable {
     case lobby
+    case launched
     case live
     case interrupted
     case completed
@@ -53,7 +54,7 @@ struct FocusSession: Identifiable, Codable, Equatable {
     }
 
     var isLive: Bool {
-        status == .live
+        status == .live || status == .launched
     }
 
     var isFinished: Bool {
@@ -239,6 +240,17 @@ final class FocusService {
         }
 
         return detail
+    }
+
+    func fetchCurrentSessionDetail(for authSession: AuthSession) async throws -> FocusSessionDetail? {
+        let response: FocusSessionDetailResponse? = try await send(
+            path: "/rest/v1/rpc/fetch_current_focus_session_detail",
+            method: "POST",
+            body: EmptyFocusRequest(),
+            accessToken: authSession.accessToken
+        )
+
+        return response?.focusSessionDetail
     }
 
     func fetchIncomingInvites(for authSession: AuthSession) async throws -> [FocusSessionInvite] {
@@ -613,6 +625,7 @@ private struct FocusSessionInviteResponse: Decodable {
 }
 
 private struct FocusSupabaseErrorResponse: Decodable {
+    let code: String?
     let message: String?
     let msg: String?
     let error: String?
@@ -621,9 +634,10 @@ private struct FocusSupabaseErrorResponse: Decodable {
 
     var displayMessage: String? {
         let mainMessage = message ?? msg ?? errorDescription ?? error
+        let responseCode = code ?? errorCode
 
-        if let mainMessage, let errorCode {
-            return "\(mainMessage) (\(errorCode))"
+        if let mainMessage, let responseCode {
+            return "\(mainMessage) (\(responseCode))"
         }
 
         return mainMessage
