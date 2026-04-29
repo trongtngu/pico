@@ -362,7 +362,7 @@ private struct MultiplayerMembersSection: View {
             Text("Members")
         } footer: {
             if showsRewardNotice {
-                Text("Bond XP and new villagers unlock when both players complete a shared session.")
+                Text("Bond rewards unlock when both players finish.")
             }
         }
     }

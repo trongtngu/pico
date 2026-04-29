@@ -26,6 +26,7 @@ struct AppShellView: View {
     @StateObject private var friendStore = FriendStore()
     @StateObject private var focusStore = FocusStore()
     @StateObject private var villageStore = VillageStore()
+    @StateObject private var bondRewardClaimStore = BondRewardClaimStore()
     @StateObject private var scoreStore = ScoreStore()
 
     var body: some View {
@@ -71,6 +72,7 @@ struct AppShellView: View {
         .environmentObject(friendStore)
         .environmentObject(focusStore)
         .environmentObject(villageStore)
+        .environmentObject(bondRewardClaimStore)
         .environmentObject(scoreStore)
         .task(id: sessionStore.session?.user?.id) {
             await focusStore.restoreSavedState(for: sessionStore.session)
@@ -410,11 +412,24 @@ private struct HomePage: View {
     }
 
     private func refreshVillagePage() async {
-        await villageStore.loadResidents(for: sessionStore.session)
-        await focusStore.refresh(for: sessionStore.session)
+        await refreshLiveVillageData(
+            session: sessionStore.session,
+            focusStore: focusStore,
+            villageStore: villageStore
+        )
         await friendStore.loadFriends(for: sessionStore.session)
         await scoreStore.loadScore(for: sessionStore.session)
     }
+}
+
+@MainActor
+private func refreshLiveVillageData(
+    session: AuthSession?,
+    focusStore: FocusStore,
+    villageStore: VillageStore
+) async {
+    await focusStore.refresh(for: session)
+    await villageStore.loadResidents(for: session, force: true)
 }
 
 private struct HomeTopBar: View {
@@ -495,7 +510,10 @@ private struct PicoNavigationMenuButton: View {
 
 private struct BondsPage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var focusStore: FocusStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @State private var claimedReward: BondRewardClaimCelebration?
 
     private var bonds: [VillageResident] {
         villageStore.residents
@@ -537,8 +555,25 @@ private struct BondsPage: View {
             await villageStore.loadResidents(for: sessionStore.session)
         }
         .refreshable {
-            await villageStore.loadResidents(for: sessionStore.session)
+            await refreshLiveVillageData(
+                session: sessionStore.session,
+                focusStore: focusStore,
+                villageStore: villageStore
+            )
         }
+        .sheet(item: $claimedReward) { celebration in
+            BondRewardCelebrationSheet(celebration: celebration) {
+                claimedReward = nil
+            }
+            .presentationDetents([.height(430)])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(PicoColors.appBackground)
+            .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
+        }
+    }
+
+    private var currentUserID: UUID? {
+        sessionStore.session?.user?.id ?? sessionStore.profile?.userID
     }
 
     @ViewBuilder
@@ -581,23 +616,62 @@ private struct BondsPage: View {
                     .font(PicoTypography.caption)
                     .foregroundStyle(PicoColors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text("1 group session session = 1 bond xp.")
+
+                Text("1 group session = 1 bond XP.")
                     .font(PicoTypography.caption)
                     .foregroundStyle(PicoColors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                BondsListCard(residents: bonds)
+                BondsListCard(
+                    residents: bonds,
+                    ownerID: currentUserID,
+                    onClaim: claimReward
+                )
             }
         }
+    }
+
+    private func claimReward(for resident: VillageResident) {
+        guard let currentUserID else { return }
+
+        let claimedLevel = bondRewardClaimStore.claimedLevel(
+            ownerID: currentUserID,
+            residentID: resident.id
+        )
+
+        guard let reward = BondScarfReward.nextClaimable(
+            earnedLevel: resident.bondLevel,
+            claimedLevel: claimedLevel
+        ) else {
+            return
+        }
+
+        bondRewardClaimStore.markClaimed(
+            level: reward.level,
+            ownerID: currentUserID,
+            residentID: resident.id
+        )
+
+        claimedReward = BondRewardClaimCelebration(
+            reward: reward,
+            currentProfile: sessionStore.profile,
+            resident: resident
+        )
     }
 }
 
 private struct BondsListCard: View {
     let residents: [VillageResident]
+    let ownerID: UUID?
+    let onClaim: (VillageResident) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(residents.enumerated()), id: \.element.id) { index, resident in
-                BondRowView(resident: resident)
+                BondRowView(
+                    resident: resident,
+                    ownerID: ownerID,
+                    onClaim: onClaim
+                )
 
                 if index < residents.count - 1 {
                     PicoCardDivider()
@@ -609,23 +683,63 @@ private struct BondsListCard: View {
 }
 
 private struct BondRowView: View {
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+
     let resident: VillageResident
+    let ownerID: UUID?
+    let onClaim: (VillageResident) -> Void
 
     private var xp: Int {
         resident.completedPairSessions
     }
 
+    private var claimedLevel: Int {
+        bondRewardClaimStore.claimedLevel(ownerID: ownerID, residentID: resident.id)
+    }
+
+    private var pendingReward: BondScarfReward? {
+        guard ownerID != nil else { return nil }
+
+        return BondScarfReward.nextClaimable(
+            earnedLevel: resident.bondLevel,
+            claimedLevel: claimedLevel
+        )
+    }
+
+    private var visibleBondLevel: Int {
+        min(claimedLevel, resident.bondLevel)
+    }
+
     private var scarfProgress: BondScarfProgress {
-        BondScarfProgress(xp: xp)
+        BondScarfProgress(xp: xp, claimableReward: pendingReward)
     }
 
     var body: some View {
+        Group {
+            if pendingReward != nil {
+                Button {
+                    onClaim(resident)
+                } label: {
+                    rowContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                rowContent
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            Text("\(resident.profile.displayName), bond level \(resident.bondLevel), \(xp) XP, \(scarfProgress.accessibilitySummary)")
+        )
+    }
+
+    private var rowContent: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.compact) {
             HStack(spacing: PicoSpacing.standard) {
                 AvatarBadgeView(
                     config: resident.profile.avatarConfig,
                     size: 56,
-                    scarf: AvatarScarf(bondLevel: resident.bondLevel)
+                    scarf: AvatarScarf(bondLevel: visibleBondLevel)
                 )
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -669,9 +783,19 @@ private struct BondRowView: View {
         }
         .padding(.horizontal, PicoSpacing.cardPadding)
         .padding(.vertical, PicoSpacing.standard)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            Text("\(resident.profile.displayName), bond level \(resident.bondLevel), \(xp) XP, \(scarfProgress.accessibilitySummary)")
+        .background(
+            pendingReward == nil
+                ? Color.clear
+                : PicoColors.warning.opacity(0.14)
+        )
+        .overlay(
+            Rectangle()
+                .stroke(
+                    pendingReward == nil
+                        ? Color.clear
+                        : PicoColors.warning.opacity(0.42),
+                    lineWidth: 1
+                )
         )
     }
 }
@@ -696,9 +820,14 @@ private struct BondScarfProgressBar: View {
 
 private struct BondScarfProgress {
     let xp: Int
+    let claimableReward: BondScarfReward?
 
     private var targetMilestone: BondScarfMilestone? {
-        BondScarfMilestone.all.first { xp < $0.requiredXP }
+        if let claimableReward {
+            return BondScarfMilestone.all.first { $0.level == claimableReward.level }
+        }
+
+        return BondScarfMilestone.all.first { xp < $0.requiredXP }
     }
 
     private var previousRequiredXP: Int {
@@ -718,7 +847,11 @@ private struct BondScarfProgress {
     }
 
     private var currentDelta: Int {
-        min(max(xp - previousRequiredXP, 0), requiredDelta)
+        if claimableReward != nil {
+            return requiredDelta
+        }
+
+        return min(max(xp - previousRequiredXP, 0), requiredDelta)
     }
 
     var segmentCount: Int {
@@ -734,10 +867,18 @@ private struct BondScarfProgress {
     }
 
     var tint: Color {
-        PicoColors.primary
+        if claimableReward != nil {
+            return PicoColors.warning
+        }
+
+        return PicoColors.primary
     }
 
     var caption: String? {
+        if claimableReward != nil {
+            return "Tap to claim reward"
+        }
+
         guard let targetMilestone else {
             return "All rewards unlocked"
         }
@@ -747,6 +888,10 @@ private struct BondScarfProgress {
     }
 
     var accessibilitySummary: String {
+        if let claimableReward {
+            return "level \(claimableReward.level) reward ready to claim"
+        }
+
         guard let targetMilestone else {
             return "top scarf unlocked"
         }
@@ -756,14 +901,131 @@ private struct BondScarfProgress {
 }
 
 private struct BondScarfMilestone {
+    let level: Int
     let name: String
     let requiredXP: Int
 
     static let all: [BondScarfMilestone] = [
-        BondScarfMilestone(name: "green", requiredXP: 3),
-        BondScarfMilestone(name: "blue", requiredXP: 6),
-        BondScarfMilestone(name: "orange", requiredXP: 9)
+        BondScarfMilestone(level: 2, name: "green", requiredXP: 3),
+        BondScarfMilestone(level: 3, name: "blue", requiredXP: 6),
+        BondScarfMilestone(level: 4, name: "orange", requiredXP: 9),
+        BondScarfMilestone(level: 5, name: "orange", requiredXP: 12)
     ]
+}
+
+private struct BondScarfReward: Equatable {
+    let level: Int
+    let name: String
+
+    var scarf: AvatarScarf? {
+        AvatarScarf(bondLevel: level)
+    }
+
+    var displayName: String {
+        name.capitalized
+    }
+
+    static func nextClaimable(earnedLevel: Int, claimedLevel: Int) -> BondScarfReward? {
+        BondScarfMilestone.all
+            .first { $0.level <= earnedLevel && $0.level > claimedLevel }
+            .map { BondScarfReward(level: $0.level, name: $0.name) }
+    }
+}
+
+private struct BondRewardClaimCelebration: Identifiable {
+    let id = UUID()
+    let reward: BondScarfReward
+    let currentProfile: UserProfile?
+    let resident: VillageResident
+}
+
+private struct BondRewardCelebrationSheet: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let celebration: BondRewardClaimCelebration
+    let onDone: () -> Void
+
+    private var currentAvatarConfig: AvatarConfig {
+        celebration.currentProfile?.avatarConfig ?? AvatarCatalog.defaultConfig
+    }
+
+    private var currentDisplayName: String {
+        celebration.currentProfile?.displayName ?? "You"
+    }
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            VStack(spacing: PicoSpacing.compact) {
+                Text("Bond reached level \(celebration.reward.level)")
+                    .font(PicoTypography.cardTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .multilineTextAlignment(.center)
+
+                Text("\(celebration.reward.displayName) scarf unlocked!")
+                    .font(PicoTypography.body.weight(.semibold))
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            ZStack {
+                FocusCompleteConfettiView(reduceMotion: reduceMotion)
+                    .frame(width: 280, height: 128)
+                    .allowsHitTesting(false)
+
+                HStack(spacing: PicoSpacing.standard) {
+                    BondRewardCelebrationAvatar(
+                        displayName: currentDisplayName,
+                        avatarConfig: currentAvatarConfig,
+                        scarf: celebration.reward.scarf
+                    )
+
+                    BondRewardCelebrationAvatar(
+                        displayName: celebration.resident.profile.displayName,
+                        avatarConfig: celebration.resident.profile.avatarConfig,
+                        scarf: celebration.reward.scarf
+                    )
+                }
+            }
+            .frame(height: 156)
+            .clipped()
+
+            Button("Done") {
+                onDone()
+            }
+            .buttonStyle(PicoPrimaryButtonStyle())
+            .padding(.top, PicoSpacing.compact)
+        }
+        .padding(.horizontal, PicoSpacing.cardPadding)
+        .padding(.top, PicoSpacing.section)
+        .padding(.bottom, PicoSpacing.standard)
+    }
+}
+
+private struct BondRewardCelebrationAvatar: View {
+    let displayName: String
+    let avatarConfig: AvatarConfig
+    let scarf: AvatarScarf?
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.tiny) {
+            UserAvatar(
+                config: avatarConfig,
+                maxSpriteSide: 118,
+                usesHappyIdle: true,
+                scarf: scarf
+            )
+            .frame(width: 130, height: 116)
+
+            Text(displayName)
+                .font(PicoTypography.caption.weight(.semibold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(width: 124)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(displayName))
+    }
 }
 
 private enum StartFocusSheetStep {
@@ -942,7 +1204,10 @@ private struct CompactProgressStrip: View {
                 }
             }
 
-            SegmentedScoreProgressBar(value: hatProgressValue, total: hatProgressTotal)
+            SegmentedScoreProgressBar(
+                value: Int(hatProgressValue),
+                segmentCount: Int(hatProgressTotal)
+            )
 
             if let notice {
                 Text(notice)
@@ -955,15 +1220,11 @@ private struct CompactProgressStrip: View {
 }
 
 private struct SegmentedScoreProgressBar: View {
-    let value: Double
-    let total: Double
-
-    private let segmentCount = 10
+    let value: Int
+    let segmentCount: Int
 
     private var filledSegmentCount: Int {
-        guard total > 0 else { return 0 }
-        let normalizedValue = min(max(value / total, 0), 1)
-        return min(segmentCount, max(0, Int((normalizedValue * Double(segmentCount)).rounded(.down))))
+        min(max(value, 0), segmentCount)
     }
 
     var body: some View {
@@ -990,7 +1251,7 @@ private struct StartFocusSheet: View {
     @EnvironmentObject private var focusStore: FocusStore
     @Binding var step: StartFocusSheetStep
     @Binding var isPresented: Bool
-    @State private var multiplayerDurationMinutes = FocusStore.defaultDurationSeconds / 60
+    @State private var multiplayerDurationSeconds = FocusStore.defaultDurationSeconds
 
     var body: some View {
         VStack(spacing: PicoSpacing.standard) {
@@ -1032,7 +1293,7 @@ private struct StartFocusSheet: View {
             } else if step == .multiplayerInviteMore {
                 MultiplayerInviteFriendsSheetContent(
                     step: $step,
-                    durationMinutes: .constant(clampedDurationMinutes(from: lobbySession.durationSeconds)),
+                    durationSeconds: .constant(clampedDurationSeconds(from: lobbySession.durationSeconds)),
                     buttonTitle: "Send invites"
                 )
             } else {
@@ -1051,12 +1312,12 @@ private struct StartFocusSheet: View {
             case .multiplayerConfig:
                 MultiplayerDurationSheetContent(
                     step: $step,
-                    durationMinutes: $multiplayerDurationMinutes
+                    durationSeconds: $multiplayerDurationSeconds
                 )
             case .multiplayerInviteMore:
                 MultiplayerInviteFriendsSheetContent(
                     step: $step,
-                    durationMinutes: $multiplayerDurationMinutes,
+                    durationSeconds: $multiplayerDurationSeconds,
                     buttonTitle: "Send invites"
                 )
             case .multiplayerLobby:
@@ -1414,19 +1675,19 @@ private struct FocusModeRow: View {
 }
 
 private struct FocusDurationSlider: View {
-    @Binding var durationMinutes: Int
+    @Binding var durationSeconds: Int
     let isDisabled: Bool
 
     private var sliderValue: Binding<Double> {
         Binding(
-            get: { Double(durationMinutes) },
-            set: { durationMinutes = Int($0.rounded()) }
+            get: { Double(durationSeconds) },
+            set: { durationSeconds = Int($0.rounded()) }
         )
     }
 
     var body: some View {
         VStack(alignment: .center, spacing: PicoSpacing.standard) {
-            Text(homeFormattedDuration(durationMinutes * 60))
+            Text(homeFormattedDuration(durationSeconds))
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(PicoColors.textPrimary)
@@ -1434,8 +1695,8 @@ private struct FocusDurationSlider: View {
 
             PicoRangeSlider(
                 value: sliderValue,
-                bounds: 1...120,
-                step: 1,
+                bounds: Double(FocusStore.minimumDurationSeconds)...Double(FocusStore.maximumDurationSeconds),
+                step: 5,
                 isDisabled: isDisabled
             )
             .padding(.horizontal, PicoSpacing.standard)
@@ -1491,7 +1752,7 @@ private struct PicoRangeSlider: View {
         .opacity(isDisabled ? 0.55 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Duration"))
-        .accessibilityValue(Text(homeFormattedDuration(Int(value.rounded()) * 60)))
+        .accessibilityValue(Text(homeFormattedDuration(Int(value.rounded()))))
         .accessibilityAdjustableAction { direction in
             guard !isDisabled else { return }
             switch direction {
@@ -1522,7 +1783,7 @@ private struct PicoRangeSlider: View {
 private struct SoloFocusConfigSheetContent: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
-    @State private var durationMinutes = FocusStore.defaultDurationSeconds / 60
+    @State private var durationSeconds = FocusStore.defaultDurationSeconds
 
     let session: FocusSession?
 
@@ -1535,7 +1796,7 @@ private struct SoloFocusConfigSheetContent: View {
                     .font(PicoTypography.caption)
                     .foregroundStyle(PicoColors.textPrimary)
 
-                FocusDurationSlider(durationMinutes: $durationMinutes, isDisabled: isBusy)
+                FocusDurationSlider(durationSeconds: $durationSeconds, isDisabled: isBusy)
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .picoCreamCard(
@@ -1565,10 +1826,10 @@ private struct SoloFocusConfigSheetContent: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            durationMinutes = clampedDurationMinutes(from: session?.durationSeconds ?? FocusStore.defaultDurationSeconds)
+            durationSeconds = clampedDurationSeconds(from: session?.durationSeconds ?? FocusStore.defaultDurationSeconds)
         }
         .onChange(of: session?.durationSeconds) {
-            durationMinutes = clampedDurationMinutes(from: session?.durationSeconds ?? FocusStore.defaultDurationSeconds)
+            durationSeconds = clampedDurationSeconds(from: session?.durationSeconds ?? FocusStore.defaultDurationSeconds)
         }
     }
 
@@ -1578,12 +1839,11 @@ private struct SoloFocusConfigSheetContent: View {
 
     private func startSolo() async {
         if focusStore.lobbySession?.mode != .solo {
-            await focusStore.createLobby(mode: .solo, for: sessionStore.session)
+            await focusStore.createLobby(mode: .solo, durationSeconds: durationSeconds, for: sessionStore.session)
         }
 
         guard let lobbySession = focusStore.lobbySession, lobbySession.mode == .solo else { return }
 
-        let durationSeconds = durationMinutes * 60
         if lobbySession.durationSeconds != durationSeconds {
             await focusStore.updateLobbyDuration(durationSeconds, for: sessionStore.session)
         }
@@ -1595,7 +1855,7 @@ private struct SoloFocusConfigSheetContent: View {
 private struct MultiplayerDurationSheetContent: View {
     @EnvironmentObject private var focusStore: FocusStore
     @Binding var step: StartFocusSheetStep
-    @Binding var durationMinutes: Int
+    @Binding var durationSeconds: Int
 
     var body: some View {
         VStack(spacing: PicoSpacing.section) {
@@ -1606,7 +1866,7 @@ private struct MultiplayerDurationSheetContent: View {
                     .font(PicoTypography.caption)
                     .foregroundStyle(PicoColors.textPrimary)
 
-                FocusDurationSlider(durationMinutes: $durationMinutes, isDisabled: focusStore.hasPendingResultSync)
+                FocusDurationSlider(durationSeconds: $durationSeconds, isDisabled: focusStore.hasPendingResultSync)
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .picoCreamCard(
@@ -1635,7 +1895,7 @@ private struct MultiplayerInviteFriendsSheetContent: View {
     @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var focusStore: FocusStore
     @Binding var step: StartFocusSheetStep
-    @Binding var durationMinutes: Int
+    @Binding var durationSeconds: Int
     let buttonTitle: String
     @State private var searchText = ""
     @State private var selectedFriendIDs: Set<UUID> = []
@@ -1717,11 +1977,11 @@ private struct MultiplayerInviteFriendsSheetContent: View {
         if focusStore.lobbySession?.mode != .multiplayer {
             await focusStore.createLobby(
                 mode: .multiplayer,
-                durationSeconds: durationMinutes * 60,
+                durationSeconds: durationSeconds,
                 for: sessionStore.session
             )
-        } else if focusStore.lobbySession?.durationSeconds != durationMinutes * 60 {
-            await focusStore.updateLobbyDuration(durationMinutes * 60, for: sessionStore.session)
+        } else if focusStore.lobbySession?.durationSeconds != durationSeconds {
+            await focusStore.updateLobbyDuration(durationSeconds, for: sessionStore.session)
         }
 
         guard focusStore.lobbySession?.mode == .multiplayer else { return }
@@ -1838,7 +2098,7 @@ private struct MultiplayerLobbySheetContent: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
 
-                    Text("Rewards unlock when everyone finishes")
+                    Text("Bond rewards unlock when both players finish")
                         .font(PicoTypography.caption)
                 }
                 .foregroundStyle(PicoColors.textSecondary)
@@ -1852,9 +2112,9 @@ private struct MultiplayerLobbySheetContent: View {
 	                            .frame(maxWidth: .infinity, alignment: .center)
 	                    }
 	
-	                    Button {
-	                        Task {
-	                            await focusStore.startLobbySession(for: sessionStore.session)
+                    Button {
+                        Task {
+                            await focusStore.startLobbySession(for: sessionStore.session)
                         }
                     } label: {
                         HStack {
@@ -1906,9 +2166,9 @@ private struct MultiplayerLobbySheetContent: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
             }
-        }
-	        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-	    }
+	        }
+		        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+		    }
 	
 	    private var readinessText: String? {
 	        guard let members = focusStore.sessionDetail?.members else { return nil }
@@ -2189,8 +2449,8 @@ private struct FocusCompleteCard: View {
         }
     }
 
-    private func groupMetrics(for context: FocusCompletionContext) -> [FocusCompleteMetricModel] {
-        var metrics = [
+    private func groupMetrics(for _: FocusCompletionContext) -> [FocusCompleteMetricModel] {
+        [
             FocusCompleteMetricModel(
                 title: scoreLabel,
                 systemImage: "plus",
@@ -2200,25 +2460,8 @@ private struct FocusCompleteCard: View {
                 title: streakLabel,
                 systemImage: "flame.fill",
                 iconColor: PicoColors.streakAccent
-            ),
-            FocusCompleteMetricModel(
-                title: "\(context.bondXP) bond XP",
-                systemImage: "leaf.fill",
-                iconColor: PicoColors.primary
             )
         ]
-
-        if context.villageGrew {
-            metrics.append(
-                FocusCompleteMetricModel(
-                    title: "Village grew",
-                    systemImage: "leaf.circle.fill",
-                    iconColor: PicoColors.success
-                )
-            )
-        }
-
-        return metrics
     }
 }
 
@@ -2229,19 +2472,12 @@ private enum FocusCompleteAvatarLayout {
     static let celebrationHeight: CGFloat = 118
     static let namedCelebrationHeight: CGFloat = 150
     static let memberNameWidth: CGFloat = 124
-    static let compactGroupAvatarSpacing: CGFloat = -44
 }
 
 private struct FocusCompleteGroupCelebrationView: View {
-    @EnvironmentObject private var villageStore: VillageStore
-
     let context: FocusCompletionContext
     let reduceMotion: Bool
     let showsConfetti: Bool
-
-    private var usesScrollableMembers: Bool {
-        context.members.count > 3
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2252,41 +2488,22 @@ private struct FocusCompleteGroupCelebrationView: View {
                         .allowsHitTesting(false)
                 }
 
-                if usesScrollableMembers {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: PicoSpacing.compact) {
-                            ForEach(context.members) { member in
-                                FocusCompleteGroupMemberPill(member: member)
-                            }
-                        }
-                        .padding(.horizontal, PicoSpacing.compact)
-                    }
-                    .scrollIndicators(.hidden)
-                    .frame(height: FocusCompleteAvatarLayout.namedCelebrationHeight)
-                } else {
-                    HStack(spacing: FocusCompleteAvatarLayout.compactGroupAvatarSpacing) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: PicoSpacing.compact) {
                         ForEach(context.members) { member in
-                            UserAvatar(
-                                config: member.profile.avatarConfig,
-                                maxSpriteSide: FocusCompleteAvatarLayout.spriteSide,
-                                usesHappyIdle: true,
-                                scarf: villageStore.scarf(for: member.userID)
+                            FocusCompleteGroupMemberPill(
+                                member: member,
+                                isNewPeer: context.isNewPeer(member)
                             )
-                            .frame(
-                                width: FocusCompleteAvatarLayout.avatarWidth,
-                                height: FocusCompleteAvatarLayout.avatarHeight
-                            )
-                            .accessibilityLabel(Text(member.profile.displayName))
                         }
                     }
+                    .padding(.horizontal, PicoSpacing.compact)
                     .frame(maxWidth: .infinity)
                 }
+                .scrollIndicators(.hidden)
+                .frame(height: FocusCompleteAvatarLayout.namedCelebrationHeight)
             }
-            .frame(
-                height: usesScrollableMembers
-                    ? FocusCompleteAvatarLayout.namedCelebrationHeight
-                    : FocusCompleteAvatarLayout.celebrationHeight
-            )
+            .frame(height: FocusCompleteAvatarLayout.namedCelebrationHeight)
             .clipped()
         }
     }
@@ -2296,19 +2513,37 @@ private struct FocusCompleteGroupMemberPill: View {
     @EnvironmentObject private var villageStore: VillageStore
 
     let member: FocusSessionMember
+    let isNewPeer: Bool
 
     var body: some View {
         VStack(spacing: PicoSpacing.tiny) {
-            UserAvatar(
-                config: member.profile.avatarConfig,
-                maxSpriteSide: FocusCompleteAvatarLayout.spriteSide,
-                usesHappyIdle: true,
-                scarf: villageStore.scarf(for: member.userID)
-            )
-            .frame(
-                width: FocusCompleteAvatarLayout.avatarWidth,
-                height: FocusCompleteAvatarLayout.avatarHeight
-            )
+            ZStack(alignment: .topTrailing) {
+                UserAvatar(
+                    config: member.profile.avatarConfig,
+                    maxSpriteSide: FocusCompleteAvatarLayout.spriteSide,
+                    usesHappyIdle: true,
+                    scarf: villageStore.scarf(for: member.userID)
+                )
+                .frame(
+                    width: FocusCompleteAvatarLayout.avatarWidth,
+                    height: FocusCompleteAvatarLayout.avatarHeight
+                )
+
+                if isNewPeer {
+                    Text("New")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(PicoColors.textOnPrimary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(PicoColors.primary)
+                        .clipShape(Capsule(style: .continuous))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(PicoCreamCardStyle.background, lineWidth: 2)
+                        )
+                        .accessibilityLabel(Text("New"))
+                }
+            }
 
             Text(member.profile.displayName)
                 .font(PicoTypography.caption.weight(.semibold))
@@ -2318,7 +2553,8 @@ private struct FocusCompleteGroupMemberPill: View {
                 .frame(width: FocusCompleteAvatarLayout.memberNameWidth)
         }
         .frame(width: FocusCompleteAvatarLayout.avatarWidth)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(isNewPeer ? "\(member.profile.displayName), new" : member.profile.displayName))
     }
 }
 
@@ -2582,8 +2818,8 @@ private func homeFormattedDurationMinutes(_ seconds: Int) -> String {
     return "\(minutes) min"
 }
 
-private func clampedDurationMinutes(from seconds: Int) -> Int {
-    min(120, max(1, seconds / 60))
+private func clampedDurationSeconds(from seconds: Int) -> Int {
+    min(FocusStore.maximumDurationSeconds, max(FocusStore.minimumDurationSeconds, seconds))
 }
 
 private struct ProfilePage: View {

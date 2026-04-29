@@ -27,22 +27,31 @@ final class VillageStore: ObservableObject {
     }
 
     private let villageService: VillageService
+    private var loadGeneration = 0
 
     init(villageService: VillageService? = nil) {
         self.villageService = villageService ?? VillageService()
     }
 
-    func loadResidents(for session: AuthSession?) async {
-        guard let session, !isLoadingResidents else { return }
+    func loadResidents(for session: AuthSession?, force: Bool = false) async {
+        guard let session else { return }
+        guard force || !isLoadingResidents else { return }
 
+        loadGeneration += 1
+        let generation = loadGeneration
         loadState = .loading
         notice = nil
 
         do {
-            residents = try await villageService.fetchResidents(for: session)
+            let fetchedResidents = try await villageService.fetchResidents(for: session)
+            guard generation == loadGeneration else { return }
+
+            residents = fetchedResidents
             hasLoadedResidents = true
             loadState = .loaded
         } catch {
+            guard generation == loadGeneration else { return }
+
             if error.isCancellation {
                 loadState = hasLoadedResidents ? .loaded : .idle
                 return
@@ -54,6 +63,7 @@ final class VillageStore: ObservableObject {
     }
 
     func clear() {
+        loadGeneration += 1
         residents = []
         notice = nil
         loadState = .idle
@@ -92,5 +102,50 @@ final class VillageStore: ObservableObject {
 
     private func displayMessage(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+@MainActor
+final class BondRewardClaimStore: ObservableObject {
+    @Published private var claimedLevels: [String: Int] = [:]
+
+    private let fileURL: URL?
+
+    init(fileManager: FileManager = .default) {
+        fileURL = fileManager
+            .urls(for: .cachesDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("bond-reward-claims.json")
+
+        load()
+    }
+
+    func claimedLevel(ownerID: UUID?, residentID: UUID) -> Int {
+        guard let ownerID else { return 0 }
+        return claimedLevels[key(ownerID: ownerID, residentID: residentID)] ?? 0
+    }
+
+    func markClaimed(level: Int, ownerID: UUID?, residentID: UUID) {
+        guard let ownerID else { return }
+
+        let claimKey = key(ownerID: ownerID, residentID: residentID)
+        guard level > (claimedLevels[claimKey] ?? 0) else { return }
+
+        claimedLevels[claimKey] = level
+        save()
+    }
+
+    private func key(ownerID: UUID, residentID: UUID) -> String {
+        "\(ownerID.uuidString):\(residentID.uuidString)"
+    }
+
+    private func load() {
+        guard let fileURL, let data = try? Data(contentsOf: fileURL) else { return }
+        claimedLevels = (try? JSONDecoder().decode([String: Int].self, from: data)) ?? [:]
+    }
+
+    private func save() {
+        guard let fileURL, let data = try? JSONEncoder().encode(claimedLevels) else { return }
+        try? data.write(to: fileURL, options: [.atomic])
     }
 }

@@ -17,20 +17,21 @@ struct FocusCompletionContext: Equatable {
         members.filter { $0.userID != currentUserID }
     }
 
-    var bondXP: Int {
-        peerMembers.count
-    }
+    func isNewPeer(_ member: FocusSessionMember) -> Bool {
+        guard member.userID != currentUserID,
+              let preCompletionVillageResidentIDs else {
+            return false
+        }
 
-    var villageGrew: Bool {
-        guard let preCompletionVillageResidentIDs else { return false }
-        return peerMembers.contains { !preCompletionVillageResidentIDs.contains($0.userID) }
+        return !preCompletionVillageResidentIDs.contains(member.userID)
     }
 }
 
 @MainActor
 final class FocusStore: ObservableObject {
     static let defaultDurationSeconds = 30 * 60
-    static let minimumDurationSeconds = 60
+    // TODO: REVERT THIS - restore the 60-second minimum after short-session testing.
+    static let minimumDurationSeconds = 5
     static let maximumDurationSeconds = 120 * 60
 
     @Published private(set) var lobbySession: FocusSession?
