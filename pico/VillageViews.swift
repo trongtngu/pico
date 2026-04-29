@@ -11,13 +11,15 @@ import SwiftUI
 struct VillagePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var scoreStore: ScoreStore
 
     var body: some View {
         ScrollView {
             VStack(alignment: .center, spacing: 12) {
                 VillageView(
                     residents: villageStore.residents,
-                    currentUserProfile: sessionStore.profile
+                    currentUserProfile: sessionStore.profile,
+                    score: scoreStore.score.score
                 )
                     .frame(maxWidth: .infinity)
                     .frame(height: 430)
@@ -53,6 +55,7 @@ struct VillagePage: View {
 struct VillageView: View {
     let residents: [VillageResident]
     let currentUserProfile: UserProfile?
+    let score: Int
 
     private static let gridSize = 6
     private var gridResidents: [VillageResident] {
@@ -68,9 +71,15 @@ struct VillageView: View {
     }
 
     private var sceneID: String {
-        gridResidents
+        let residentID = gridResidents
             .map { "\($0.id.uuidString)-\($0.profile.avatarConfig.selectedHat.rawValue)-\($0.bondLevel)" }
             .joined(separator: "|")
+        return "\(score)-\(rewardSeed)-\(residentID)"
+    }
+
+    private var rewardSeed: String {
+        currentUserProfile?.userID.uuidString
+            ?? gridResidents.map(\.id.uuidString).joined(separator: "|")
     }
 
     var body: some View {
@@ -79,7 +88,9 @@ struct VillageView: View {
                 scene: VillageScene(
                     size: proxy.size,
                     gridSize: Self.gridSize,
-                    residents: gridResidents
+                    residents: gridResidents,
+                    score: score,
+                    rewardSeed: rewardSeed
                 ),
                 options: [.allowsTransparency]
             )
@@ -124,13 +135,17 @@ private final class VillageScene: SKScene {
 
     private let gridSize: Int
     private let residents: [VillageResident]
+    private let score: Int
+    private let rewardSeed: String
     private var renderedSize: CGSize = .zero
     private var villagers: [VillagerNode] = []
     private var lastUpdateTime: TimeInterval?
 
-    init(size: CGSize, gridSize: Int, residents: [VillageResident]) {
+    init(size: CGSize, gridSize: Int, residents: [VillageResident], score: Int, rewardSeed: String) {
         self.gridSize = gridSize
         self.residents = Array(residents.prefix(gridSize * gridSize))
+        self.score = score
+        self.rewardSeed = rewardSeed
         super.init(size: size)
         scaleMode = .resizeFill
         backgroundColor = .clear
@@ -170,12 +185,64 @@ private final class VillageScene: SKScene {
             tileAnchorPoint: Self.tileAnchorPoint
         )
         let atlas = SKTextureAtlas(named: "GrassBlock_New")
-        let grassBlockTexture = atlas.textureNamed("GrassBlock_1.png")
-        grassBlockTexture.filteringMode = .linear
+        let grassBlockTextures = Self.textures(
+            named: ["GrassBlock_1.png", "GrassBlock_2.png", "GrassBlock_3.png"],
+            in: atlas
+        )
+        let flowerAtlas = SKTextureAtlas(named: "GrassBlocks_Flowers")
+        let flowerTextures = Self.textures(
+            named: [
+                "GrassBlock_Flowers_Blue_1.png",
+                "GrassBlock_Flowers_Blue_2.png",
+                "GrassBlock_Flowers_Blue_3.png",
+                "GrassBlock_Flowers_Pink_1.png",
+                "GrassBlock_Flowers_Pink_2.png",
+                "GrassBlock_Flowers_Pink_3.png",
+                "GrassBlock_Flowers_White_1.png",
+                "GrassBlock_Flowers_White_2.png",
+                "GrassBlock_Flowers_White_3.png",
+                "GrassBlock_Flowers_Yellow_1.png",
+                "GrassBlock_Flowers_Yellow_2.png",
+                "GrassBlock_Flowers_Yellow_3.png"
+            ],
+            in: flowerAtlas
+        )
+        let rewardTextures = rewardTexturesByTile(flowerTextures: flowerTextures)
 
         for tile in TileCoordinate.all(in: gridSize) {
-            addTileSprite(texture: grassBlockTexture, tile: tile, layout: layout)
+            let texture = rewardTextures[tile] ?? grassTexture(for: tile, textures: grassBlockTextures)
+            addTileSprite(texture: texture, tile: tile, layout: layout)
         }
+    }
+
+    private static func textures(named names: [String], in atlas: SKTextureAtlas) -> [SKTexture] {
+        names.map { name in
+            let texture = atlas.textureNamed(name)
+            texture.filteringMode = .linear
+            return texture
+        }
+    }
+
+    private func rewardTexturesByTile(flowerTextures: [SKTexture]) -> [TileCoordinate: SKTexture] {
+        guard score > 0, !flowerTextures.isEmpty else { return [:] }
+
+        var generator = SeededRandomNumberGenerator(seed: StableHash.value(for: "reward-\(rewardSeed)"))
+        var tiles = TileCoordinate.all(in: gridSize)
+        tiles.shuffle(using: &generator)
+
+        let rewardCount = min(score, tiles.count)
+        return Dictionary(uniqueKeysWithValues: tiles.prefix(rewardCount).map { tile in
+            let texture = flowerTextures[Int(generator.next() % UInt64(flowerTextures.count))]
+            return (tile, texture)
+        })
+    }
+
+    private func grassTexture(for tile: TileCoordinate, textures: [SKTexture]) -> SKTexture {
+        let fallback = textures[0]
+        guard textures.count > 1 else { return fallback }
+
+        let seed = StableHash.value(for: "grass-\(rewardSeed)-\(tile.row)-\(tile.column)")
+        return textures[Int(seed % UInt64(textures.count))]
     }
 
     private func addTileSprite(
@@ -491,6 +558,33 @@ private struct VillageSceneLayout {
     }
 }
 
+private enum StableHash {
+    static func value(for string: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in string.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return hash
+    }
+}
+
+private struct SeededRandomNumberGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed
+    }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9e3779b97f4a7c15
+        var result = state
+        result = (result ^ (result >> 30)) &* 0xbf58476d1ce4e5b9
+        result = (result ^ (result >> 27)) &* 0x94d049bb133111eb
+        return result ^ (result >> 31)
+    }
+}
+
 #if DEBUG
 struct VillageViews_Previews: PreviewProvider {
     static var previews: some View {
@@ -498,6 +592,7 @@ struct VillageViews_Previews: PreviewProvider {
             VillagePage()
                 .environmentObject(AuthSessionStore.preview(session: AuthSession.preview))
                 .environmentObject(VillageStore.preview)
+                .environmentObject(ScoreStore.preview)
         }
     }
 }

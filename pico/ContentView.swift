@@ -349,6 +349,7 @@ private struct HomePage: View {
                         VillageHeroSection(
                             residents: gridResidents,
                             currentUserProfile: sessionStore.profile,
+                            score: scoreStore.score.score,
                             isLoading: villageStore.isLoadingResidents,
                             notice: villageStore.notice,
                             height: max(0, viewport.size.height - PicoSpacing.compact * 2)
@@ -1082,6 +1083,7 @@ private enum StartFocusSheetStep {
 private struct VillageHeroSection: View {
     let residents: [VillageResident]
     let currentUserProfile: UserProfile?
+    let score: Int
     let isLoading: Bool
     let notice: String?
     let height: CGFloat
@@ -1090,7 +1092,8 @@ private struct VillageHeroSection: View {
         ZStack(alignment: .topLeading) {
             VillageView(
                 residents: residents,
-                currentUserProfile: currentUserProfile
+                currentUserProfile: currentUserProfile,
+                score: score
             )
                 .frame(maxWidth: .infinity)
                 .frame(height: height)
