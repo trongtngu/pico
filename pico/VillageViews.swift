@@ -321,7 +321,7 @@ private final class VillagerNode: SKNode {
     private static let walkActionKey = "walk"
     private static let idleActionKey = "idle"
 
-    private let sprite: SKSpriteNode
+    private let sprite: AvatarLayeredSpriteNode
     private let walkFrames: VillagerWalkFrames
     private let idleFrames: AvatarIdleFrames
     private var currentAnimationDirection: VillagerWalkDirection?
@@ -344,14 +344,14 @@ private final class VillagerNode: SKNode {
         self.targetPosition = currentPosition
         self.walkFrames = walkFrames
         self.idleFrames = idleFrames
-        self.sprite = SKSpriteNode(texture: idleFrames.firstFrame())
+        self.sprite = AvatarLayeredSpriteNode(frames: idleFrames.layeredFrames)
         self.movementSpeed = speed
         super.init()
 
         position = currentPosition
         zPosition = -currentPosition.y
         sprite.anchorPoint = CGPoint(x: 0.5, y: 0.12)
-        sprite.size = CGSize(width: characterSize, height: characterSize)
+        sprite.spriteSize = CGSize(width: characterSize, height: characterSize)
         addChild(sprite)
         startIdle()
     }
@@ -434,28 +434,32 @@ private final class VillagerNode: SKNode {
         currentAnimationDirection = direction
         stopIdle()
         sprite.xScale = direction.isFlipped ? -abs(sprite.xScale) : abs(sprite.xScale)
-        sprite.run(
-            .repeatForever(.animate(with: walkFrames.frames(forRow: direction.row), timePerFrame: 0.08)),
-            withKey: Self.walkActionKey
+        sprite.runAnimation(
+            with: walkFrames.layeredFrames,
+            row: direction.row,
+            timePerFrame: 0.08,
+            key: Self.walkActionKey
         )
     }
 
     private func stopWalking() {
-        sprite.removeAction(forKey: Self.walkActionKey)
+        sprite.removeAnimation(forKey: Self.walkActionKey)
         sprite.xScale = abs(sprite.xScale)
         startIdle()
     }
 
     private func startIdle() {
-        guard sprite.action(forKey: Self.idleActionKey) == nil else { return }
-        sprite.run(
-            .repeatForever(.animate(with: idleFrames.frames(forRow: 0), timePerFrame: 0.10)),
-            withKey: Self.idleActionKey
+        guard !sprite.hasAnimation(forKey: Self.idleActionKey) else { return }
+        sprite.runAnimation(
+            with: idleFrames.layeredFrames,
+            row: 0,
+            timePerFrame: 0.10,
+            key: Self.idleActionKey
         )
     }
 
     private func stopIdle() {
-        sprite.removeAction(forKey: Self.idleActionKey)
+        sprite.removeAnimation(forKey: Self.idleActionKey)
     }
 }
 
@@ -478,19 +482,15 @@ private struct VillagerWalkDirection: Equatable {
 }
 
 private struct VillagerWalkFrames {
-    private let frames: [[SKTexture]]
+    let layeredFrames: AvatarLayeredFrames
 
     init(hat: AvatarHat, scarf: AvatarScarf? = nil) {
-        frames = AvatarFinalAtlas.frames(
+        layeredFrames = AvatarLayeredAtlas.frames(
             kind: .walkRegular,
             hat: hat,
             scarf: scarf,
             filteringMode: .linear
         )
-    }
-
-    func frames(forRow row: Int) -> [SKTexture] {
-        frames[min(max(row, 0), AvatarFinalAtlasKind.walkRegular.rowCount - 1)]
     }
 }
 

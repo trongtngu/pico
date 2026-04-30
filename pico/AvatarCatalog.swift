@@ -148,35 +148,6 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Equatable {
         }
     }
 
-    var atlasSlot: AvatarIdleAtlasSlot {
-        switch self {
-        case .none:
-            AvatarIdleAtlasSlot(row: 0, column: 0)
-        case .bambooHat:
-            AvatarIdleAtlasSlot(row: 0, column: 1)
-        case .beanie:
-            AvatarIdleAtlasSlot(row: 1, column: 0)
-        case .bow:
-            AvatarIdleAtlasSlot(row: 1, column: 1)
-        case .helmet:
-            AvatarIdleAtlasSlot(row: 2, column: 0)
-        }
-    }
-
-    var walkAtlasSlot: AvatarIdleAtlasSlot {
-        switch self {
-        case .none:
-            AvatarIdleAtlasSlot(row: 0, column: 0)
-        case .bambooHat:
-            AvatarIdleAtlasSlot(row: 0, column: 1)
-        case .beanie:
-            AvatarIdleAtlasSlot(row: 1, column: 0)
-        case .bow:
-            AvatarIdleAtlasSlot(row: 2, column: 0)
-        case .helmet:
-            AvatarIdleAtlasSlot(row: 1, column: 1)
-        }
-    }
 }
 
 enum AvatarScarf: Int, Equatable {
@@ -197,18 +168,6 @@ enum AvatarScarf: Int, Equatable {
         }
     }
 
-    var idleRegularAtlasImageName: String {
-        "Char__Idle_Scarf_\(assetName)_Regular.1"
-    }
-
-    var idleHappyAtlasImageName: String {
-        "Char__Idle_Scarf_\(assetName)_Happy.1"
-    }
-
-    var walkRegularAtlasImageName: String {
-        "Char__Walk_Scarf_\(assetName)_Regular.1"
-    }
-
     var assetName: String {
         switch self {
         case .green:
@@ -221,11 +180,6 @@ enum AvatarScarf: Int, Equatable {
     }
 }
 
-struct AvatarIdleAtlasSlot {
-    let row: Int
-    let column: Int
-}
-
 enum AvatarCatalog {
     static let defaultConfig = AvatarConfig()
 }
@@ -235,14 +189,23 @@ enum AvatarFinalAtlasKind {
     case idleHappy
     case walkRegular
 
-    var baseName: String {
+    var rawBaseName: String {
         switch self {
         case .idleRegular:
-            "Character_Idle_Regular"
+            "Char_Idle_Regular"
         case .idleHappy:
-            "Character_Idle_Happy"
+            "Char_Idle_Happy"
         case .walkRegular:
-            "Character_Walk_Regular"
+            "Char_Walk_Regular"
+        }
+    }
+
+    var motionName: String {
+        switch self {
+        case .idleRegular, .idleHappy:
+            "Idle"
+        case .walkRegular:
+            "Walk"
         }
     }
 
@@ -258,41 +221,72 @@ enum AvatarFinalAtlasKind {
     }
 }
 
-enum AvatarFinalAtlas {
-    private static let directoryName = "Character_Images_Final"
+struct AvatarTextureLayer {
+    let frames: [[SKTexture]]
+}
 
+struct AvatarLayeredFrames {
+    let rowCount: Int
+    let frameCount: Int
+    let layers: [AvatarTextureLayer]
+
+    func textures(forRow row: Int) -> [[SKTexture]] {
+        let clampedRow = min(max(row, 0), rowCount - 1)
+        return layers.map { $0.frames[clampedRow] }
+    }
+
+    func firstTextures(forRow row: Int = 0) -> [SKTexture] {
+        textures(forRow: row).compactMap(\.first)
+    }
+}
+
+enum AvatarLayeredAtlas {
     static func frames(
         kind: AvatarFinalAtlasKind,
         hat: AvatarHat,
         scarf: AvatarScarf?,
         filteringMode: SKTextureFilteringMode
-    ) -> [[SKTexture]] {
-        let atlas = SKTextureAtlas(named: atlasName(kind: kind, hat: hat, scarf: scarf))
-        let frameNames = orderedFrameNames(in: atlas, frameCount: kind.rowCount * kind.frameCount)
-
-        return (0..<kind.rowCount).map { row in
-            (0..<kind.frameCount).map { frame in
-                let frameIndex = row * kind.frameCount + frame
-                let texture = atlas.textureNamed(
-                    frameNames.indices.contains(frameIndex)
-                        ? frameNames[frameIndex]
-                        : frameNames.first ?? ""
+    ) -> AvatarLayeredFrames {
+        let layers = rawLayerNames(kind: kind, hat: hat, scarf: scarf).map { rawLayerName in
+            AvatarTextureLayer(
+                frames: sheetFrames(
+                    rawLayerName: rawLayerName,
+                    kind: kind,
+                    filteringMode: filteringMode
                 )
-                texture.filteringMode = filteringMode
-                return texture
-            }
+            )
         }
+
+        return AvatarLayeredFrames(
+            rowCount: kind.rowCount,
+            frameCount: kind.frameCount,
+            layers: layers
+        )
     }
 
     static func portraitImage(hat: AvatarHat, scarf: AvatarScarf?) -> UIImage? {
-        let atlas = SKTextureAtlas(named: atlasName(kind: .idleRegular, hat: hat, scarf: scarf))
-        guard let firstFrameName = orderedFrameNames(in: atlas, frameCount: 1).first else {
-            return nil
-        }
+        let layerTextures = frames(
+            kind: .idleRegular,
+            hat: hat,
+            scarf: scarf,
+            filteringMode: .nearest
+        ).firstTextures()
+        guard !layerTextures.isEmpty else { return nil }
 
-        let texture = atlas.textureNamed(firstFrameName)
-        texture.filteringMode = .nearest
-        let image = UIImage(cgImage: texture.cgImage())
+        let rendererFormat = UIGraphicsImageRendererFormat.default()
+        rendererFormat.scale = 1
+        rendererFormat.opaque = false
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: rawFrameSize, height: rawFrameSize),
+            format: rendererFormat
+        )
+        let image = renderer.image { _ in
+            for texture in layerTextures {
+                UIImage(cgImage: texture.cgImage()).draw(
+                    in: CGRect(x: 0, y: 0, width: rawFrameSize, height: rawFrameSize)
+                )
+            }
+        }
         guard let cgImage = image.cgImage else {
             return image
         }
@@ -310,136 +304,199 @@ enum AvatarFinalAtlas {
         return UIImage(cgImage: croppedImage, scale: image.scale, orientation: image.imageOrientation)
     }
 
-    static func atlasName(kind: AvatarFinalAtlasKind, hat: AvatarHat, scarf: AvatarScarf?) -> String {
-        let baseName = [
-            kind.baseName,
-            scarf.map { "Scarf_\($0.assetName)" }
-        ]
-        .compactMap(\.self)
-        .joined(separator: "_")
+    private static let rawFrameSize: CGFloat = 460
 
-        let candidates = hat.finalAtlasVariantCandidates(kind: kind, scarf: scarf)
-            .map { "\(baseName)_\($0)" }
-
-        guard !candidates.isEmpty else {
-            return baseName
-        }
-
-        for candidate in candidates where atlasExists(candidate) {
-            return candidate
-        }
-
-        if kind == .idleHappy {
-            let regularAtlasName = atlasName(kind: .idleRegular, hat: hat, scarf: scarf)
-            if atlasExists(regularAtlasName) {
-                return regularAtlasName
-            }
-        }
-
-        return candidates[0]
-    }
-
-    private static func atlasExists(_ atlasName: String) -> Bool {
-        Bundle.main.path(forResource: atlasName, ofType: "plist") != nil
-            || Bundle.main.path(forResource: atlasName, ofType: "plist", inDirectory: directoryName) != nil
-    }
-
-    private static func orderedFrameNames(in atlas: SKTextureAtlas, frameCount: Int) -> [String] {
-        let indexedNames = Dictionary(
-            uniqueKeysWithValues: atlas.textureNames.compactMap { textureName -> (Int, String)? in
-                guard let index = frameIndex(from: textureName) else {
-                    return nil
-                }
-                return (index, textureName)
-            }
+    private static func normalizedFrameRect(
+        row: Int,
+        column: Int,
+        rowCount: Int,
+        columnCount: Int
+    ) -> CGRect {
+        let frameWidth = 1 / CGFloat(columnCount)
+        let frameHeight = 1 / CGFloat(rowCount)
+        return CGRect(
+            x: CGFloat(column) * frameWidth,
+            y: 1 - CGFloat(row + 1) * frameHeight,
+            width: frameWidth,
+            height: frameHeight
         )
-
-        if indexedNames.count >= frameCount {
-            return (0..<frameCount).compactMap { indexedNames[$0] }
-        }
-
-        return atlas.textureNames.sorted {
-            $0.localizedStandardCompare($1) == .orderedAscending
-        }
     }
 
-    private static func frameIndex(from textureName: String) -> Int? {
-        let name = textureName.hasSuffix(".png")
-            ? String(textureName.dropLast(4))
-            : textureName
-        guard let separatorIndex = name.lastIndex(of: "-") else {
-            return nil
+    private static func rawLayerNames(
+        kind: AvatarFinalAtlasKind,
+        hat: AvatarHat,
+        scarf: AvatarScarf?
+    ) -> [String] {
+        var layerNames = [kind.rawBaseName]
+        if let scarf {
+            layerNames.append("Layer9_Scarf_\(scarf.rawLayerName)_\(kind.motionName)")
         }
+        if let hatLayerName = hat.rawLayerName {
+            layerNames.append("Layer11_\(hatLayerName)_\(kind.motionName)")
+        }
+        return layerNames
+    }
 
-        return Int(name[name.index(after: separatorIndex)...])
+    private static func sheetFrames(
+        rawLayerName: String,
+        kind: AvatarFinalAtlasKind,
+        filteringMode: SKTextureFilteringMode
+    ) -> [[SKTexture]] {
+        let atlas = SKTextureAtlas(named: rawLayerName)
+        let textureName = atlas.textureNames.first ?? "\(rawLayerName).png"
+        let sheetTexture = atlas.textureNamed(textureName)
+        sheetTexture.filteringMode = filteringMode
+
+        return (0..<kind.rowCount).map { row in
+            (0..<kind.frameCount).map { column in
+                let texture = SKTexture(
+                    rect: normalizedFrameRect(
+                        row: row,
+                        column: column,
+                        rowCount: kind.rowCount,
+                        columnCount: kind.frameCount
+                    ),
+                    in: sheetTexture
+                )
+                texture.filteringMode = filteringMode
+                return texture
+            }
+        }
     }
 }
 
 private extension AvatarHat {
-    func finalAtlasVariantCandidates(kind: AvatarFinalAtlasKind, scarf: AvatarScarf?) -> [String] {
+    var rawLayerName: String? {
         switch self {
         case .none:
-            return []
+            nil
         case .bambooHat:
-            return ["BambooHat_Beige"]
+            "BambooHat_Beige"
         case .beanie:
-            if kind == .walkRegular, scarf == .green || scarf == .blue {
-                return ["Beanie_Blue", "Beanie_Sky"]
-            }
-            if kind == .idleRegular, scarf == .blue {
-                return ["Beanie_Blue", "Beanie_Sky"]
-            }
-            return ["Beanie_Sky", "Beanie_Blue"]
+            "Beanie_Sky"
         case .bow:
-            if kind == .idleHappy, scarf == .blue {
-                return ["Bow_yellow", "Bow_Yellow"]
-            }
-            return ["Bow_Yellow", "Bow_yellow"]
+            "Bow_Yellow"
         case .helmet:
-            return ["Helmet_Silver"]
+            "Helmet_Silver"
+        }
+    }
+}
+
+private extension AvatarScarf {
+    var rawLayerName: String {
+        switch self {
+        case .green:
+            "Green"
+        case .blue:
+            "Sky"
+        case .orange:
+            "Orange"
+        }
+    }
+}
+
+final class AvatarLayeredSpriteNode: SKNode {
+    private var layerNodes: [SKSpriteNode] = []
+
+    var spriteSize: CGSize = .zero {
+        didSet {
+            applyLayout()
+        }
+    }
+
+    var anchorPoint = CGPoint(x: 0.5, y: 0.5) {
+        didSet {
+            applyLayout()
+        }
+    }
+
+    init(frames: AvatarLayeredFrames, row: Int = 0) {
+        super.init()
+        setFirstFrame(frames: frames, row: row)
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        nil
+    }
+
+    func setFirstFrame(frames: AvatarLayeredFrames, row: Int = 0) {
+        let textures = frames.firstTextures(forRow: row)
+        ensureLayerNodes(count: textures.count)
+        for (index, texture) in textures.enumerated() {
+            layerNodes[index].texture = texture
+        }
+    }
+
+    func runAnimation(
+        with frames: AvatarLayeredFrames,
+        row: Int,
+        timePerFrame: TimeInterval,
+        key: String
+    ) {
+        let layerTextures = frames.textures(forRow: row)
+        ensureLayerNodes(count: layerTextures.count)
+        for (index, textures) in layerTextures.enumerated() {
+            layerNodes[index].run(
+                .repeatForever(.animate(with: textures, timePerFrame: timePerFrame)),
+                withKey: key
+            )
+        }
+    }
+
+    func removeAnimation(forKey key: String) {
+        for layerNode in layerNodes {
+            layerNode.removeAction(forKey: key)
+        }
+    }
+
+    func hasAnimation(forKey key: String) -> Bool {
+        layerNodes.contains { $0.action(forKey: key) != nil }
+    }
+
+    private func ensureLayerNodes(count: Int) {
+        while layerNodes.count > count {
+            layerNodes.removeLast().removeFromParent()
+        }
+        while layerNodes.count < count {
+            let layerNode = SKSpriteNode()
+            layerNode.zPosition = CGFloat(layerNodes.count)
+            layerNodes.append(layerNode)
+            addChild(layerNode)
+        }
+        applyLayout()
+    }
+
+    private func applyLayout() {
+        for layerNode in layerNodes {
+            layerNode.anchorPoint = anchorPoint
+            layerNode.size = spriteSize
         }
     }
 }
 
 struct AvatarIdleFrames {
-    private let frames: [[SKTexture]]
+    let layeredFrames: AvatarLayeredFrames
 
     init(hat: AvatarHat, scarf: AvatarScarf? = nil) {
-        frames = AvatarFinalAtlas.frames(
+        layeredFrames = AvatarLayeredAtlas.frames(
             kind: .idleRegular,
             hat: hat,
             scarf: scarf,
             filteringMode: .nearest
         )
     }
-
-    func frames(forRow row: Int) -> [SKTexture] {
-        frames[min(max(row, 0), AvatarFinalAtlasKind.idleRegular.rowCount - 1)]
-    }
-
-    func firstFrame(forRow row: Int = 0) -> SKTexture {
-        frames(forRow: row)[0]
-    }
 }
 
 struct AvatarHappyIdleFrames {
-    private let frames: [[SKTexture]]
+    let layeredFrames: AvatarLayeredFrames
 
     init(hat: AvatarHat, scarf: AvatarScarf? = nil) {
-        frames = AvatarFinalAtlas.frames(
+        layeredFrames = AvatarLayeredAtlas.frames(
             kind: .idleHappy,
             hat: hat,
             scarf: scarf,
             filteringMode: .nearest
         )
-    }
-
-    func frames(forRow row: Int) -> [SKTexture] {
-        frames[min(max(row, 0), AvatarFinalAtlasKind.idleHappy.rowCount - 1)]
-    }
-
-    func firstFrame(forRow row: Int = 0) -> SKTexture {
-        frames(forRow: row)[0]
     }
 }
 
@@ -463,7 +520,7 @@ private final class AvatarPortraitImageCache {
     }
 
     private static func makeImage(for hat: AvatarHat, scarf: AvatarScarf?) -> UIImage? {
-        AvatarFinalAtlas.portraitImage(hat: hat, scarf: scarf)
+        AvatarLayeredAtlas.portraitImage(hat: hat, scarf: scarf)
     }
 }
 

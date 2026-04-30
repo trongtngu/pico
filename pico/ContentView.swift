@@ -3162,21 +3162,22 @@ private final class UserAvatarScene: SKScene {
         renderedSize = size
         removeAllChildren()
 
-        let frames: [SKTexture]
+        let frames: AvatarLayeredFrames
         if usesHappyIdle {
-            frames = AvatarHappyIdleFrames(hat: hat, scarf: scarf).frames(forRow: 0)
+            frames = AvatarHappyIdleFrames(hat: hat, scarf: scarf).layeredFrames
         } else {
-            frames = AvatarIdleFrames(hat: hat, scarf: scarf).frames(forRow: 0)
+            frames = AvatarIdleFrames(hat: hat, scarf: scarf).layeredFrames
         }
-        guard let firstFrame = frames.first else { return }
 
-        let sprite = SKSpriteNode(texture: firstFrame)
+        let sprite = AvatarLayeredSpriteNode(frames: frames)
         let spriteSide = min(size.width * 0.72, size.height * 0.90, maxSpriteSide)
-        sprite.size = CGSize(width: spriteSide, height: spriteSide)
+        sprite.spriteSize = CGSize(width: spriteSide, height: spriteSide)
         sprite.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        sprite.run(
-            .repeatForever(.animate(with: frames, timePerFrame: 0.10)),
-            withKey: Self.idleActionKey
+        sprite.runAnimation(
+            with: frames,
+            row: 0,
+            timePerFrame: 0.10,
+            key: Self.idleActionKey
         )
         addChild(sprite)
     }
