@@ -12,6 +12,7 @@ import Combine
 final class AuthSessionStore: ObservableObject {
     @Published private(set) var session: AuthSession?
     @Published private(set) var profile: UserProfile?
+    @Published private(set) var ownedHats: Set<AvatarHat> = [.none]
     @Published private(set) var isLoading = false
     @Published private(set) var isRestoringSession = true
     @Published private(set) var isProfileLoading = false
@@ -95,6 +96,10 @@ final class AuthSessionStore: ObservableObject {
 
     func updateProfile(displayName: String, avatarConfig: AvatarConfig) async {
         guard let session, !isProfileSaving else { return }
+        guard avatarConfig.selectedHat.isOwned(in: ownedHats) else {
+            profileNotice = "You do not own that hat."
+            return
+        }
 
         let previousProfile = profile
         isProfileSaving = true
@@ -114,6 +119,11 @@ final class AuthSessionStore: ObservableObject {
         }
     }
 
+    func applyOwnedHats(_ hats: Set<AvatarHat>) {
+        ownedHats = hats.union([.none])
+        profileNotice = nil
+    }
+
     #if DEBUG
     static func preview(session: AuthSession? = nil, notice: String? = nil) -> AuthSessionStore {
         let store = AuthSessionStore()
@@ -126,6 +136,7 @@ final class AuthSessionStore: ObservableObject {
             displayName: "Tommy",
             avatarConfig: AvatarCatalog.defaultConfig
         )
+        store.ownedHats = Set(AvatarHat.allCases)
         store.hasLoadedProfile = true
         return store
     }
@@ -209,7 +220,10 @@ final class AuthSessionStore: ObservableObject {
         defer { isProfileLoading = false }
 
         do {
-            profile = try await authService.fetchProfile(for: session)
+            let nextProfile = try await authService.fetchProfile(for: session)
+            let nextOwnedHats = try await authService.fetchOwnedHats(for: session)
+            profile = nextProfile
+            ownedHats = nextOwnedHats
             hasLoadedProfile = true
         } catch {
             profileNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -218,6 +232,7 @@ final class AuthSessionStore: ObservableObject {
 
     private func resetProfile() {
         profile = nil
+        ownedHats = [.none]
         isProfileLoading = false
         isProfileSaving = false
         profileNotice = nil

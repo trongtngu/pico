@@ -75,7 +75,7 @@ struct AvatarConfig: Codable, Equatable {
     }
 }
 
-enum AvatarHat: Int, CaseIterable, Identifiable, Equatable {
+enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
     case none = 0
     case bambooHat = 1
     case beanie = 2
@@ -84,7 +84,7 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Equatable {
 
     var id: Int { rawValue }
 
-    var requiredScore: Int {
+    var berryCost: Int {
         switch self {
         case .none:
             0
@@ -99,8 +99,8 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Equatable {
         }
     }
 
-    func isUnlocked(with score: Int) -> Bool {
-        score >= requiredScore
+    func isOwned(in ownedHats: Set<AvatarHat>) -> Bool {
+        self == .none || ownedHats.contains(self)
     }
 
     var name: String {
@@ -566,7 +566,7 @@ struct AvatarBadgeView: View {
 
 struct AvatarPickerView: View {
     @Binding var selection: AvatarConfig
-    var score: Int = 0
+    var ownedHats: Set<AvatarHat> = [.none]
 
     private let columns = [
         GridItem(.adaptive(minimum: 72), spacing: 12)
@@ -575,10 +575,10 @@ struct AvatarPickerView: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 12) {
             ForEach(AvatarHat.allCases) { hat in
-                let isUnlocked = hat.isUnlocked(with: score)
+                let isOwned = hat.isOwned(in: ownedHats)
 
                 Button {
-                    guard isUnlocked else { return }
+                    guard isOwned else { return }
                     selection = selection.withHat(hat)
                 } label: {
                     VStack(spacing: 8) {
@@ -590,7 +590,7 @@ struct AvatarPickerView: View {
                                 }
                             }
                             .overlay {
-                                if !isUnlocked {
+                                if !isOwned {
                                     Circle()
                                         .fill(.black.opacity(0.42))
 
@@ -602,24 +602,24 @@ struct AvatarPickerView: View {
 
                         Text(hat.name)
                             .font(.caption)
-                            .foregroundStyle(isUnlocked ? PicoColors.textPrimary : PicoColors.textSecondary)
+                            .foregroundStyle(isOwned ? PicoColors.textPrimary : PicoColors.textSecondary)
                             .lineLimit(1)
 
-                        Text("\(hat.requiredScore) points")
+                        Text("Not owned")
                             .font(.caption2)
                             .foregroundStyle(PicoColors.textSecondary)
-                            .opacity(isUnlocked ? 0 : 1)
+                            .opacity(isOwned ? 0 : 1)
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
                     }
                     .frame(maxWidth: .infinity, minHeight: 104)
                     .contentShape(Rectangle())
-                    .opacity(isUnlocked ? 1 : 0.72)
+                    .opacity(isOwned ? 1 : 0.72)
                 }
                 .buttonStyle(.plain)
-                .disabled(!isUnlocked)
+                .disabled(!isOwned)
                 .accessibilityAddTraits(selection.selectedHat == hat ? .isSelected : [])
-                .accessibilityLabel(Text(isUnlocked ? hat.name : "\(hat.name), locked until \(hat.requiredScore) points"))
+                .accessibilityLabel(Text(isOwned ? hat.name : "\(hat.name), not owned"))
             }
         }
         .padding(.vertical, 4)

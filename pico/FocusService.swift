@@ -99,11 +99,6 @@ struct FocusSession: Identifiable, Codable, Equatable {
     }
 }
 
-struct FocusCompletionResult: Equatable {
-    let session: FocusSession
-    let score: UserScore
-}
-
 struct FocusSessionMember: Identifiable, Equatable {
     var id: UUID { userID }
 
@@ -307,19 +302,12 @@ final class FocusService {
         )
     }
 
-    func completeSession(_ id: UUID, for authSession: AuthSession) async throws -> FocusCompletionResult {
-        let response: FocusCompletionResponse = try await send(
-            path: "/rest/v1/rpc/complete_focus_session_with_score",
-            method: "POST",
+    func completeSession(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
+        try await sessionResponse(
+            path: "/rest/v1/rpc/complete_focus_session",
             body: FocusSessionIDRequest(targetSessionId: id),
             accessToken: authSession.accessToken
         )
-
-        guard let result = response.focusCompletionResult else {
-            throw FocusServiceError.invalidResponse
-        }
-
-        return result
     }
 
     func cancelSessionLobby(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
@@ -491,35 +479,6 @@ private struct FocusSessionResponse: Decodable, Equatable {
             startedAt: startedAt.flatMap(FocusDateFormatter.date(from:)),
             plannedEndAt: plannedEndAt.flatMap(FocusDateFormatter.date(from:)),
             endedAt: endedAt.flatMap(FocusDateFormatter.date(from:))
-        )
-    }
-}
-
-private struct FocusCompletionResponse: Decodable {
-    let session: FocusSessionResponse
-    let score: FocusUserScoreResponse
-
-    var focusCompletionResult: FocusCompletionResult? {
-        guard let focusSession = session.focusSession else { return nil }
-        return FocusCompletionResult(
-            session: focusSession,
-            score: score.userScore
-        )
-    }
-}
-
-private struct FocusUserScoreResponse: Decodable {
-    let score: Int
-    let currentStreak: Int
-    let lastScoredOn: String?
-    let lastScoredAt: String?
-
-    var userScore: UserScore {
-        UserScore(
-            score: score,
-            currentStreak: currentStreak,
-            lastScoredOn: lastScoredOn,
-            lastScoredAt: lastScoredAt.flatMap(FocusDateFormatter.date(from:))
         )
     }
 }

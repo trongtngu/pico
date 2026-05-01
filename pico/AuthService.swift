@@ -253,6 +253,20 @@ final class AuthService {
         return profile.userProfile
     }
 
+    func fetchOwnedHats(for authSession: AuthSession) async throws -> Set<AvatarHat> {
+        guard let userID = authSession.user?.id else {
+            throw AuthServiceError.invalidResponse
+        }
+
+        let response: [UserHatInventoryResponse] = try await send(
+            path: "/rest/v1/user_hat_inventory?select=hat&user_id=eq.\(userID.uuidString)",
+            method: "GET",
+            accessToken: authSession.accessToken
+        )
+
+        return Set(response.compactMap { AvatarHat(rawValue: $0.hat) }).union([.none])
+    }
+
     func updateProfile(
         displayName: String,
         avatarConfig: AvatarConfig,
@@ -503,6 +517,10 @@ private struct UserProfileResponse: Decodable {
 private struct UserProfileUpdate: Encodable {
     let displayName: String
     let avatarConfig: AvatarConfig
+}
+
+private struct UserHatInventoryResponse: Decodable {
+    let hat: Int
 }
 
 private struct UserTimezoneUpdate: Encodable {

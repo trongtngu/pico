@@ -11,7 +11,7 @@ import SwiftUI
 struct VillagePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
-    @EnvironmentObject private var scoreStore: ScoreStore
+    @EnvironmentObject private var berryStore: BerryStore
 
     var body: some View {
         ScrollView {
@@ -19,7 +19,8 @@ struct VillagePage: View {
                 VillageView(
                     residents: villageStore.residents,
                     currentUserProfile: sessionStore.profile,
-                    score: scoreStore.score.score
+                    berryCount: berryStore.balance.berries,
+                    pendingRewardSummary: berryStore.pendingRewardSummary
                 )
                     .frame(maxWidth: .infinity)
                     .frame(height: 430)
@@ -55,9 +56,11 @@ struct VillagePage: View {
 struct VillageView: View {
     let residents: [VillageResident]
     let currentUserProfile: UserProfile?
-    let score: Int
+    let berryCount: Int
+    let pendingRewardSummary: BerryRewardSummary
 
     private static let gridSize = 6
+    private static let berryBushCount = 3
     private var gridResidents: [VillageResident] {
         guard let currentUserProfile else { return residents }
 
@@ -74,7 +77,8 @@ struct VillageView: View {
         let residentID = gridResidents
             .map { "\($0.id.uuidString)-\($0.profile.avatarConfig.selectedHat.rawValue)-\($0.bondLevel)" }
             .joined(separator: "|")
-        return "\(score)-\(rewardSeed)-\(residentID)"
+        let bushRewards = pendingRewardSummary.bushBerryTiers.map(String.init(describing:)).joined(separator: "|")
+        return "\(berryCount)-\(bushRewards)-\(Self.berryBushCount)-\(rewardSeed)-\(residentID)"
     }
 
     private var rewardSeed: String {
@@ -89,7 +93,9 @@ struct VillageView: View {
                     size: proxy.size,
                     gridSize: Self.gridSize,
                     residents: gridResidents,
-                    score: score,
+                    berryCount: berryCount,
+                    pendingRewardSummary: pendingRewardSummary,
+                    berryBushCount: Self.berryBushCount,
                     rewardSeed: rewardSeed
                 ),
                 options: [.allowsTransparency]
@@ -135,16 +141,20 @@ private final class VillageScene: SKScene {
 
     private let gridSize: Int
     private let residents: [VillageResident]
-    private let score: Int
+    private let berryCount: Int
+    private let pendingRewardSummary: BerryRewardSummary
+    private let berryBushCount: Int
     private let rewardSeed: String
     private var renderedSize: CGSize = .zero
     private var villagers: [VillagerNode] = []
     private var lastUpdateTime: TimeInterval?
 
-    init(size: CGSize, gridSize: Int, residents: [VillageResident], score: Int, rewardSeed: String) {
+    init(size: CGSize, gridSize: Int, residents: [VillageResident], berryCount: Int, pendingRewardSummary: BerryRewardSummary, berryBushCount: Int, rewardSeed: String) {
         self.gridSize = gridSize
         self.residents = Array(residents.prefix(gridSize * gridSize))
-        self.score = score
+        self.berryCount = berryCount
+        self.pendingRewardSummary = pendingRewardSummary
+        self.berryBushCount = berryBushCount
         self.rewardSeed = rewardSeed
         super.init(size: size)
         scaleMode = .resizeFill
@@ -175,6 +185,7 @@ private final class VillageScene: SKScene {
         villagers.removeAll()
         lastUpdateTime = nil
         drawGrid()
+        drawBerryBushes()
         drawVillagers()
     }
 
@@ -224,13 +235,13 @@ private final class VillageScene: SKScene {
     }
 
     private func rewardTexturesByTile(flowerTextures: [SKTexture]) -> [TileCoordinate: SKTexture] {
-        guard score > 0, !flowerTextures.isEmpty else { return [:] }
+        guard berryCount > 0, !flowerTextures.isEmpty else { return [:] }
 
         var generator = SeededRandomNumberGenerator(seed: StableHash.value(for: "reward-\(rewardSeed)"))
         var tiles = TileCoordinate.all(in: gridSize)
         tiles.shuffle(using: &generator)
 
-        let rewardCount = min(score, tiles.count)
+        let rewardCount = min(berryCount, tiles.count)
         return Dictionary(uniqueKeysWithValues: tiles.prefix(rewardCount).map { tile in
             let texture = flowerTextures[Int(generator.next() % UInt64(flowerTextures.count))]
             return (tile, texture)
@@ -257,6 +268,56 @@ private final class VillageScene: SKScene {
         sprite.position = center
         sprite.zPosition = -center.y - 1_000
         addChild(sprite)
+    }
+
+    private func drawBerryBushes() {
+        guard berryBushCount > 0 else { return }
+
+        let layout = VillageSceneLayout(
+            size: size,
+            gridSize: gridSize,
+            tileAnchorPoint: Self.tileAnchorPoint
+        )
+        let placements = [
+            BerryBushPlacement(tile: TileCoordinate(row: 1, column: 1), offset: CGPoint(x: -0.18, y: -0.06)),
+            BerryBushPlacement(tile: TileCoordinate(row: 1, column: max(1, gridSize - 2)), offset: CGPoint(x: 0.16, y: -0.10)),
+            BerryBushPlacement(tile: TileCoordinate(row: max(1, gridSize - 2), column: 2), offset: CGPoint(x: -0.08, y: -0.08))
+        ]
+        let baseAtlas = SKTextureAtlas(named: "Bushes")
+        let berryTiers = Array(pendingRewardSummary.bushBerryTiers.prefix(berryBushCount))
+
+        for (index, placement) in placements.prefix(berryBushCount).enumerated() {
+            let position = layout.characterPosition(for: placement.tile)
+            let bush = SKNode()
+            bush.position = CGPoint(
+                x: position.x + layout.tileWidth * placement.offset.x,
+                y: position.y + layout.tileWidth * placement.offset.y
+            )
+            bush.zPosition = -position.y
+
+            let bushNumber = index + 1
+            let bushSize = CGSize(width: layout.characterSize * 0.74, height: layout.characterSize * 1.48)
+            let baseTexture = baseAtlas.textureNamed("Bush_BerryBush\(bushNumber).png")
+            baseTexture.filteringMode = .linear
+            let baseSprite = SKSpriteNode(texture: baseTexture)
+            baseSprite.anchorPoint = CGPoint(x: 0.5, y: 0.08)
+            baseSprite.size = bushSize
+            bush.addChild(baseSprite)
+
+            if index < berryTiers.count {
+                let tier = berryTiers[index]
+                let berryAtlas = SKTextureAtlas(named: tier.bushAtlasName)
+                let berryTexture = berryAtlas.textureNamed("Bush_BerryBush\(bushNumber)_\(tier.bushTextureSuffix).png")
+                berryTexture.filteringMode = .linear
+                let berrySprite = SKSpriteNode(texture: berryTexture)
+                berrySprite.anchorPoint = baseSprite.anchorPoint
+                berrySprite.size = bushSize
+                berrySprite.zPosition = 1
+                bush.addChild(berrySprite)
+            }
+
+            addChild(bush)
+        }
     }
 
     private func drawVillagers() {
@@ -314,6 +375,35 @@ private final class VillageScene: SKScene {
         let row = linearPosition / gridSize
         let column = linearPosition % gridSize
         return TileCoordinate(row: row, column: column)
+    }
+}
+
+private struct BerryBushPlacement {
+    let tile: TileCoordinate
+    let offset: CGPoint
+}
+
+private extension BerryBushBerryTier {
+    var bushAtlasName: String {
+        switch self {
+        case .black:
+            "Berries_Black"
+        case .white:
+            "Berries_White"
+        case .red:
+            "Berries_Red"
+        }
+    }
+
+    var bushTextureSuffix: String {
+        switch self {
+        case .black:
+            "BerriesBlack"
+        case .white:
+            "BerriesWhite"
+        case .red:
+            "BerriesRed"
+        }
     }
 }
 
@@ -592,7 +682,7 @@ struct VillageViews_Previews: PreviewProvider {
             VillagePage()
                 .environmentObject(AuthSessionStore.preview(session: AuthSession.preview))
                 .environmentObject(VillageStore.preview)
-                .environmentObject(ScoreStore.preview)
+                .environmentObject(BerryStore.preview)
         }
     }
 }

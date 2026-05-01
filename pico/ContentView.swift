@@ -29,7 +29,7 @@ struct AppShellView: View {
     @StateObject private var focusStore = FocusStore()
     @StateObject private var villageStore = VillageStore()
     @StateObject private var bondRewardClaimStore = BondRewardClaimStore()
-    @StateObject private var scoreStore = ScoreStore()
+    @StateObject private var berryStore = BerryStore()
 
     var body: some View {
         ZStack {
@@ -75,29 +75,34 @@ struct AppShellView: View {
         .environmentObject(focusStore)
         .environmentObject(villageStore)
         .environmentObject(bondRewardClaimStore)
-        .environmentObject(scoreStore)
+        .environmentObject(berryStore)
         .task(id: sessionStore.session?.user?.id) {
             await sessionStore.refreshSessionIfNeeded()
             await focusStore.restoreSavedState(for: sessionStore.session)
             if sessionStore.session == nil {
                 villageStore.clear()
-                scoreStore.clear()
+                berryStore.clear()
                 focusStore.updateKnownVillageResidentIDs(nil)
             } else {
                 await villageStore.loadResidents(for: sessionStore.session)
                 focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
-                await scoreStore.loadScore(for: sessionStore.session)
+                await berryStore.loadBalance(for: sessionStore.session)
+                await berryStore.loadPendingBerryRewards(for: sessionStore.session)
             }
         }
         .onChange(of: focusStore.resultSession) {
             guard focusStore.resultSession?.status == .completed else { return }
             Task {
                 await villageStore.loadResidents(for: sessionStore.session)
+                await berryStore.loadBalance(for: sessionStore.session)
+                await berryStore.loadPendingBerryRewards(for: sessionStore.session, retryIfEmpty: true)
             }
         }
-        .onChange(of: focusStore.completionScoreReceipt) {
-            guard let score = focusStore.completionScoreReceipt else { return }
-            scoreStore.applyScore(score)
+        .onChange(of: focusStore.hasPendingResultSync) {
+            guard !focusStore.hasPendingResultSync, focusStore.resultSession?.status == .completed else { return }
+            Task {
+                await berryStore.loadPendingBerryRewards(for: sessionStore.session, retryIfEmpty: true)
+            }
         }
         .onChange(of: villageStore.residents) {
             focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
@@ -271,6 +276,7 @@ private struct PicoSideNavigation: View {
 
 private enum AppTab: String, CaseIterable, Identifiable {
     case home
+    case store
     case bonds
     case friends
     case settings
@@ -281,6 +287,8 @@ private enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home:
             "Village"
+        case .store:
+            "Store"
         case .bonds:
             "Bonds"
         case .friends:
@@ -290,6 +298,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
         }
     }
 
+    @ViewBuilder
     func icon(isSelected: Bool, size: CGFloat = 20) -> some View {
         PicoIcon(iconAsset(isSelected: isSelected), size: size)
     }
@@ -298,6 +307,8 @@ private enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home:
             isSelected ? .homeSolid : .homeRegular
+        case .store:
+            isSelected ? .buildingStorefrontSolid : .buildingStorefrontRegular
         case .bonds:
             isSelected ? .sparklesSolid : .sparklesRegular
         case .friends:
@@ -319,6 +330,8 @@ private enum AppTab: String, CaseIterable, Identifiable {
                 showsMenuButton: usesDrawerNavigation,
                 openNavigation: openNavigation
             )
+        case .store:
+            StorePage()
         case .bonds:
             BondsPage()
         case .friends:
@@ -332,7 +345,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
 private struct HomePage: View {
     @EnvironmentObject private var focusStore: FocusStore
     @EnvironmentObject private var friendStore: FriendStore
-    @EnvironmentObject private var scoreStore: ScoreStore
+    @EnvironmentObject private var berryStore: BerryStore
     @EnvironmentObject private var villageStore: VillageStore
     @EnvironmentObject private var sessionStore: AuthSessionStore
     let showsMenuButton: Bool
@@ -340,20 +353,25 @@ private struct HomePage: View {
     @State private var isStartFocusSheetPresented = false
     @State private var startFocusStep = StartFocusSheetStep.modePicker
     @State private var startFocusSheetHeight: CGFloat = 360
+    @State private var collectedBerryReward: CollectedBerryReward?
 
     var body: some View {
         ZStack {
             ZStack(alignment: .top) {
                 ScrollView {
                     GeometryReader { viewport in
-                        VillageHeroSection(
-                            residents: gridResidents,
-                            currentUserProfile: sessionStore.profile,
-                            score: scoreStore.score.score,
-                            isLoading: villageStore.isLoadingResidents,
-                            notice: villageStore.notice,
-                            height: max(0, viewport.size.height - PicoSpacing.compact * 2)
-                        )
+                        VStack(spacing: PicoSpacing.compact) {
+                            VillageHeroSection(
+                                residents: gridResidents,
+                                currentUserProfile: sessionStore.profile,
+                                berryCount: berryStore.balance.berries,
+                                pendingRewardSummary: berryStore.pendingRewardSummary,
+                                isLoading: villageStore.isLoadingResidents,
+                                notice: villageStore.notice,
+                                height: villageHeight(for: viewport.size.height)
+                            )
+
+                        }
                         .padding(.horizontal, PicoSpacing.standard)
                         .padding(.vertical, PicoSpacing.compact)
                     }
@@ -368,18 +386,22 @@ private struct HomePage: View {
                     ActiveSessionTimerBottomBar(session: activeSession)
                 } else {
                     HomeFocusBottomBar(
-                        score: scoreStore.score.score,
-                        isLoadingScore: scoreStore.isLoadingScore,
-                        scoreNotice: scoreStore.notice,
+                        isLoadingBalance: berryStore.isLoadingBalance,
+                        balanceNotice: berryStore.notice,
+                        hasPendingBerryRewards: berryStore.hasPendingBerryRewards,
+                        isLoadingPendingBerryRewards: berryStore.isLoadingPendingBerryRewards,
+                        isCollectingBerries: berryStore.isCollectingBerries,
                         incomingInviteCount: focusStore.incomingInvites.count,
-                        action: presentStartFocusSheet
+                        startFocus: presentStartFocusSheet,
+                        collectRewards: collectPendingBerryRewards
                     )
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 if focusStore.activeSession == nil {
                     HomeTopBar(
-                        currentStreak: scoreStore.currentStreak,
+                        berryCount: berryStore.balance.berries,
+                        completionStreak: berryStore.completionStreak,
                         showsMenuButton: showsMenuButton,
                         openNavigation: openNavigation
                     )
@@ -408,9 +430,19 @@ private struct HomePage: View {
             .presentationBackground(PicoColors.appBackground)
             .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
         }
+        .sheet(item: $collectedBerryReward) { reward in
+            BerryCollectionSuccessSheet(summary: reward.summary) {
+                collectedBerryReward = nil
+            }
+            .presentationDetents([.height(360)])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(PicoColors.appBackground)
+            .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
+        }
         .task {
             await villageStore.loadResidents(for: sessionStore.session)
-            await scoreStore.loadScore(for: sessionStore.session)
+            await berryStore.loadBalance(for: sessionStore.session)
+            await berryStore.loadPendingBerryRewards(for: sessionStore.session)
         }
         .onChange(of: focusStore.resultSession) {
             guard focusStore.resultSession != nil else { return }
@@ -463,7 +495,260 @@ private struct HomePage: View {
             villageStore: villageStore
         )
         await friendStore.loadFriends(for: sessionStore.session)
-        await scoreStore.loadScore(for: sessionStore.session)
+        await berryStore.loadBalance(for: sessionStore.session)
+        await berryStore.loadPendingBerryRewards(for: sessionStore.session)
+    }
+
+    private func villageHeight(for viewportHeight: CGFloat) -> CGFloat {
+        max(280, viewportHeight - 54)
+    }
+
+    private func collectPendingBerryRewards() {
+        Task {
+            let rewardSummary = berryStore.pendingRewardSummary
+            guard rewardSummary.hasRewards,
+                  await berryStore.collectPendingBerryRewards(for: sessionStore.session) != nil else { return }
+            collectedBerryReward = CollectedBerryReward(summary: rewardSummary)
+        }
+    }
+}
+
+private struct CollectedBerryReward: Identifiable {
+    let id = UUID()
+    let summary: BerryRewardSummary
+}
+
+private struct BerryCollectionSuccessSheet: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let summary: BerryRewardSummary
+    let onDone: () -> Void
+
+    private var rows: [BerryCollectionTierRow] {
+        [
+            BerryCollectionTierRow(tier: .red, count: summary.redBerries),
+            BerryCollectionTierRow(tier: .white, count: summary.whiteBerries),
+            BerryCollectionTierRow(tier: .black, count: summary.blackBerries)
+        ].filter { $0.count > 0 }
+    }
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            VStack(spacing: PicoSpacing.compact) {
+                Text("Berries collected")
+                    .font(PicoTypography.cardTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .multilineTextAlignment(.center)
+
+                Text("+\(formattedBerryCount(summary.totalBerryValue))")
+                    .font(PicoTypography.sectionTitle)
+                    .foregroundStyle(PicoColors.primary)
+                    .multilineTextAlignment(.center)
+            }
+
+            ZStack {
+                FocusCompleteConfettiView(reduceMotion: reduceMotion)
+                    .frame(width: 280, height: 112)
+                    .allowsHitTesting(false)
+
+                VStack(spacing: PicoSpacing.compact) {
+                    ForEach(rows) { row in
+                        HStack(spacing: PicoSpacing.iconTextGap) {
+                            BerryCollectionTierSwatch(tier: row.tier)
+
+                            Text(row.label)
+                                .font(PicoTypography.body.weight(.semibold))
+                                .foregroundStyle(PicoColors.textPrimary)
+
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, PicoSpacing.standard)
+                        .padding(.vertical, PicoSpacing.compact)
+                        .background(PicoColors.softSurface.opacity(0.72))
+                        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
+                    }
+                }
+            }
+            .frame(minHeight: 132)
+
+            Button("Done") {
+                onDone()
+            }
+            .buttonStyle(PicoPrimaryButtonStyle())
+            .padding(.top, PicoSpacing.compact)
+        }
+        .padding(.horizontal, PicoSpacing.cardPadding)
+        .padding(.top, PicoSpacing.section)
+        .padding(.bottom, PicoSpacing.standard)
+    }
+}
+
+private struct BerryCollectionTierRow: Identifiable {
+    let tier: BerryCollectionTier
+    let count: Int
+
+    var id: BerryCollectionTier { tier }
+
+    var label: String {
+        "\(count) \(tier.name) berr\(count == 1 ? "y" : "ies")!"
+    }
+}
+
+private enum BerryCollectionTier: Hashable {
+    case black
+    case white
+    case red
+
+    var name: String {
+        switch self {
+        case .black:
+            "black"
+        case .white:
+            "white"
+        case .red:
+            "red"
+        }
+    }
+
+    var fill: Color {
+        switch self {
+        case .black:
+            Color(hex: 0x252525)
+        case .white:
+            Color(hex: 0xFFFDF6)
+        case .red:
+            PicoColors.error
+        }
+    }
+
+    var border: Color {
+        switch self {
+        case .black:
+            Color(hex: 0x111111)
+        case .white:
+            PicoColors.border
+        case .red:
+            PicoColors.error.opacity(0.68)
+        }
+    }
+
+    var iconBackground: Color {
+        switch self {
+        case .black:
+            Color(hex: 0xEEF2E7)
+        case .white:
+            Color(hex: 0x7B8F62).opacity(0.28)
+        case .red:
+            Color(hex: 0xFBE7EA)
+        }
+    }
+
+    var atlasName: String {
+        switch self {
+        case .black:
+            "Berries_Black"
+        case .white:
+            "Berries_White"
+        case .red:
+            "Berries_Red"
+        }
+    }
+
+    var textureName: String {
+        switch self {
+        case .black:
+            "Bush_BerryBush1_BerriesBlack.png"
+        case .white:
+            "Bush_BerryBush1_BerriesWhite.png"
+        case .red:
+            "Bush_BerryBush1_BerriesRed.png"
+        }
+    }
+
+    var iconImage: UIImage? {
+        let texture = SKTextureAtlas(named: atlasName).textureNamed(textureName)
+        texture.filteringMode = .linear
+        let image = UIImage(cgImage: texture.cgImage())
+        return image.croppedToVisiblePixels(padding: 10) ?? image
+    }
+}
+
+private struct BerryCollectionTierSwatch: View {
+    let tier: BerryCollectionTier
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
+                .fill(tier.iconBackground)
+
+            if let iconImage = tier.iconImage {
+                Image(uiImage: iconImage)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(5)
+            }
+        }
+        .frame(width: 34, height: 34)
+        .overlay(
+            RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
+                .stroke(tier.border.opacity(0.34), lineWidth: 1)
+        )
+        .shadow(color: tier.border.opacity(0.16), radius: 4, x: 0, y: 2)
+        .accessibilityHidden(true)
+    }
+}
+
+private extension UIImage {
+    func croppedToVisiblePixels(padding: Int) -> UIImage? {
+        guard let cgImage else { return nil }
+
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var minX = width
+        var minY = height
+        var maxX = 0
+        var maxY = 0
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let alpha = pixels[y * bytesPerRow + x * bytesPerPixel + 3]
+                guard alpha > 0 else { continue }
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+
+        guard minX <= maxX, minY <= maxY else { return nil }
+
+        let cropRect = CGRect(
+            x: max(0, minX - padding),
+            y: max(0, minY - padding),
+            width: min(width - max(0, minX - padding), maxX - minX + 1 + padding * 2),
+            height: min(height - max(0, minY - padding), maxY - minY + 1 + padding * 2)
+        )
+
+        guard let croppedImage = cgImage.cropping(to: cropRect) else { return nil }
+        return UIImage(cgImage: croppedImage, scale: scale, orientation: imageOrientation)
     }
 }
 
@@ -478,7 +763,8 @@ private func refreshLiveVillageData(
 }
 
 private struct HomeTopBar: View {
-    let currentStreak: Int
+    let berryCount: Int
+    let completionStreak: Int
     let showsMenuButton: Bool
     let openNavigation: () -> Void
 
@@ -496,19 +782,59 @@ private struct HomeTopBar: View {
                 }
             },
             trailing: {
-                HStack(spacing: PicoSpacing.tiny) {
-                    PicoIcon(.fireSolid, size: 16)
-                        .foregroundStyle(PicoColors.streakAccent)
-
-                    Text("\(currentStreak)")
-                        .font(PicoTypography.body.weight(.bold))
-                        .foregroundStyle(PicoColors.textPrimary)
-                }
-                .frame(width: 44, height: 44, alignment: .trailing)
+                HomeTopBarStats(
+                    berryCount: berryCount,
+                    completionStreak: completionStreak
+                )
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text("\(currentStreak) day streak"))
+                .accessibilityLabel(Text("\(formattedBerryCount(berryCount)), \(completionStreak) day streak"))
             }
         )
+    }
+}
+
+private struct HomeTopBarStats: View {
+    let berryCount: Int
+    let completionStreak: Int
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            HStack(spacing: PicoSpacing.tiny) {
+                BerryBalanceIcon(size: 18)
+
+                Text("\(berryCount)")
+                    .font(PicoTypography.body.weight(.bold))
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .monospacedDigit()
+            }
+
+            HStack(spacing: PicoSpacing.tiny) {
+                PicoIcon(.fireSolid, size: 12)
+                    .foregroundStyle(PicoColors.streakAccent)
+
+                Text("\(completionStreak)")
+                    .font(PicoTypography.caption.weight(.bold))
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .monospacedDigit()
+            }
+        }
+        .frame(width: 76, height: 44, alignment: .topTrailing)
+    }
+}
+
+private struct BerryBalanceIcon: View {
+    let size: CGFloat
+
+    var body: some View {
+        if let image = UIImage(named: "Berry_Icon") ?? UIImage(named: "Berries_Icon") {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+        } else {
+            PicoIcon(.sparklesSolid, size: size)
+                .foregroundStyle(PicoColors.primary)
+        }
     }
 }
 
@@ -708,20 +1034,15 @@ private struct BondsListCard: View {
     let onClaim: (VillageResident) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(residents.enumerated()), id: \.element.id) { index, resident in
+        VStack(spacing: PicoSpacing.compact) {
+            ForEach(residents) { resident in
                 BondRowView(
                     resident: resident,
                     ownerID: ownerID,
                     onClaim: onClaim
                 )
-
-                if index < residents.count - 1 {
-                    PicoCardDivider()
-                }
             }
         }
-        .picoCreamCard()
     }
 }
 
@@ -757,6 +1078,18 @@ private struct BondRowView: View {
         BondScarfProgress(xp: xp, claimableReward: pendingReward)
     }
 
+    private var cardBackground: Color {
+        pendingReward == nil
+            ? PicoCreamCardStyle.background
+            : PicoColors.highlight.opacity(0.18)
+    }
+
+    private var cardBorder: Color {
+        pendingReward == nil
+            ? PicoCreamCardStyle.border
+            : PicoColors.highlight.opacity(0.42)
+    }
+
     var body: some View {
         Group {
             if pendingReward != nil {
@@ -770,6 +1103,12 @@ private struct BondRowView: View {
                 rowContent
             }
         }
+        .contentShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous))
+        .picoCreamCard(
+            padding: PicoSpacing.cardPadding,
+            background: cardBackground,
+            border: cardBorder
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             Text("\(resident.profile.displayName), bond level \(resident.bondLevel), \(xp) XP, \(scarfProgress.accessibilitySummary)")
@@ -824,22 +1163,6 @@ private struct BondRowView: View {
                     .padding(.leading, 56 + PicoSpacing.standard)
             }
         }
-        .padding(.horizontal, PicoSpacing.cardPadding)
-        .padding(.vertical, PicoSpacing.standard)
-        .background(
-            pendingReward == nil
-                ? Color.clear
-                : PicoColors.warning.opacity(0.14)
-        )
-        .overlay(
-            Rectangle()
-                .stroke(
-                    pendingReward == nil
-                        ? Color.clear
-                        : PicoColors.warning.opacity(0.42),
-                    lineWidth: 1
-                )
-        )
     }
 }
 
@@ -911,7 +1234,7 @@ private struct BondScarfProgress {
 
     var tint: Color {
         if claimableReward != nil {
-            return PicoColors.warning
+            return PicoColors.highlight
         }
 
         return PicoColors.primary
@@ -1083,7 +1406,8 @@ private enum StartFocusSheetStep {
 private struct VillageHeroSection: View {
     let residents: [VillageResident]
     let currentUserProfile: UserProfile?
-    let score: Int
+    let berryCount: Int
+    let pendingRewardSummary: BerryRewardSummary
     let isLoading: Bool
     let notice: String?
     let height: CGFloat
@@ -1093,7 +1417,8 @@ private struct VillageHeroSection: View {
             VillageView(
                 residents: residents,
                 currentUserProfile: currentUserProfile,
-                score: score
+                berryCount: berryCount,
+                pendingRewardSummary: pendingRewardSummary
             )
                 .frame(maxWidth: .infinity)
                 .frame(height: height)
@@ -1141,21 +1466,45 @@ private struct VillageHeroSection: View {
 }
 
 private struct HomeFocusBottomBar: View {
-    let score: Int
-    let isLoadingScore: Bool
-    let scoreNotice: String?
+    let isLoadingBalance: Bool
+    let balanceNotice: String?
+    let hasPendingBerryRewards: Bool
+    let isLoadingPendingBerryRewards: Bool
+    let isCollectingBerries: Bool
     let incomingInviteCount: Int
-    let action: () -> Void
+    let startFocus: () -> Void
+    let collectRewards: () -> Void
+
+    private var usesCollectMode: Bool {
+        hasPendingBerryRewards || isLoadingPendingBerryRewards
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-            CompactProgressStrip(
-                score: score,
-                isLoading: isLoadingScore,
-                notice: scoreNotice
-            )
+            if isLoadingBalance || balanceNotice != nil {
+                HStack(spacing: PicoSpacing.compact) {
+                    if isLoadingBalance {
+                        ProgressView()
+                            .tint(PicoColors.primary)
+                    }
 
-            StartFocusCTA(incomingInviteCount: incomingInviteCount, action: action)
+                    if let balanceNotice {
+                        Text(balanceNotice)
+                            .font(PicoTypography.caption)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            StartFocusCTA(
+                mode: usesCollectMode ? .collectRewards : .startFocus,
+                incomingInviteCount: incomingInviteCount,
+                isLoading: usesCollectMode && (isLoadingPendingBerryRewards || isCollectingBerries),
+                action: usesCollectMode ? collectRewards : startFocus
+            )
+            .disabled(usesCollectMode && (isLoadingPendingBerryRewards || isCollectingBerries || !hasPendingBerryRewards))
         }
         .padding(.horizontal, 44)
         .padding(.top, PicoSpacing.compact)
@@ -1169,124 +1518,100 @@ private struct HomeFocusBottomBar: View {
 }
 
 private struct StartFocusCTA: View {
+    enum Mode {
+        case startFocus
+        case collectRewards
+    }
+
+    let mode: Mode
     let incomingInviteCount: Int
+    let isLoading: Bool
     let action: () -> Void
+
+    private var title: String {
+        switch mode {
+        case .startFocus:
+            "Start Focus"
+        case .collectRewards:
+            "Collect berries"
+        }
+    }
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 2) {
-                Text("Start Focus")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .frame(maxWidth: .infinity)
-                    .multilineTextAlignment(.center)
+                HStack(spacing: PicoSpacing.compact) {
+                    Text(title)
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
 
-                if incomingInviteCount > 0 {
+                    if mode == .collectRewards {
+                        BerryBalanceIcon(size: 24)
+                            .accessibilityHidden(true)
+                    }
+
+                    if isLoading {
+                        ProgressView()
+                            .tint(foregroundColor)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .multilineTextAlignment(.center)
+
+                if mode == .startFocus, incomingInviteCount > 0 {
                     Text("\(incomingInviteCount) invite\(incomingInviteCount == 1 ? "" : "s") waiting")
                         .font(PicoTypography.caption)
                         .foregroundStyle(PicoColors.textOnPrimary.opacity(0.86))
                         .frame(maxWidth: .infinity)
                         .multilineTextAlignment(.center)
-                }
+                    }
             }
-            .foregroundStyle(PicoColors.textOnPrimary)
+            .foregroundStyle(foregroundColor)
             .padding(.horizontal, PicoSpacing.section)
             .frame(maxWidth: .infinity)
             .frame(height: 64)
-            .background(PicoColors.primary)
+            .background(background)
+            .overlay(border)
             .clipShape(Capsule(style: .continuous))
-            .shadow(color: PicoColors.primary.opacity(0.24), radius: 16, x: 0, y: 8)
+            .shadow(color: shadowColor, radius: 16, x: 0, y: 8)
         }
         .buttonStyle(.plain)
     }
-}
 
-private struct CompactProgressStrip: View {
-    let score: Int
-    let isLoading: Bool
-    let notice: String?
-
-    private var nextHat: AvatarHat? {
-        AvatarHat.allCases.first { $0.requiredScore > score }
+    private var foregroundColor: Color {
+        switch mode {
+        case .startFocus:
+            PicoColors.textOnPrimary
+        case .collectRewards:
+            PicoColors.textPrimary
+        }
     }
 
-    private var previousHatRequirement: Int {
-        AvatarHat.allCases
-            .filter { $0.requiredScore <= score }
-            .map(\.requiredScore)
-            .max() ?? 0
-    }
-
-    private var hatProgressTotal: Double {
-        guard let nextHat else { return 1 }
-        return Double(max(1, nextHat.requiredScore - previousHatRequirement))
-    }
-
-    private var hatProgressValue: Double {
-        guard let nextHat else { return 1 }
-        let tierProgress = score - previousHatRequirement
-        return Double(min(max(0, tierProgress), nextHat.requiredScore - previousHatRequirement))
-    }
-
-    private var nextHatProgressLabel: String {
-        guard let nextHat else { return "All hats unlocked" }
-        return "\(nextHat.name) unlock: \(Int(hatProgressValue))/\(Int(hatProgressTotal))"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.compact) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(nextHatProgressLabel)
-                    .font(PicoTypography.caption)
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-
-                Spacer(minLength: PicoSpacing.compact)
-
-                if isLoading {
-                    ProgressView()
-                        .tint(PicoColors.primary)
-                }
-            }
-
-            SegmentedScoreProgressBar(
-                value: Int(hatProgressValue),
-                segmentCount: Int(hatProgressTotal)
+    private var background: some View {
+        Capsule(style: .continuous)
+            .fill(
+                mode == .collectRewards
+                    ? PicoColors.highlightBackground
+                    : PicoColors.primary
             )
-
-            if let notice {
-                Text(notice)
-                    .font(PicoTypography.caption)
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .lineLimit(2)
-            }
-        }
-    }
-}
-
-private struct SegmentedScoreProgressBar: View {
-    let value: Int
-    let segmentCount: Int
-
-    private var filledSegmentCount: Int {
-        min(max(value, 0), segmentCount)
     }
 
-    var body: some View {
-        HStack(spacing: PicoSpacing.tiny) {
-            ForEach(0..<segmentCount, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(index < filledSegmentCount ? PicoColors.primary : PicoColors.softSurface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .stroke(PicoColors.border.opacity(index < filledSegmentCount ? 0 : 1), lineWidth: 1)
-                    )
-                    .frame(height: 10)
-            }
+    private var border: some View {
+        Capsule(style: .continuous)
+            .stroke(
+                mode == .collectRewards
+                    ? Color.clear
+                    : Color.clear,
+                lineWidth: 1
+            )
+    }
+
+    private var shadowColor: Color {
+        switch mode {
+        case .startFocus:
+            PicoColors.primary.opacity(0.24)
+        case .collectRewards:
+            Color.clear
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Progress"))
-        .accessibilityValue(Text("\(filledSegmentCount) of \(segmentCount) points"))
     }
 }
 
@@ -2397,7 +2722,7 @@ private struct FocusCompleteOverlay: View {
 private struct FocusCompleteCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var sessionStore: AuthSessionStore
-    @EnvironmentObject private var scoreStore: ScoreStore
+    @EnvironmentObject private var berryStore: BerryStore
     @EnvironmentObject private var focusStore: FocusStore
 
     let session: FocusSession
@@ -2425,8 +2750,10 @@ private struct FocusCompleteCard: View {
 
             celebrationContent
 
-            rewardContent
-                .padding(.top, PicoSpacing.standard)
+            if session.status != .completed {
+                rewardContent
+                    .padding(.top, PicoSpacing.standard)
+            }
 
             if focusStore.hasPendingResultSync {
                 Button {
@@ -2473,11 +2800,11 @@ private struct FocusCompleteCard: View {
     }
 
     private var scoreLabel: String {
-        session.status == .completed ? "1 point" : "No score"
+        session.status == .completed ? "Berries pending" : formattedBerryCount(0)
     }
 
     private var streakLabel: String {
-        let streak = scoreStore.currentStreak
+        let streak = berryStore.completionStreak
         return "\(streak) day\(streak == 1 ? "" : "s") streak"
     }
 
@@ -2564,18 +2891,7 @@ private struct FocusCompleteCard: View {
     }
 
     private func groupMetrics(for _: FocusCompletionContext) -> [FocusCompleteMetricModel] {
-        [
-            FocusCompleteMetricModel(
-                title: scoreLabel,
-                icon: .sparklesSolid,
-                iconColor: PicoColors.primary
-            ),
-            FocusCompleteMetricModel(
-                title: streakLabel,
-                icon: .fireSolid,
-                iconColor: PicoColors.streakAccent
-            )
-        ]
+        []
     }
 }
 
@@ -2940,9 +3256,236 @@ private func clampedDurationSeconds(from seconds: Int) -> Int {
     min(FocusStore.maximumDurationSeconds, max(FocusStore.minimumDurationSeconds, seconds))
 }
 
+func formattedBerryCount(_ count: Int) -> String {
+    "\(count) \(count == 1 ? "berry" : "berries")"
+}
+
+private struct BerryAmountLabel: View {
+    let count: Int
+    var font: Font
+    var iconSize: CGFloat
+    var textColor: Color = PicoColors.textPrimary
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.tiny) {
+            BerryBalanceIcon(size: iconSize)
+
+            Text("\(count)")
+                .font(font)
+                .foregroundStyle(textColor)
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(formattedBerryCount(count)))
+    }
+}
+
+private struct StorePage: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var berryStore: BerryStore
+
+    private var purchasableHats: [AvatarHat] {
+        AvatarHat.allCases.filter { $0 != .none }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+                berryBalanceCard
+
+                if let notice = berryStore.notice {
+                    ProfileNoticeCard(text: notice)
+                }
+
+                VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+                    StoreHatsSectionHeader()
+
+                    VStack(spacing: PicoSpacing.compact) {
+                        ForEach(purchasableHats) { hat in
+                            StoreHatRow(
+                                hat: hat,
+                                berryBalance: berryStore.balance.berries,
+                                isOwned: hat.isOwned(in: sessionStore.ownedHats),
+                                isPurchasing: berryStore.purchasingHat == hat,
+                                isPurchaseDisabled: berryStore.purchasingHat != nil || berryStore.isLoadingBalance || sessionStore.session == nil
+                            ) {
+                                purchase(hat)
+                            }
+                        }
+                    }
+                }
+                .picoCreamCard(
+                    padding: PicoCreamCardStyle.contentPadding
+                )
+            }
+            .padding(.horizontal, PicoSpacing.standard)
+            .padding(.vertical, PicoSpacing.section)
+            .padding(.bottom, PicoSpacing.largeSection)
+        }
+        .picoScreenBackground()
+        .task {
+            await sessionStore.loadProfileIfNeeded()
+            await berryStore.loadBalance(for: sessionStore.session)
+        }
+    }
+
+    private var berryBalanceCard: some View {
+        HStack(alignment: .center, spacing: PicoSpacing.standard) {
+            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                Text("Berry balance")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+
+                BerryAmountLabel(
+                    count: berryStore.balance.berries,
+                    font: PicoTypography.sectionTitle,
+                    iconSize: 24
+                )
+            }
+
+            Spacer(minLength: 0)
+
+            if berryStore.isLoadingBalance {
+                ProgressView()
+                    .tint(PicoColors.primary)
+            }
+        }
+        .picoCreamCard(
+            padding: PicoCreamCardStyle.contentPadding
+        )
+    }
+
+    private func purchase(_ hat: AvatarHat) {
+        Task {
+            guard let result = await berryStore.purchaseAvatarHat(hat, for: sessionStore.session) else { return }
+            sessionStore.applyOwnedHats(result.ownedHats)
+        }
+    }
+}
+
+private struct StoreHatRow: View {
+    let hat: AvatarHat
+    let berryBalance: Int
+    let isOwned: Bool
+    let isPurchasing: Bool
+    let isPurchaseDisabled: Bool
+    let purchase: () -> Void
+
+    private var missingBerries: Int {
+        max(0, hat.berryCost - berryBalance)
+    }
+
+    private var canPurchase: Bool {
+        !isOwned && missingBerries == 0 && !isPurchaseDisabled
+    }
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.standard) {
+            AvatarBadgeView(config: AvatarCatalog.defaultConfig.withHat(hat), size: 58)
+
+            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                Text(hat.name)
+                    .font(PicoTypography.body.weight(.semibold))
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(1)
+
+                BerryAmountLabel(
+                    count: hat.berryCost,
+                    font: PicoTypography.caption,
+                    iconSize: 15,
+                    textColor: PicoColors.textSecondary
+                )
+            }
+
+            Spacer(minLength: PicoSpacing.compact)
+
+            purchaseControl
+                .frame(width: 86, alignment: .trailing)
+        }
+        .padding(PicoSpacing.compact)
+        .background(PicoColors.softSurface.opacity(0.64))
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var purchaseControl: some View {
+        if isOwned {
+            HStack(spacing: PicoSpacing.tiny) {
+                Text("✓")
+                    .font(PicoTypography.caption.weight(.bold))
+
+                Text("Owned")
+                    .font(PicoTypography.caption.weight(.semibold))
+            }
+            .foregroundStyle(PicoColors.primary.opacity(0.78))
+            .frame(height: 34, alignment: .trailing)
+        } else {
+            Button {
+                purchase()
+            } label: {
+                HStack(spacing: PicoSpacing.tiny) {
+                    Text("Buy")
+
+                    if isPurchasing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(canPurchase ? PicoColors.textOnPrimary : PicoColors.textSecondary)
+                    }
+                }
+            }
+            .buttonStyle(StoreBuyButtonStyle())
+            .disabled(!canPurchase)
+        }
+    }
+}
+
+private struct StoreHatsSectionHeader: View {
+    var body: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            if let image = UIImage(named: "Hat_Icon") {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 24, height: 24)
+            } else {
+                Image(systemName: "hat.widebrim")
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(width: 24, height: 24)
+            }
+
+            Text("Hats")
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+        }
+    }
+}
+
+private struct StoreBuyButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(PicoTypography.body.weight(.bold))
+            .foregroundStyle(isEnabled ? PicoColors.textOnPrimary : PicoColors.primary.opacity(0.38))
+            .frame(width: 68, height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .fill(isEnabled ? PicoColors.primary.opacity(configuration.isPressed ? 0.82 : 1) : PicoColors.softSurface.opacity(0.72))
+            )
+            .shadow(
+                color: isEnabled ? PicoColors.primary.opacity(0.18) : .clear,
+                radius: 8,
+                x: 0,
+                y: 4
+            )
+    }
+}
+
 private struct ProfilePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
-    @EnvironmentObject private var scoreStore: ScoreStore
+    @EnvironmentObject private var berryStore: BerryStore
     @State private var displayName = ""
     @State private var draftDisplayName = ""
     @State private var avatarConfig = AvatarCatalog.defaultConfig
@@ -2956,15 +3499,15 @@ private struct ProfilePage: View {
                 if sessionStore.profile != nil {
                     ProfileAvatarOutfitCard(
                         avatarConfig: avatarConfig,
-                        score: scoreStore.score.score,
-                        canCycleHats: availableHats.count >= 2,
+                        berries: berryStore.balance.berries,
+                        canCycleHats: ownedHats.count >= 2,
                         previousHat: selectPreviousHat,
                         nextHat: selectNextHat
                     )
 
                     ProfileHatCollectionCard(
                         selection: $avatarConfig,
-                        score: scoreStore.score.score
+                        ownedHats: sessionStore.ownedHats
                     )
 
                     saveProfileButton
@@ -2986,7 +3529,7 @@ private struct ProfilePage: View {
         .picoScreenBackground()
         .task {
             await sessionStore.loadProfileIfNeeded()
-            await scoreStore.loadScore(for: sessionStore.session)
+            await berryStore.loadBalance(for: sessionStore.session)
             syncEditableProfile()
         }
         .onChange(of: sessionStore.profile) {
@@ -3066,13 +3609,13 @@ private struct ProfilePage: View {
         guard let profile = sessionStore.profile else { return false }
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasValidDisplayName = (1...40).contains(normalizedDisplayName.count)
-        let hasUnlockedHat = avatarConfig.selectedHat.isUnlocked(with: scoreStore.score.score)
+        let hasOwnedHat = avatarConfig.selectedHat.isOwned(in: sessionStore.ownedHats)
         let hasChanges = normalizedDisplayName != profile.displayName || avatarConfig != profile.avatarConfig
-        return hasValidDisplayName && hasUnlockedHat && hasChanges
+        return hasValidDisplayName && hasOwnedHat && hasChanges
     }
 
-    private var availableHats: [AvatarHat] {
-        AvatarHat.allCases.filter { $0.isUnlocked(with: scoreStore.score.score) }
+    private var ownedHats: [AvatarHat] {
+        AvatarHat.allCases.filter { $0.isOwned(in: sessionStore.ownedHats) }
     }
 
     private func syncEditableProfile() {
@@ -3091,7 +3634,7 @@ private struct ProfilePage: View {
     }
 
     private func selectHat(offset: Int) {
-        let hats = availableHats
+        let hats = ownedHats
         guard hats.count >= 2 else { return }
 
         guard let currentIndex = hats.firstIndex(of: avatarConfig.selectedHat) else {
@@ -3230,30 +3773,30 @@ private struct ProfileCardView: View {
 
 private struct ProfileAvatarOutfitCard: View {
     let avatarConfig: AvatarConfig
-    let score: Int
+    let berries: Int
     let canCycleHats: Bool
     let previousHat: () -> Void
     let nextHat: () -> Void
-    @State private var isShowingPointsInfo = false
+    @State private var isShowingBerriesInfo = false
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: PicoSpacing.compact) {
                 HStack(spacing: PicoSpacing.tiny) {
-                    Text("\(score) points")
+                    Text(formattedBerryCount(berries))
                         .font(PicoTypography.body.weight(.bold))
                         .foregroundStyle(PicoColors.textPrimary)
-                        .accessibilityLabel(Text("\(score) points"))
+                        .accessibilityLabel(Text(formattedBerryCount(berries)))
 
                     Button {
-                        isShowingPointsInfo = true
+                        isShowingBerriesInfo = true
                     } label: {
                         PicoIcon(.infoRegular, size: 15)
                             .foregroundStyle(PicoColors.textSecondary)
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(Text("How points work"))
+                    .accessibilityLabel(Text("How berries work"))
                 }
 
                 UserAvatar(config: avatarConfig)
@@ -3283,10 +3826,10 @@ private struct ProfileAvatarOutfitCard: View {
             .padding(.vertical, PicoSpacing.standard)
         }
         .picoCreamCard()
-        .alert("How points work", isPresented: $isShowingPointsInfo) {
+        .alert("How berries work", isPresented: $isShowingBerriesInfo) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Points are earned by completing any focus session. 1 session = 1 point.")
+            Text("Berries are earned by completing any focus session. 1 session = 1 berry.")
         }
     }
 
@@ -3303,7 +3846,7 @@ private struct ProfileAvatarOutfitCard: View {
 
 private struct ProfileHatCollectionCard: View {
     @Binding var selection: AvatarConfig
-    let score: Int
+    let ownedHats: Set<AvatarHat>
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
@@ -3327,10 +3870,10 @@ private struct ProfileHatCollectionCard: View {
 
     private func hatCollectionItem(_ hat: AvatarHat) -> some View {
         let isSelected = selection.selectedHat == hat
-        let isUnlocked = hat.isUnlocked(with: score)
+        let isOwned = hat.isOwned(in: ownedHats)
 
         return Button {
-            guard isUnlocked else { return }
+            guard isOwned else { return }
             selection = selection.withHat(hat)
         } label: {
             VStack(spacing: PicoSpacing.compact) {
@@ -3342,7 +3885,7 @@ private struct ProfileHatCollectionCard: View {
                         }
                     }
                     .overlay {
-                        if !isUnlocked {
+                        if !isOwned {
                             Circle()
                                 .fill(.black.opacity(0.42))
 
@@ -3359,8 +3902,8 @@ private struct ProfileHatCollectionCard: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
 
-                if !isUnlocked {
-                    Text("\(hat.requiredScore) points")
+                if !isOwned {
+                    Text("Not owned")
                         .font(.caption2)
                         .foregroundStyle(PicoColors.textSecondary)
                         .lineLimit(1)
@@ -3369,11 +3912,11 @@ private struct ProfileHatCollectionCard: View {
             }
             .frame(width: 82, height: 120, alignment: .top)
             .contentShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
-            .opacity(isUnlocked ? 1 : 0.72)
+            .opacity(isOwned ? 1 : 0.72)
         }
         .buttonStyle(.plain)
-        .disabled(!isUnlocked)
-        .accessibilityLabel(Text(isUnlocked ? "\(hat.name) hat" : "\(hat.name) hat, locked until \(hat.requiredScore) points"))
+        .disabled(!isOwned)
+        .accessibilityLabel(Text(isOwned ? "\(hat.name) hat" : "\(hat.name) hat, not owned"))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

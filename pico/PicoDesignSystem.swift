@@ -11,6 +11,11 @@ import UIKit
 #endif
 
 enum PicoColors {
+    static let highlight = Color(hex: 0xE8A75A)
+    static let highlightBackground = highlight
+    static let highlightBorder = Color(hex: 0xD38F3E)
+    static let highlightShadow = Color(hex: 0xE0B883)
+
     static let primary = Color(hex: 0x7BAE3B)
     static let secondaryAccent = Color(hex: 0x7C5CFF)
     static let streakAccent = Color(hex: 0xFF8A3D)
@@ -83,6 +88,8 @@ enum PicoTabStyle {
 
 enum PicoIconAsset: String {
     case bars3Solid = "bars-3_solid"
+    case buildingStorefrontRegular = "building-storefront_regular"
+    case buildingStorefrontSolid = "building-storefront_solid"
     case chevronLeftRegular = "chevron-left_regular"
     case chevronRightRegular = "chevron-right_regular"
     case clockRegular = "clock_regular"
