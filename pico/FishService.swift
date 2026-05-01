@@ -7,41 +7,60 @@
 
 import Foundation
 
-enum FishType: String, CaseIterable, Codable, Equatable, Hashable {
-    case bass
-    case salmon
-    case tuna
+struct FishID: RawRepresentable, Codable, Equatable, Hashable {
+    let rawValue: String
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        rawValue = try container.decode(String.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    static let bass = FishID(rawValue: "bass")
+    static let salmon = FishID(rawValue: "salmon")
+    static let tuna = FishID(rawValue: "tuna")
 
     var displayName: String {
-        switch self {
-        case .bass:
-            "Bass"
-        case .salmon:
-            "Salmon"
-        case .tuna:
-            "Tuna"
-        }
+        rawValue.split(separator: "_")
+            .map { word in
+                word.prefix(1).uppercased() + word.dropFirst()
+            }
+            .joined(separator: " ")
     }
 
     var sellValue: Int {
-        switch self {
-        case .bass:
-            1
-        case .salmon:
-            2
-        case .tuna:
-            3
-        }
+        1
+    }
+
+    var assetName: String {
+        rawValue
     }
 }
 
+typealias FishType = FishID
+
 enum FishRarity: String, Codable, Equatable, Hashable {
     case common
-    case uncommon
     case rare
+    case ultraRare = "ultra_rare"
 
     var label: String {
-        rawValue
+        switch self {
+        case .common:
+            "common"
+        case .rare:
+            "rare"
+        case .ultraRare:
+            "ultra rare"
+        }
     }
 }
 
@@ -50,15 +69,19 @@ struct FishCatch: Identifiable, Equatable {
     let userID: UUID?
     let sessionID: UUID
     let catchIndex: Int?
-    let fishType: FishType
+    let seaCritterID: FishID
     let rarity: FishRarity
     let sellValue: Int
     let caughtAt: Date?
     let soldAt: Date?
     let soldForBerries: Int?
 
+    var fishType: FishType {
+        seaCritterID
+    }
+
     var displayName: String {
-        fishType.displayName
+        seaCritterID.displayName
     }
 
     var rarityLabel: String {
@@ -75,7 +98,7 @@ struct FishCatch: Identifiable, Equatable {
             userID: userID,
             sessionID: sessionID,
             catchIndex: catchIndex,
-            fishType: fishType,
+            seaCritterID: seaCritterID,
             rarity: rarity,
             sellValue: sellValue,
             caughtAt: caughtAt,
@@ -83,12 +106,60 @@ struct FishCatch: Identifiable, Equatable {
             soldForBerries: sellValue
         )
     }
+
+    init(
+        id: UUID,
+        userID: UUID?,
+        sessionID: UUID,
+        catchIndex: Int?,
+        seaCritterID: FishID,
+        rarity: FishRarity,
+        sellValue: Int,
+        caughtAt: Date?,
+        soldAt: Date?,
+        soldForBerries: Int?
+    ) {
+        self.id = id
+        self.userID = userID
+        self.sessionID = sessionID
+        self.catchIndex = catchIndex
+        self.seaCritterID = seaCritterID
+        self.rarity = rarity
+        self.sellValue = sellValue
+        self.caughtAt = caughtAt
+        self.soldAt = soldAt
+        self.soldForBerries = soldForBerries
+    }
+
+    init(
+        id: UUID,
+        userID: UUID?,
+        sessionID: UUID,
+        catchIndex: Int?,
+        fishType: FishType,
+        rarity: FishRarity,
+        sellValue: Int,
+        caughtAt: Date?,
+        soldAt: Date?,
+        soldForBerries: Int?
+    ) {
+        self.init(
+            id: id,
+            userID: userID,
+            sessionID: sessionID,
+            catchIndex: catchIndex,
+            seaCritterID: fishType,
+            rarity: rarity,
+            sellValue: sellValue,
+            caughtAt: caughtAt,
+            soldAt: soldAt,
+            soldForBerries: soldForBerries
+        )
+    }
 }
 
 struct FishCatchSummary: Equatable {
-    let bassCount: Int
-    let salmonCount: Int
-    let tunaCount: Int
+    let countsByCritterID: [FishID: Int]
     let totalPotentialSellValue: Int
     let catchCount: Int
 
@@ -97,31 +168,48 @@ struct FishCatchSummary: Equatable {
     }
 
     static let empty = FishCatchSummary(
-        bassCount: 0,
-        salmonCount: 0,
-        tunaCount: 0,
+        countsByCritterID: [:],
         totalPotentialSellValue: 0,
         catchCount: 0
     )
 
     static func catches(_ catches: [FishCatch]) -> FishCatchSummary {
         FishCatchSummary(
-            bassCount: catches.filter { $0.fishType == .bass }.count,
-            salmonCount: catches.filter { $0.fishType == .salmon }.count,
-            tunaCount: catches.filter { $0.fishType == .tuna }.count,
+            countsByCritterID: Dictionary(grouping: catches, by: \.seaCritterID)
+                .mapValues(\.count),
             totalPotentialSellValue: catches.reduce(0) { $0 + $1.sellValue },
             catchCount: catches.count
         )
     }
 }
 
+struct FishCatalogItem: Identifiable, Equatable {
+    let id: FishID
+    let displayName: String
+    let rarity: FishRarity
+    let sellValue: Int
+    let assetName: String
+    let sortOrder: Int
+    let dropWeight: Double
+    let isEnabled: Bool
+}
+
+struct FishCount: Identifiable, Equatable {
+    var id: FishID { seaCritterID }
+
+    let seaCritterID: FishID
+    let displayName: String
+    let rarity: FishRarity
+    let sellValue: Int
+    let assetName: String
+    let sortOrder: Int
+    let count: Int
+}
+
 struct FishSaleResult: Equatable {
     let balance: UserBerryBalance
     let soldFishCount: Int
     let soldBerryAmount: Int
-    let soldBass: Int
-    let soldSalmon: Int
-    let soldTuna: Int
 }
 
 enum FishServiceError: LocalizedError {
@@ -160,16 +248,46 @@ final class FishService {
 
     func fetchSessionCatches(sessionID: UUID, for authSession: AuthSession) async throws -> [FishCatch] {
         try await fetchFishCatches(
-            path: "/rest/v1/user_fish_catches?select=id,user_id,session_id,catch_index,fish_type,rarity,sell_value,caught_at,sold_at,sold_for_berries&session_id=eq.\(sessionID.uuidString)&order=catch_index.asc,caught_at.asc",
+            path: "/rest/v1/user_fish_catches?select=id,user_id,session_id,catch_index,sea_critter_id,rarity,sell_value,caught_at,sold_at,sold_for_berries&session_id=eq.\(sessionID.uuidString)&order=catch_index.asc,caught_at.asc",
             accessToken: authSession.accessToken
         )
     }
 
     func fetchInventory(for authSession: AuthSession) async throws -> [FishCatch] {
         try await fetchFishCatches(
-            path: "/rest/v1/user_fish_catches?select=id,user_id,session_id,catch_index,fish_type,rarity,sell_value,caught_at,sold_at,sold_for_berries&sold_at=is.null&order=caught_at.desc",
+            path: "/rest/v1/user_fish_catches?select=id,user_id,session_id,catch_index,sea_critter_id,rarity,sell_value,caught_at,sold_at,sold_for_berries&sold_at=is.null&order=caught_at.desc",
             accessToken: authSession.accessToken
         )
+    }
+
+    func fetchFishCatalog(for authSession: AuthSession) async throws -> [FishCatalogItem] {
+        let response: [FishCatalogResponse] = try await send(
+            path: "/rest/v1/sea_critters?select=id,display_name,rarity,sell_value,asset_name,sort_order,drop_weight,is_enabled&is_enabled=eq.true&order=sort_order.asc",
+            method: "GET",
+            accessToken: authSession.accessToken
+        )
+
+        return response.map(\.catalogItem)
+    }
+
+    func fetchCollectionCounts(for authSession: AuthSession) async throws -> [FishCount] {
+        let response: [FishCountResponse] = try await send(
+            path: "/rest/v1/user_fish_collection_counts?select=sea_critter_id,display_name,rarity,sell_value,asset_name,sort_order,count&order=sort_order.asc",
+            method: "GET",
+            accessToken: authSession.accessToken
+        )
+
+        return response.map(\.fishCount)
+    }
+
+    func fetchInventoryCounts(for authSession: AuthSession) async throws -> [FishCount] {
+        let response: [FishCountResponse] = try await send(
+            path: "/rest/v1/user_fish_inventory_counts?select=sea_critter_id,display_name,rarity,sell_value,asset_name,sort_order,count&order=sort_order.asc",
+            method: "GET",
+            accessToken: authSession.accessToken
+        )
+
+        return response.map(\.fishCount)
     }
 
     func sellFish(catchIDs: [UUID], for authSession: AuthSession) async throws -> FishSaleResult {
@@ -277,7 +395,7 @@ private struct FishCatchResponse: Decodable {
     let userId: UUID?
     let sessionId: UUID
     let catchIndex: Int?
-    let fishType: FishType
+    let seaCritterId: FishID
     let rarity: FishRarity
     let sellValue: Int
     let caughtAt: String?
@@ -290,7 +408,7 @@ private struct FishCatchResponse: Decodable {
             userID: userId,
             sessionID: sessionId,
             catchIndex: catchIndex,
-            fishType: fishType,
+            seaCritterID: seaCritterId,
             rarity: rarity,
             sellValue: sellValue,
             caughtAt: caughtAt.flatMap(FocusDateFormatter.date(from:)),
@@ -304,6 +422,52 @@ private struct FishSaleRequest: Encodable {
     let catchIds: [UUID]
 }
 
+private struct FishCatalogResponse: Decodable {
+    let id: FishID
+    let displayName: String
+    let rarity: FishRarity
+    let sellValue: Int
+    let assetName: String
+    let sortOrder: Int
+    let dropWeight: Double
+    let isEnabled: Bool
+
+    var catalogItem: FishCatalogItem {
+        FishCatalogItem(
+            id: id,
+            displayName: displayName,
+            rarity: rarity,
+            sellValue: sellValue,
+            assetName: assetName,
+            sortOrder: sortOrder,
+            dropWeight: dropWeight,
+            isEnabled: isEnabled
+        )
+    }
+}
+
+private struct FishCountResponse: Decodable {
+    let seaCritterId: FishID
+    let displayName: String
+    let rarity: FishRarity
+    let sellValue: Int
+    let assetName: String
+    let sortOrder: Int
+    let count: Int
+
+    var fishCount: FishCount {
+        FishCount(
+            seaCritterID: seaCritterId,
+            displayName: displayName,
+            rarity: rarity,
+            sellValue: sellValue,
+            assetName: assetName,
+            sortOrder: sortOrder,
+            count: count
+        )
+    }
+}
+
 private struct FishSaleResponse: Decodable {
     let berries: Int
     let completionStreak: Int
@@ -311,9 +475,6 @@ private struct FishSaleResponse: Decodable {
     let lastCompletedAt: String?
     let soldFishCount: Int
     let soldBerryAmount: Int
-    let soldBass: Int
-    let soldSalmon: Int
-    let soldTuna: Int
 
     var saleResult: FishSaleResult {
         FishSaleResult(
@@ -324,10 +485,7 @@ private struct FishSaleResponse: Decodable {
                 lastCompletedAt: lastCompletedAt.flatMap(FocusDateFormatter.date(from:))
             ),
             soldFishCount: soldFishCount,
-            soldBerryAmount: soldBerryAmount,
-            soldBass: soldBass,
-            soldSalmon: soldSalmon,
-            soldTuna: soldTuna
+            soldBerryAmount: soldBerryAmount
         )
     }
 }

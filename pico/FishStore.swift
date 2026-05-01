@@ -13,8 +13,14 @@ final class FishStore: ObservableObject {
     @Published private(set) var sessionCatches: [UUID: [FishCatch]] = [:]
     @Published private(set) var currentSessionID: UUID?
     @Published private(set) var inventory: [FishCatch] = []
+    @Published private(set) var fishCatalog: [FishCatalogItem] = []
+    @Published private(set) var collectionCounts: [FishCount] = []
+    @Published private(set) var inventoryCounts: [FishCount] = []
     @Published private(set) var isLoadingSessionCatches = false
     @Published private(set) var isLoadingInventory = false
+    @Published private(set) var isLoadingFishCatalog = false
+    @Published private(set) var isLoadingCollectionCounts = false
+    @Published private(set) var isLoadingInventoryCounts = false
     @Published private(set) var isSellingFish = false
     @Published var notice: String?
 
@@ -25,6 +31,14 @@ final class FishStore: ObservableObject {
 
     var inventorySummary: FishCatchSummary {
         FishCatchSummary.catches(inventory)
+    }
+
+    var collectionCountByFishID: [FishID: FishCount] {
+        Dictionary(uniqueKeysWithValues: collectionCounts.map { ($0.seaCritterID, $0) })
+    }
+
+    var inventoryCountByFishID: [FishID: FishCount] {
+        Dictionary(uniqueKeysWithValues: inventoryCounts.map { ($0.seaCritterID, $0) })
     }
 
     private let fishService: FishService
@@ -76,6 +90,48 @@ final class FishStore: ObservableObject {
         }
     }
 
+    func loadFishCatalog(for session: AuthSession?) async {
+        guard let session, !isLoadingFishCatalog else { return }
+
+        isLoadingFishCatalog = true
+        notice = nil
+        defer { isLoadingFishCatalog = false }
+
+        do {
+            fishCatalog = try await fishService.fetchFishCatalog(for: session)
+        } catch {
+            notice = displayMessage(for: error)
+        }
+    }
+
+    func loadCollectionCounts(for session: AuthSession?) async {
+        guard let session, !isLoadingCollectionCounts else { return }
+
+        isLoadingCollectionCounts = true
+        notice = nil
+        defer { isLoadingCollectionCounts = false }
+
+        do {
+            collectionCounts = try await fishService.fetchCollectionCounts(for: session)
+        } catch {
+            notice = displayMessage(for: error)
+        }
+    }
+
+    func loadInventoryCounts(for session: AuthSession?) async {
+        guard let session, !isLoadingInventoryCounts else { return }
+
+        isLoadingInventoryCounts = true
+        notice = nil
+        defer { isLoadingInventoryCounts = false }
+
+        do {
+            inventoryCounts = try await fishService.fetchInventoryCounts(for: session)
+        } catch {
+            notice = displayMessage(for: error)
+        }
+    }
+
     func sellFish(catchIDs: [UUID], for session: AuthSession?) async -> FishSaleResult? {
         guard let session, !isSellingFish, !catchIDs.isEmpty else { return nil }
 
@@ -87,11 +143,13 @@ final class FishStore: ObservableObject {
             let result = try await fishService.sellFish(catchIDs: catchIDs, for: session)
             let soldIDs = Set(catchIDs)
             let soldAt = Date()
+            let soldCatches = inventory.filter { soldIDs.contains($0.id) }
 
             inventory.removeAll { soldIDs.contains($0.id) }
             sessionCatches = sessionCatches.mapValues { catches in
                 catches.map { soldIDs.contains($0.id) ? $0.sold(at: soldAt) : $0 }
             }
+            decrementInventoryCounts(for: soldCatches)
 
             notice = "Sold \(result.soldFishCount) fish for \(formattedBerryCount(result.soldBerryAmount))."
             return result
@@ -99,54 +157,6 @@ final class FishStore: ObservableObject {
             notice = displayMessage(for: error)
             return nil
         }
-    }
-
-    func loadMockSessionCatches() {
-        let sessionID = UUID(uuidString: "00000000-0000-0000-0000-00000000F150") ?? UUID()
-        let userID = UUID(uuidString: "00000000-0000-0000-0000-00000000F151")
-        let caughtAt = Date()
-
-        currentSessionID = sessionID
-        sessionCatches[sessionID] = [
-            FishCatch(
-                id: UUID(uuidString: "00000000-0000-0000-0000-00000000F1A1") ?? UUID(),
-                userID: userID,
-                sessionID: sessionID,
-                catchIndex: 1,
-                fishType: .bass,
-                rarity: .common,
-                sellValue: FishType.bass.sellValue,
-                caughtAt: caughtAt,
-                soldAt: nil,
-                soldForBerries: nil
-            ),
-            FishCatch(
-                id: UUID(uuidString: "00000000-0000-0000-0000-00000000F1A2") ?? UUID(),
-                userID: userID,
-                sessionID: sessionID,
-                catchIndex: 2,
-                fishType: .salmon,
-                rarity: .uncommon,
-                sellValue: FishType.salmon.sellValue,
-                caughtAt: caughtAt,
-                soldAt: nil,
-                soldForBerries: nil
-            ),
-            FishCatch(
-                id: UUID(uuidString: "00000000-0000-0000-0000-00000000F1A3") ?? UUID(),
-                userID: userID,
-                sessionID: sessionID,
-                catchIndex: 3,
-                fishType: .tuna,
-                rarity: .rare,
-                sellValue: FishType.tuna.sellValue,
-                caughtAt: caughtAt,
-                soldAt: nil,
-                soldForBerries: nil
-            )
-        ]
-        isLoadingSessionCatches = false
-        notice = nil
     }
 
     func clearSessionCatches() {
@@ -160,7 +170,35 @@ final class FishStore: ObservableObject {
     func clear() {
         clearSessionCatches()
         inventory = []
+        fishCatalog = []
+        collectionCounts = []
+        inventoryCounts = []
         isLoadingInventory = false
+        isLoadingFishCatalog = false
+        isLoadingCollectionCounts = false
+        isLoadingInventoryCounts = false
+    }
+
+    private func decrementInventoryCounts(for soldCatches: [FishCatch]) {
+        guard !soldCatches.isEmpty, !inventoryCounts.isEmpty else { return }
+
+        let soldCounts = Dictionary(grouping: soldCatches, by: \.seaCritterID)
+            .mapValues(\.count)
+
+        inventoryCounts = inventoryCounts.compactMap { countRow in
+            let remainingCount = countRow.count - soldCounts[countRow.seaCritterID, default: 0]
+            guard remainingCount > 0 else { return nil }
+
+            return FishCount(
+                seaCritterID: countRow.seaCritterID,
+                displayName: countRow.displayName,
+                rarity: countRow.rarity,
+                sellValue: countRow.sellValue,
+                assetName: countRow.assetName,
+                sortOrder: countRow.sortOrder,
+                count: remainingCount
+            )
+        }
     }
 
     private func displayMessage(for error: Error) -> String? {

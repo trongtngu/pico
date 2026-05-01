@@ -97,6 +97,9 @@ struct AppShellView: View {
             Task {
                 await villageStore.loadResidents(for: sessionStore.session)
                 await berryStore.loadBalance(for: sessionStore.session)
+                if fishStore.fishCatalog.isEmpty {
+                    await fishStore.loadFishCatalog(for: sessionStore.session)
+                }
                 await fishStore.loadSessionCatches(
                     sessionID: resultSession.id,
                     for: sessionStore.session,
@@ -109,6 +112,9 @@ struct AppShellView: View {
                   let resultSession = focusStore.resultSession,
                   resultSession.status == .completed else { return }
             Task {
+                if fishStore.fishCatalog.isEmpty {
+                    await fishStore.loadFishCatalog(for: sessionStore.session)
+                }
                 await fishStore.loadSessionCatches(
                     sessionID: resultSession.id,
                     for: sessionStore.session,
@@ -318,7 +324,8 @@ private enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .fishing:
             Image(systemName: "fish")
-                .font(.system(size: size, weight: isSelected ? .bold : .semibold))
+                .resizable()
+                .scaledToFit()
                 .frame(width: size, height: size)
         default:
             PicoIcon(iconAsset(isSelected: isSelected), size: size)
@@ -418,7 +425,6 @@ private struct HomePage: View {
                         isLoadingBalance: berryStore.isLoadingBalance,
                         balanceNotice: berryStore.notice,
                         incomingInviteCount: focusStore.incomingInvites.count,
-                        mockViewFishAction: simulateMockViewFish,
                         action: performBottomBarAction
                     )
                 }
@@ -462,6 +468,7 @@ private struct HomePage: View {
         .sheet(isPresented: $isFishCatchSheetPresented, onDismiss: finishFishCatchFlow) {
             FishCatchSuccessSheet(
                 catches: fishStore.currentSessionCatches,
+                catalog: fishStore.fishCatalog,
                 isLoading: fishStore.isLoadingSessionCatches,
                 notice: fishStore.notice,
                 measuredHeight: $fishCatchSheetHeight,
@@ -593,6 +600,9 @@ private struct HomePage: View {
         guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return }
         isFishCatchSheetPresented = true
         Task {
+            if fishStore.fishCatalog.isEmpty {
+                await fishStore.loadFishCatalog(for: sessionStore.session)
+            }
             await fishStore.loadSessionCatches(
                 sessionID: resultSession.id,
                 for: sessionStore.session,
@@ -601,14 +611,12 @@ private struct HomePage: View {
         }
     }
 
-    private func simulateMockViewFish() {
-        fishStore.loadMockSessionCatches()
-        isFishCatchSheetPresented = true
-    }
-
     private func retryCompletedSessionFishFetch() {
         guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return }
         Task {
+            if fishStore.fishCatalog.isEmpty {
+                await fishStore.loadFishCatalog(for: sessionStore.session)
+            }
             await fishStore.loadSessionCatches(
                 sessionID: resultSession.id,
                 for: sessionStore.session,
@@ -637,6 +645,7 @@ private struct FishCatchSuccessSheet: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let catches: [FishCatch]
+    let catalog: [FishCatalogItem]
     let isLoading: Bool
     let notice: String?
     @Binding var measuredHeight: CGFloat
@@ -644,8 +653,12 @@ private struct FishCatchSuccessSheet: View {
     let onDone: () -> Void
 
     private var rows: [CaughtFishRow] {
-        catches.enumerated().map { index, fishCatch in
-            CaughtFishRow(id: index, fishCatch: fishCatch)
+        let catalogByID = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
+        return catches.map { fishCatch in
+            CaughtFishRow(
+                fishCatch: fishCatch,
+                catalogItem: catalogByID[fishCatch.seaCritterID]
+            )
         }
     }
 
@@ -683,7 +696,7 @@ private struct FishCatchSuccessSheet: View {
                         ForEach(rows) { row in
                             HStack(spacing: PicoSpacing.standard) {
                                 FishCatchIcon(
-                                    fish: row.fish,
+                                    row: row,
                                     size: 68,
                                     imagePadding: 0,
                                     showsChrome: false
@@ -699,19 +712,19 @@ private struct FishCatchSuccessSheet: View {
 
                                 Text(row.rarityLabel)
                                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                                    .foregroundStyle(row.fish.rarityTextColor)
+                                    .foregroundStyle(row.rarityTextColor)
                                     .padding(.horizontal, PicoSpacing.compact)
                                     .padding(.vertical, 4)
-                                    .background(row.fish.rarityBadgeBackground)
+                                    .background(row.rarityBadgeBackground)
                                     .clipShape(Capsule(style: .continuous))
                             }
                             .padding(.horizontal, 18)
                             .padding(.vertical, 6)
-                            .background(row.fish.rowBackground)
+                            .background(row.rowBackground)
                             .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                                    .stroke(row.fish.rowBorder, lineWidth: 1)
+                                    .stroke(row.rowBorder, lineWidth: 1)
                             )
                         }
                     }
@@ -743,136 +756,131 @@ private struct FishCatchSuccessSheet: View {
 }
 
 private struct CaughtFishRow: Identifiable {
-    let id: Int
     let fishCatch: FishCatch
+    let catalogItem: FishCatalogItem?
 
-    var fish: FishType {
-        fishCatch.fishType
+    var id: UUID {
+        fishCatch.id
+    }
+
+    var fishID: FishID {
+        fishCatch.seaCritterID
+    }
+
+    var rarity: FishRarity {
+        fishCatch.rarity
     }
 
     var label: String {
-        fishCatch.displayName
+        catalogItem?.displayName ?? fishID.displayName
     }
 
     var rarityLabel: String {
-        fishCatch.rarityLabel
+        rarity.label
     }
-}
 
-private extension FishType {
     var rowBackground: Color {
-        switch self {
-        case .bass:
+        switch rarity {
+        case .common:
             PicoColors.softSurface.opacity(0.72)
-        case .salmon:
+        case .rare:
             Color(hex: 0xEAF6DE).opacity(0.9)
-        case .tuna:
+        case .ultraRare:
             Color(hex: 0xFCE8CC).opacity(0.92)
         }
     }
 
     var rowBorder: Color {
-        switch self {
-        case .bass:
+        switch rarity {
+        case .common:
             PicoColors.border.opacity(0.42)
-        case .salmon:
+        case .rare:
             PicoColors.primary.opacity(0.34)
-        case .tuna:
+        case .ultraRare:
             PicoColors.highlightBorder.opacity(0.36)
         }
     }
 
     var valueColor: Color {
-        switch self {
-        case .bass:
+        switch rarity {
+        case .common:
             PicoColors.textPrimary
-        case .salmon:
+        case .rare:
             PicoColors.primary
-        case .tuna:
+        case .ultraRare:
             PicoColors.highlightBorder
         }
     }
 
-    var rarityName: String {
-        switch self {
-        case .bass:
-            "common"
-        case .salmon:
-            "uncommon"
-        case .tuna:
-            "rare"
-        }
-    }
-
     var rarityTextColor: Color {
-        switch self {
-        case .bass:
+        switch rarity {
+        case .common:
             PicoColors.textSecondary
-        case .salmon:
+        case .rare:
             PicoColors.primary
-        case .tuna:
+        case .ultraRare:
             PicoColors.highlightBorder
         }
     }
 
     var rarityBadgeBackground: Color {
-        switch self {
-        case .bass:
+        switch rarity {
+        case .common:
             PicoColors.textSecondary.opacity(0.12)
-        case .salmon:
+        case .rare:
             PicoColors.primary.opacity(0.14)
-        case .tuna:
+        case .ultraRare:
             PicoColors.highlight.opacity(0.18)
         }
     }
 
     var border: Color {
-        switch self {
-        case .bass:
+        switch rarity {
+        case .common:
             Color(hex: 0x111111)
-        case .salmon:
+        case .rare:
             PicoColors.border
-        case .tuna:
+        case .ultraRare:
             PicoColors.error.opacity(0.68)
         }
     }
 
     var iconBackground: Color {
-        switch self {
-        case .bass:
+        switch rarity {
+        case .common:
             Color(hex: 0xEEF2E7)
-        case .salmon:
+        case .rare:
             Color(hex: 0x7B8F62).opacity(0.28)
-        case .tuna:
+        case .ultraRare:
             Color(hex: 0xFBE7EA)
         }
     }
 
     var imageResourceName: String {
-        switch self {
-        case .bass:
-            "Fish_Bass"
-        case .salmon:
-            "Fish_Salmon"
-        case .tuna:
-            "Fish_Tuna"
-        }
+        catalogItem?.assetName ?? fishID.assetName
     }
 
     var imageResourceCandidates: [String] {
-        [
+        let directCandidates = [
             imageResourceName,
-            "fish/\(imageResourceName)",
-            "Icons/fish/\(imageResourceName)",
-            "\(imageResourceName).png",
-            "fish/\(imageResourceName).png",
-            "Icons/fish/\(imageResourceName).png"
+            "\(imageResourceName).png"
         ]
+
+        let tierCandidates = FishingTier(rarity: rarity)?.directoryNames.flatMap { directoryName in
+            [
+                "fish/\(directoryName)/\(imageResourceName)",
+                "fish/\(directoryName)/\(imageResourceName).png",
+                "Icons/fish/\(directoryName)/\(imageResourceName)",
+                "Icons/fish/\(directoryName)/\(imageResourceName).png"
+            ]
+        } ?? []
+
+        return directCandidates + tierCandidates
     }
 }
 
 private struct FishCatchIcon: View {
-    let fish: FishType
+    let row: CaughtFishRow
     var size: CGFloat = 34
     var imagePadding: CGFloat = 5
     var showsChrome = true
@@ -883,16 +891,16 @@ private struct FishCatchIcon: View {
             .background {
                 if showsChrome {
                     RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
-                        .fill(fish.iconBackground)
+                        .fill(row.iconBackground)
                 }
             }
             .overlay {
                 if showsChrome {
                     RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
-                        .stroke(fish.border.opacity(0.34), lineWidth: 1)
+                        .stroke(row.border.opacity(0.34), lineWidth: 1)
                 }
             }
-            .shadow(color: showsChrome ? fish.border.opacity(0.16) : .clear, radius: 4, x: 0, y: 2)
+            .shadow(color: showsChrome ? row.border.opacity(0.16) : .clear, radius: 4, x: 0, y: 2)
             .accessibilityHidden(true)
     }
 
@@ -906,12 +914,12 @@ private struct FishCatchIcon: View {
         } else {
             Image(systemName: "fish")
                 .font(.system(size: size * 0.62, weight: .semibold))
-                .foregroundStyle(fish.valueColor)
+                .foregroundStyle(row.valueColor)
         }
     }
 
     private var fishImage: UIImage? {
-        fish.imageResourceCandidates.lazy.compactMap { UIImage(named: $0) }.first
+        row.imageResourceCandidates.lazy.compactMap { UIImage(named: $0) }.first
     }
 }
 
@@ -1631,7 +1639,6 @@ private struct HomeFocusBottomBar: View {
     let isLoadingBalance: Bool
     let balanceNotice: String?
     let incomingInviteCount: Int
-    let mockViewFishAction: () -> Void
     let action: () -> Void
 
     var body: some View {
@@ -1651,40 +1658,6 @@ private struct HomeFocusBottomBar: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if mode == .startFocus {
-                Button(action: mockViewFishAction) {
-                    HStack(spacing: PicoSpacing.compact) {
-                        Image(systemName: "fish")
-                            .font(.system(size: 16, weight: .semibold))
-                            .accessibilityHidden(true)
-
-                        Text("View fish")
-                            .font(PicoTypography.body.weight(.bold))
-
-                        Spacer(minLength: 0)
-
-                        Text("Mock")
-                            .font(PicoTypography.caption.weight(.bold))
-                            .foregroundStyle(PicoColors.primary)
-                            .padding(.horizontal, PicoSpacing.compact)
-                            .padding(.vertical, 4)
-                            .background(PicoColors.primary.opacity(0.12))
-                            .clipShape(Capsule(style: .continuous))
-                    }
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .padding(.horizontal, PicoSpacing.standard)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 46)
-                    .background(PicoColors.surface.opacity(0.94))
-                    .clipShape(Capsule(style: .continuous))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(PicoColors.border, lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
             }
 
             StartFocusCTA(
@@ -1721,7 +1694,7 @@ private struct StartFocusCTA: View {
         case .startFocus:
             "Start Focus"
         case .viewFish:
-            "View fish"
+            "Fish caught"
         }
     }
 
@@ -3475,12 +3448,22 @@ private struct FishingPage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var fishStore: FishStore
 
-    private var fishCounts: [FishType: Int] {
+    private var catalogFish: [FishingCatalogFish] {
+        fishStore.fishCatalog
+            .sorted { $0.sortOrder < $1.sortOrder }
+            .compactMap(FishingCatalogFish.init(catalogItem:))
+    }
+
+    private var collectionCounts: [FishID: Int] {
         Dictionary(
-            uniqueKeysWithValues: FishType.allCases.map { fishType in
-                (fishType, fishStore.inventory.filter { $0.fishType == fishType }.count)
+            uniqueKeysWithValues: fishStore.collectionCounts.map { count in
+                (count.seaCritterID, count.count)
             }
         )
+    }
+
+    private var isLoadingCollectionData: Bool {
+        fishStore.isLoadingFishCatalog || fishStore.isLoadingCollectionCounts
     }
 
     var body: some View {
@@ -3493,9 +3476,9 @@ private struct FishingPage: View {
                 ForEach(FishingTier.allCases) { tier in
                     FishingTierSection(
                         tier: tier,
-                        fish: FishingCatalogFish.fish(in: tier),
-                        counts: fishCounts,
-                        isLoading: fishStore.isLoadingInventory
+                        fish: catalogFish.filter { $0.tier == tier },
+                        counts: collectionCounts,
+                        isLoading: isLoadingCollectionData
                     )
                 }
             }
@@ -3513,14 +3496,18 @@ private struct FishingPage: View {
     }
 
     private func loadFishingData() async {
-        await fishStore.loadInventory(for: sessionStore.session)
+        if fishStore.fishCatalog.isEmpty {
+            await fishStore.loadFishCatalog(for: sessionStore.session)
+        }
+
+        await fishStore.loadCollectionCounts(for: sessionStore.session)
     }
 }
 
 private enum FishingTier: String, CaseIterable, Identifiable {
     case common
     case rare
-    case superRare = "super rare"
+    case ultraRare = "ultra_rare"
 
     var id: String { rawValue }
 
@@ -3530,19 +3517,19 @@ private enum FishingTier: String, CaseIterable, Identifiable {
             "Common"
         case .rare:
             "Rare"
-        case .superRare:
-            "Super Rare"
+        case .ultraRare:
+            "Ultra Rare"
         }
     }
 
-    var directoryName: String {
+    var directoryNames: [String] {
         switch self {
+        case .common:
+            ["common"]
         case .rare:
-            "Rare"
-        case .superRare:
-            "super rare"
-        default:
-            rawValue
+            ["Rare", "rare"]
+        case .ultraRare:
+            ["super rare", "ultra rare", "Ultra Rare"]
         }
     }
 
@@ -3552,7 +3539,7 @@ private enum FishingTier: String, CaseIterable, Identifiable {
             PicoColors.primary
         case .rare:
             PicoColors.highlightBorder
-        case .superRare:
+        case .ultraRare:
             PicoColors.secondaryAccent
         }
     }
@@ -3563,7 +3550,7 @@ private enum FishingTier: String, CaseIterable, Identifiable {
             Color(hex: 0xF3FAEA)
         case .rare:
             Color(hex: 0xFFF7E8)
-        case .superRare:
+        case .ultraRare:
             Color(hex: 0xF2F0FF)
         }
     }
@@ -3578,73 +3565,78 @@ private enum FishingTier: String, CaseIterable, Identifiable {
             "fish"
         case .rare:
             "star.fill"
-        case .superRare:
+        case .ultraRare:
             "crown.fill"
+        }
+    }
+
+    init?(rarity: FishRarity) {
+        switch rarity {
+        case .common:
+            self = .common
+        case .rare:
+            self = .rare
+        case .ultraRare:
+            self = .ultraRare
         }
     }
 }
 
 private struct FishingCatalogFish: Identifiable {
+    let seaCritterID: FishID
     let tier: FishingTier
     let displayName: String
     let assetName: String
-    let matchingFishType: FishType?
+    let sortOrder: Int
 
     var id: String {
-        "\(tier.rawValue)-\(assetName)"
+        seaCritterID.rawValue
     }
 
     var imageResourceCandidates: [String] {
-        [
+        let directCandidates = [
             assetName,
-            "\(assetName).png",
-            "fish/\(tier.directoryName)/\(assetName)",
-            "fish/\(tier.directoryName)/\(assetName).png",
-            "Icons/fish/\(tier.directoryName)/\(assetName)",
-            "Icons/fish/\(tier.directoryName)/\(assetName).png"
+            "\(assetName).png"
         ]
+
+        let tierCandidates = tier.directoryNames.flatMap { directoryName in
+            [
+                "fish/\(directoryName)/\(assetName)",
+                "fish/\(directoryName)/\(assetName).png",
+                "Icons/fish/\(directoryName)/\(assetName)",
+                "Icons/fish/\(directoryName)/\(assetName).png"
+            ]
+        }
+
+        return directCandidates + tierCandidates
     }
 
-    static func fish(in tier: FishingTier) -> [FishingCatalogFish] {
-        all.filter { $0.tier == tier }
+    init?(
+        seaCritterID: FishID,
+        tier: FishingTier,
+        displayName: String,
+        assetName: String,
+        sortOrder: Int
+    ) {
+        self.seaCritterID = seaCritterID
+        self.tier = tier
+        self.displayName = displayName
+        self.assetName = assetName
+        self.sortOrder = sortOrder
     }
 
-    static let all: [FishingCatalogFish] = [
-        FishingCatalogFish(tier: .common, displayName: "Bass", assetName: "Fish_Bass", matchingFishType: .bass),
-        FishingCatalogFish(tier: .common, displayName: "Crab", assetName: "SeaShellfish_Crab_Red", matchingFishType: nil),
-        FishingCatalogFish(tier: .common, displayName: "Halibut", assetName: "Fish_Halibut", matchingFishType: nil),
-        FishingCatalogFish(tier: .common, displayName: "Herring", assetName: "Fish_Herring", matchingFishType: nil),
-        FishingCatalogFish(tier: .common, displayName: "Salmon", assetName: "Fish_Salmon", matchingFishType: .salmon),
-        FishingCatalogFish(tier: .common, displayName: "Shrimp", assetName: "SeaShellfish_Shrimp_Pink", matchingFishType: nil),
+    init?(catalogItem: FishCatalogItem) {
+        guard let tier = FishingTier(rarity: catalogItem.rarity) else { return nil }
 
-        FishingCatalogFish(tier: .rare, displayName: "Tuna", assetName: "Fish_Tuna", matchingFishType: .tuna),
-        FishingCatalogFish(tier: .rare, displayName: "Anglerfish", assetName: "DeepSeaFish_AnglerFish", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Butterflyfish", assetName: "TropicalFish_ButterflyFish", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Clownfish", assetName: "TropicalFish_Clownfish_Orange", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Eel", assetName: "Fish_Eel", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Jellyfish", assetName: "SeaInvertebrate_Jellyfish_Blue", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Lionfish", assetName: "TropicalFish_LionFish", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Lobster", assetName: "SeaShellfish_Lobster_Red", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Marlin", assetName: "Fish_MarlinSwordfish", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Nautilus", assetName: "SeaShellfish_Nautilus", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Octopus", assetName: "SeaInvertebrate_Octopus_Orange", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Pufferfish", assetName: "Fish_PufferFish", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Seahorse", assetName: "Fish_SeaHorse_Yellow", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Squid", assetName: "SeaInvertebrate_Squid_Pink", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Stingray", assetName: "Fish_StingRay", matchingFishType: nil),
-        FishingCatalogFish(tier: .rare, displayName: "Turtle", assetName: "SeaReptile_Turtle", matchingFishType: nil),
+        self.init(
+            seaCritterID: catalogItem.id,
+            tier: tier,
+            displayName: catalogItem.displayName,
+            assetName: catalogItem.assetName,
+            sortOrder: catalogItem.sortOrder
+        )
+    }
 
-        FishingCatalogFish(tier: .superRare, displayName: "Blobfish", assetName: "DeepSeaFish_BlobFish", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Blue Lobster", assetName: "SeaShellfish_Lobster_Blue", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Dolphin", assetName: "SeaMammal_Dolphin", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Great White", assetName: "Fish_GreatWhiteShark", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Hammerhead", assetName: "Fish_HammerHeadShark", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Narwhal", assetName: "SeaMammal_Narwhale", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Orca", assetName: "SeaMammal_Orca", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Sunfish", assetName: "Fish_Sunfish", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Whale", assetName: "SeaMammal_Whale", matchingFishType: nil),
-        FishingCatalogFish(tier: .superRare, displayName: "Whale Shark", assetName: "Fish_WhaleShark", matchingFishType: nil)
-    ]
 }
 
 private struct FishingTierSection: View {
@@ -3654,10 +3646,7 @@ private struct FishingTierSection: View {
     let isLoading: Bool
 
     private var unlockedCount: Int {
-        fish.filter { catalogFish in
-            guard let matchingFishType = catalogFish.matchingFishType else { return false }
-            return counts[matchingFishType, default: 0] > 0
-        }.count
+        fish.filter { counts[$0.seaCritterID, default: 0] > 0 }.count
     }
 
     var body: some View {
@@ -3693,8 +3682,7 @@ private struct FishingTierSection: View {
     }
 
     private func count(for catalogFish: FishingCatalogFish) -> Int {
-        guard let matchingFishType = catalogFish.matchingFishType else { return 0 }
-        return counts[matchingFishType, default: 0]
+        counts[catalogFish.seaCritterID, default: 0]
     }
 }
 
@@ -3886,7 +3874,11 @@ private struct StorePage: View {
     }
 
     private var fishGroups: [StoreFishGroup] {
-        StoreFishGroup.groups(from: fishStore.inventory)
+        StoreFishGroup.groups(
+            from: fishStore.inventory,
+            catalog: fishStore.fishCatalog,
+            inventoryCounts: fishStore.inventoryCounts
+        )
     }
 
     var body: some View {
@@ -3950,6 +3942,10 @@ private struct StorePage: View {
         .task {
             await sessionStore.loadProfileIfNeeded()
             await berryStore.loadBalance(for: sessionStore.session)
+            if fishStore.fishCatalog.isEmpty {
+                await fishStore.loadFishCatalog(for: sessionStore.session)
+            }
+            await fishStore.loadInventoryCounts(for: sessionStore.session)
             await fishStore.loadInventory(for: sessionStore.session)
         }
     }
@@ -3997,6 +3993,7 @@ private struct StorePage: View {
         Task {
             guard let result = await fishStore.sellFish(catchIDs: catchIDs, for: sessionStore.session) else { return }
             berryStore.applyBalance(result.balance)
+            await fishStore.loadInventoryCounts(for: sessionStore.session)
             await fishStore.loadInventory(for: sessionStore.session)
         }
     }
@@ -4019,29 +4016,112 @@ private enum StoreMode: String, CaseIterable, Identifiable {
 }
 
 private struct StoreFishGroup: Identifiable {
-    var id: FishType { fishType }
+    var id: FishID { seaCritterID }
 
-    let fishType: FishType
+    let seaCritterID: FishID
+    let displayName: String
+    let rarity: FishRarity
+    let assetName: String
+    let sortOrder: Int
+    let unitValue: Int
+    let inventoryCount: Int?
     let catches: [FishCatch]
 
+    var fishType: FishType {
+        seaCritterID
+    }
+
     var count: Int {
-        catches.count
+        inventoryCount ?? catches.count
     }
 
     var totalValue: Int {
         catches.reduce(0) { $0 + $1.sellValue }
     }
 
-    var unitValue: Int {
-        catches.first?.sellValue ?? fishType.sellValue
+    var imageResourceCandidates: [String] {
+        let directCandidates = [
+            assetName,
+            "\(assetName).png"
+        ]
+
+        let tierCandidates = FishingTier(rarity: rarity)?.directoryNames.flatMap { directoryName in
+            [
+                "fish/\(directoryName)/\(assetName)",
+                "fish/\(directoryName)/\(assetName).png",
+                "Icons/fish/\(directoryName)/\(assetName)",
+                "Icons/fish/\(directoryName)/\(assetName).png"
+            ]
+        } ?? []
+
+        return directCandidates + tierCandidates
     }
 
-    static func groups(from catches: [FishCatch]) -> [StoreFishGroup] {
-        FishType.allCases.compactMap { fishType in
-            let matchingCatches = catches.filter { $0.fishType == fishType }
-            guard !matchingCatches.isEmpty else { return nil }
-            return StoreFishGroup(fishType: fishType, catches: matchingCatches)
+    var rowBackground: Color {
+        switch rarity {
+        case .common:
+            PicoColors.softSurface.opacity(0.72)
+        case .rare:
+            Color(hex: 0xEAF6DE).opacity(0.9)
+        case .ultraRare:
+            Color(hex: 0xFCE8CC).opacity(0.92)
         }
+    }
+
+    var rowBorder: Color {
+        switch rarity {
+        case .common:
+            PicoColors.border.opacity(0.42)
+        case .rare:
+            PicoColors.primary.opacity(0.34)
+        case .ultraRare:
+            PicoColors.highlightBorder.opacity(0.36)
+        }
+    }
+
+    var iconBorder: Color {
+        switch rarity {
+        case .common:
+            Color(hex: 0x111111)
+        case .rare:
+            PicoColors.border
+        case .ultraRare:
+            PicoColors.error.opacity(0.68)
+        }
+    }
+
+    static func groups(
+        from catches: [FishCatch],
+        catalog: [FishCatalogItem],
+        inventoryCounts: [FishCount]
+    ) -> [StoreFishGroup] {
+        let catalogByID = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
+        let inventoryCountByID = Dictionary(uniqueKeysWithValues: inventoryCounts.map { ($0.seaCritterID, $0) })
+
+        return Dictionary(grouping: catches, by: \.seaCritterID)
+            .map { seaCritterID, catches in
+                let catalogItem = catalogByID[seaCritterID]
+                let countItem = inventoryCountByID[seaCritterID]
+                let firstCatch = catches.first
+
+                return StoreFishGroup(
+                    seaCritterID: seaCritterID,
+                    displayName: catalogItem?.displayName ?? countItem?.displayName ?? seaCritterID.displayName,
+                    rarity: catalogItem?.rarity ?? countItem?.rarity ?? firstCatch?.rarity ?? .common,
+                    assetName: catalogItem?.assetName ?? countItem?.assetName ?? seaCritterID.assetName,
+                    sortOrder: catalogItem?.sortOrder ?? countItem?.sortOrder ?? Int.max,
+                    unitValue: catalogItem?.sellValue ?? countItem?.sellValue ?? firstCatch?.sellValue ?? seaCritterID.sellValue,
+                    inventoryCount: countItem?.count,
+                    catches: catches
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.sortOrder != rhs.sortOrder {
+                    return lhs.sortOrder < rhs.sortOrder
+                }
+
+                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            }
     }
 }
 
@@ -4059,7 +4139,7 @@ private struct StoreFishSection: View {
                     .foregroundStyle(PicoColors.textSecondary)
                     .frame(width: 24, height: 24)
 
-                Text("Your fish")
+                Text("Inventory")
                     .font(PicoTypography.cardTitle)
                     .foregroundStyle(PicoColors.textPrimary)
 
@@ -4107,7 +4187,7 @@ private struct StoreFishGroupRow: View {
             fishIcon
 
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
-                Text(group.fishType.displayName)
+                Text(group.displayName)
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
@@ -4129,26 +4209,25 @@ private struct StoreFishGroupRow: View {
                 }
                 .buttonStyle(StoreBuyButtonStyle())
                 .disabled(isSelling)
-                .accessibilityLabel(Text("Sell one \(group.fishType.displayName)"))
+                .accessibilityLabel(Text("Sell one \(group.displayName)"))
             }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
-        .background(group.fishType.rowBackground)
+        .background(group.rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                .stroke(group.fishType.rowBorder, lineWidth: 1)
+                .stroke(group.rowBorder, lineWidth: 1)
         )
     }
 
     private var fishIcon: some View {
         ZStack {
-            FishCatchIcon(
-                fish: group.fishType,
+            StoreFishIcon(
+                group: group,
                 size: 68,
-                imagePadding: 0,
-                showsChrome: false
+                imagePadding: 0
             )
 
             Text("x \(group.count)")
@@ -4161,12 +4240,39 @@ private struct StoreFishGroupRow: View {
                 .clipShape(Capsule(style: .continuous))
                 .overlay(
                     Capsule(style: .continuous)
-                        .stroke(group.fishType.rowBorder, lineWidth: 1)
+                        .stroke(group.rowBorder, lineWidth: 1)
                 )
                 .offset(x: 2, y: 2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
         .frame(width: 72, height: 72)
+    }
+}
+
+private struct StoreFishIcon: View {
+    let group: StoreFishGroup
+    var size: CGFloat
+    var imagePadding: CGFloat = 0
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "fish")
+                    .font(.system(size: size * 0.62, weight: .bold))
+                    .foregroundStyle(group.iconBorder)
+            }
+        }
+        .padding(imagePadding)
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private var image: UIImage? {
+        group.imageResourceCandidates.lazy.compactMap { UIImage(named: $0) }.first
     }
 }
 
