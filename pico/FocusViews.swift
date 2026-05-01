@@ -169,13 +169,13 @@ private struct FocusLobbyView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var focusStore: FocusStore
-    @State private var durationMinutes: Int
+    @State private var durationSeconds: Int
 
     let session: FocusSession
 
     init(session: FocusSession) {
         self.session = session
-        _durationMinutes = State(initialValue: Self.durationMinutes(from: session.durationSeconds))
+        _durationSeconds = State(initialValue: Self.clampedDurationSeconds(from: session.durationSeconds))
     }
 
     var body: some View {
@@ -194,13 +194,17 @@ private struct FocusLobbyView: View {
                 .padding(.vertical, 4)
 
                 if canManageLobby {
-                    Stepper(value: $durationMinutes, in: Self.minimumDurationMinutes...Self.maximumDurationMinutes, step: 5) {
-                        LabeledContent("Duration", value: "\(durationMinutes) min")
+                    Stepper {
+                        LabeledContent("Duration", value: formattedDuration(durationSeconds))
+                    } onIncrement: {
+                        durationSeconds = Self.nextDuration(after: durationSeconds)
+                    } onDecrement: {
+                        durationSeconds = Self.previousDuration(before: durationSeconds)
                     }
 
                     Button {
                         Task {
-                            await focusStore.updateLobbyDuration(durationMinutes * 60, for: sessionStore.session)
+                            await focusStore.updateLobbyDuration(durationSeconds, for: sessionStore.session)
                         }
                     } label: {
                         HStack {
@@ -228,7 +232,7 @@ private struct FocusLobbyView: View {
                     }
                     .disabled(focusStore.isStarting || focusStore.isUpdatingConfig || !canStartLobby)
                 } else {
-                    LabeledContent("Duration", value: "\(durationMinutes) min")
+                    LabeledContent("Duration", value: formattedDuration(durationSeconds))
                 }
             } header: {
                 Text("Session Config")
@@ -254,23 +258,35 @@ private struct FocusLobbyView: View {
             }
         }
         .onChange(of: session.id) {
-            durationMinutes = Self.durationMinutes(from: session.durationSeconds)
+            durationSeconds = Self.clampedDurationSeconds(from: session.durationSeconds)
         }
         .onChange(of: session.durationSeconds) {
-            durationMinutes = Self.durationMinutes(from: session.durationSeconds)
+            durationSeconds = Self.clampedDurationSeconds(from: session.durationSeconds)
         }
     }
 
-    private static var minimumDurationMinutes: Int {
-        FocusStore.minimumDurationSeconds / 60
+    private static let durationStepSeconds = 5 * 60
+
+    private static func clampedDurationSeconds(from seconds: Int) -> Int {
+        min(FocusStore.maximumDurationSeconds, max(FocusStore.minimumDurationSeconds, seconds))
     }
 
-    private static var maximumDurationMinutes: Int {
-        FocusStore.maximumDurationSeconds / 60
+    private static func nextDuration(after seconds: Int) -> Int {
+        if seconds < durationStepSeconds {
+            return min(FocusStore.maximumDurationSeconds, durationStepSeconds)
+        }
+
+        let steppedDuration = ((seconds / durationStepSeconds) + 1) * durationStepSeconds
+        return clampedDurationSeconds(from: steppedDuration)
     }
 
-    private static func durationMinutes(from seconds: Int) -> Int {
-        min(maximumDurationMinutes, max(minimumDurationMinutes, seconds / 60))
+    private static func previousDuration(before seconds: Int) -> Int {
+        if seconds <= durationStepSeconds {
+            return FocusStore.minimumDurationSeconds
+        }
+
+        let steppedDuration = ((seconds - 1) / durationStepSeconds) * durationStepSeconds
+        return clampedDurationSeconds(from: steppedDuration)
     }
 
     private var canManageLobby: Bool {
@@ -278,7 +294,7 @@ private struct FocusLobbyView: View {
     }
 
     private var hasDurationChanges: Bool {
-        durationMinutes * 60 != session.durationSeconds
+        durationSeconds != session.durationSeconds
     }
 
     private var canStartLobby: Bool {

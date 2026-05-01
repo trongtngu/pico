@@ -1868,9 +1868,9 @@ private struct PicoRangeSlider: View {
             guard !isDisabled else { return }
             switch direction {
             case .increment:
-                value = min(bounds.upperBound, value + step)
+                value = snappedValue(value + step)
             case .decrement:
-                value = max(bounds.lowerBound, value - step)
+                value = snappedValue(value - step)
             @unknown default:
                 break
             }
@@ -1886,8 +1886,12 @@ private struct PicoRangeSlider: View {
     private func updateValue(at xPosition: CGFloat, usableWidth: CGFloat) {
         let progress = min(max(Double((xPosition - thumbSize / 2) / usableWidth), 0), 1)
         let rawValue = bounds.lowerBound + progress * (bounds.upperBound - bounds.lowerBound)
+        value = snappedValue(rawValue)
+    }
+
+    private func snappedValue(_ rawValue: Double) -> Double {
         let steppedValue = (rawValue / step).rounded() * step
-        value = min(max(steppedValue, bounds.lowerBound), bounds.upperBound)
+        return min(max(steppedValue, bounds.lowerBound), bounds.upperBound)
     }
 }
 
@@ -2923,7 +2927,12 @@ private func homeFormattedDuration(_ seconds: Int) -> String {
 }
 
 private func homeFormattedDurationMinutes(_ seconds: Int) -> String {
-    let minutes = max(1, Int(ceil(Double(max(0, seconds)) / 60)))
+    let clampedSeconds = max(0, seconds)
+    if clampedSeconds < 60 {
+        return "\(clampedSeconds) sec"
+    }
+
+    let minutes = Int(ceil(Double(clampedSeconds) / 60))
     return "\(minutes) min"
 }
 
