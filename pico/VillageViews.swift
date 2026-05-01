@@ -266,9 +266,7 @@ private final class VillageScene: SKScene {
         )
         let spots = fishingSpots
         let normalTiles = walkableTiles
-        let visibleResidents = isFishingMode
-            ? fishingResidents(filling: spots.count)
-            : Array(residents.prefix(normalTiles.count))
+        let visibleResidents = residents.prefix(isFishingMode ? spots.count : normalTiles.count)
 
         for (index, resident) in visibleResidents.enumerated() {
             let fishingSpot = isFishingMode ? spots[index] : nil
@@ -327,31 +325,6 @@ private final class VillageScene: SKScene {
         guard !tiles.isEmpty else { return TileCoordinate(row: 0, column: 0) }
         let tileIndex = (index + gridSize * 2 + 3) % tiles.count
         return tiles[tileIndex]
-    }
-
-    private func fishingResidents(filling spotCount: Int) -> [VillageResident] {
-        var filledResidents = Array(residents.prefix(spotCount))
-        while filledResidents.count < spotCount {
-            filledResidents.append(Self.previewFishingResident(index: filledResidents.count))
-        }
-
-        return filledResidents
-    }
-
-    private static func previewFishingResident(index: Int) -> VillageResident {
-        let hats = AvatarHat.allCases
-        let idSuffix = String(format: "%012d", index + 900)
-        return VillageResident(
-            profile: UserProfile(
-                userID: UUID(uuidString: "00000000-0000-0000-0000-\(idSuffix)")!,
-                username: "fishing_preview_\(index)",
-                displayName: "Fishing Preview \(index)",
-                avatarConfig: AvatarConfig(hat: hats[index % hats.count])
-            ),
-            bondLevel: index,
-            completedPairSessions: 0,
-            unlockedAt: nil
-        )
     }
 }
 

@@ -30,6 +30,7 @@ struct AppShellView: View {
     @StateObject private var villageStore = VillageStore()
     @StateObject private var bondRewardClaimStore = BondRewardClaimStore()
     @StateObject private var berryStore = BerryStore()
+    @StateObject private var fishStore = FishStore()
 
     var body: some View {
         ZStack {
@@ -76,32 +77,43 @@ struct AppShellView: View {
         .environmentObject(villageStore)
         .environmentObject(bondRewardClaimStore)
         .environmentObject(berryStore)
+        .environmentObject(fishStore)
         .task(id: sessionStore.session?.user?.id) {
             await sessionStore.refreshSessionIfNeeded()
             await focusStore.restoreSavedState(for: sessionStore.session)
             if sessionStore.session == nil {
                 villageStore.clear()
                 berryStore.clear()
+                fishStore.clear()
                 focusStore.updateKnownVillageResidentIDs(nil)
             } else {
                 await villageStore.loadResidents(for: sessionStore.session)
                 focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
                 await berryStore.loadBalance(for: sessionStore.session)
-                await berryStore.loadPendingBerryRewards(for: sessionStore.session)
             }
         }
         .onChange(of: focusStore.resultSession) {
-            guard focusStore.resultSession?.status == .completed else { return }
+            guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return }
             Task {
                 await villageStore.loadResidents(for: sessionStore.session)
                 await berryStore.loadBalance(for: sessionStore.session)
-                await berryStore.loadPendingBerryRewards(for: sessionStore.session, retryIfEmpty: true)
+                await fishStore.loadSessionCatches(
+                    sessionID: resultSession.id,
+                    for: sessionStore.session,
+                    retryIfEmpty: !focusStore.hasPendingResultSync
+                )
             }
         }
         .onChange(of: focusStore.hasPendingResultSync) {
-            guard !focusStore.hasPendingResultSync, focusStore.resultSession?.status == .completed else { return }
+            guard !focusStore.hasPendingResultSync,
+                  let resultSession = focusStore.resultSession,
+                  resultSession.status == .completed else { return }
             Task {
-                await berryStore.loadPendingBerryRewards(for: sessionStore.session, retryIfEmpty: true)
+                await fishStore.loadSessionCatches(
+                    sessionID: resultSession.id,
+                    for: sessionStore.session,
+                    retryIfEmpty: true
+                )
             }
         }
         .onChange(of: villageStore.residents) {
@@ -276,6 +288,7 @@ private struct PicoSideNavigation: View {
 
 private enum AppTab: String, CaseIterable, Identifiable {
     case home
+    case fishing
     case store
     case bonds
     case friends
@@ -287,6 +300,8 @@ private enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home:
             "Village"
+        case .fishing:
+            "Fishing"
         case .store:
             "Store"
         case .bonds:
@@ -300,13 +315,22 @@ private enum AppTab: String, CaseIterable, Identifiable {
 
     @ViewBuilder
     func icon(isSelected: Bool, size: CGFloat = 20) -> some View {
-        PicoIcon(iconAsset(isSelected: isSelected), size: size)
+        switch self {
+        case .fishing:
+            Image(systemName: "fish")
+                .font(.system(size: size, weight: isSelected ? .bold : .semibold))
+                .frame(width: size, height: size)
+        default:
+            PicoIcon(iconAsset(isSelected: isSelected), size: size)
+        }
     }
 
     private func iconAsset(isSelected: Bool) -> PicoIconAsset {
         switch self {
         case .home:
             isSelected ? .homeSolid : .homeRegular
+        case .fishing:
+            .sparklesRegular
         case .store:
             isSelected ? .buildingStorefrontSolid : .buildingStorefrontRegular
         case .bonds:
@@ -330,6 +354,8 @@ private enum AppTab: String, CaseIterable, Identifiable {
                 showsMenuButton: usesDrawerNavigation,
                 openNavigation: openNavigation
             )
+        case .fishing:
+            FishingPage()
         case .store:
             StorePage()
         case .bonds:
@@ -346,6 +372,7 @@ private struct HomePage: View {
     @EnvironmentObject private var focusStore: FocusStore
     @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var berryStore: BerryStore
+    @EnvironmentObject private var fishStore: FishStore
     @EnvironmentObject private var villageStore: VillageStore
     @EnvironmentObject private var sessionStore: AuthSessionStore
     let showsMenuButton: Bool
@@ -353,8 +380,9 @@ private struct HomePage: View {
     @State private var isStartFocusSheetPresented = false
     @State private var startFocusStep = StartFocusSheetStep.modePicker
     @State private var startFocusSheetHeight: CGFloat = 360
-    @State private var collectedBerryReward: CollectedBerryReward?
-    @State private var isFishingTestMode = false
+    @State private var fishCatchSheetHeight: CGFloat = 430
+    @State private var isFishCatchSheetPresented = false
+    @State private var isFocusResultOverlayDismissed = false
 
     var body: some View {
         ZStack {
@@ -367,7 +395,7 @@ private struct HomePage: View {
                                 currentUserProfile: sessionStore.profile,
                                 isLoading: villageStore.isLoadingResidents,
                                 notice: villageStore.notice,
-                                isFishingMode: isFishingTestMode,
+                                isFishingMode: focusStore.activeSession != nil,
                                 height: villageHeight(for: viewport.size.height)
                             )
 
@@ -386,18 +414,12 @@ private struct HomePage: View {
                     ActiveSessionTimerBottomBar(session: activeSession)
                 } else {
                     HomeFocusBottomBar(
+                        mode: bottomBarMode,
                         isLoadingBalance: berryStore.isLoadingBalance,
                         balanceNotice: berryStore.notice,
-                        hasPendingBerryRewards: berryStore.hasPendingBerryRewards,
-                        isLoadingPendingBerryRewards: berryStore.isLoadingPendingBerryRewards,
-                        isCollectingBerries: berryStore.isCollectingBerries,
                         incomingInviteCount: focusStore.incomingInvites.count,
-                        isFishingTestMode: isFishingTestMode,
-                        toggleFishingTestMode: {
-                            isFishingTestMode.toggle()
-                        },
-                        startFocus: presentStartFocusSheet,
-                        collectRewards: collectPendingBerryRewards
+                        mockViewFishAction: simulateMockViewFish,
+                        action: performBottomBarAction
                     )
                 }
             }
@@ -411,10 +433,13 @@ private struct HomePage: View {
                     )
                 }
             }
-            .allowsHitTesting(focusStore.resultSession == nil)
+            .allowsHitTesting(!showsFocusResultOverlay)
 
-            if let resultSession = focusStore.resultSession {
-                FocusCompleteOverlay(session: resultSession)
+            if showsFocusResultOverlay, let resultSession = focusStore.resultSession {
+                FocusCompleteOverlay(
+                    session: resultSession,
+                    done: finishFocusResultOverlay
+                )
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(1)
             }
@@ -434,11 +459,18 @@ private struct HomePage: View {
             .presentationBackground(PicoColors.appBackground)
             .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
         }
-        .sheet(item: $collectedBerryReward) { reward in
-            BerryCollectionSuccessSheet(summary: reward.summary) {
-                collectedBerryReward = nil
-            }
-            .presentationDetents([.height(360)])
+        .sheet(isPresented: $isFishCatchSheetPresented, onDismiss: finishFishCatchFlow) {
+            FishCatchSuccessSheet(
+                catches: fishStore.currentSessionCatches,
+                isLoading: fishStore.isLoadingSessionCatches,
+                notice: fishStore.notice,
+                measuredHeight: $fishCatchSheetHeight,
+                onRetry: retryCompletedSessionFishFetch,
+                onDone: {
+                    isFishCatchSheetPresented = false
+                }
+            )
+            .presentationDetents(fishCatchSheetDetents)
             .presentationDragIndicator(.visible)
             .presentationBackground(PicoColors.appBackground)
             .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
@@ -446,10 +478,14 @@ private struct HomePage: View {
         .task {
             await villageStore.loadResidents(for: sessionStore.session)
             await berryStore.loadBalance(for: sessionStore.session)
-            await berryStore.loadPendingBerryRewards(for: sessionStore.session)
         }
         .onChange(of: focusStore.resultSession) {
-            guard focusStore.resultSession != nil else { return }
+            guard focusStore.resultSession != nil else {
+                fishStore.clearSessionCatches()
+                isFocusResultOverlayDismissed = false
+                return
+            }
+            isFocusResultOverlayDismissed = false
             isStartFocusSheetPresented = false
         }
         .onChange(of: focusStore.activeSession) {
@@ -476,8 +512,47 @@ private struct HomePage: View {
         return [.height(height)]
     }
 
+    private var fishCatchSheetDetents: Set<PresentationDetent> {
+        let expectedRowCount = max(
+            fishStore.currentSessionCatches.count,
+            fishStore.isLoadingSessionCatches ? 3 : 0
+        )
+        let height = max(300, estimatedFishCatchSheetHeight(rowCount: expectedRowCount), ceil(fishCatchSheetHeight))
+        return [.height(height)]
+    }
+
+    private func estimatedFishCatchSheetHeight(rowCount: Int) -> CGFloat {
+        guard rowCount > 0 else { return 0 }
+
+        let rowHeight: CGFloat = 80
+        let rowSpacing = CGFloat(max(0, rowCount - 1)) * PicoSpacing.iconTextGap
+        let rowsHeight = CGFloat(rowCount) * rowHeight + rowSpacing
+
+        return PicoSpacing.section
+            + 25
+            + PicoSpacing.standard
+            + rowsHeight
+            + PicoSpacing.standard
+            + 56
+            + PicoSpacing.compact
+            + PicoSpacing.standard
+    }
+
     private var gridResidents: [VillageResident] {
         Array(villageStore.residents.prefix(36))
+    }
+
+    private var completedResultSession: FocusSession? {
+        guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return nil }
+        return resultSession
+    }
+
+    private var showsFocusResultOverlay: Bool {
+        focusStore.resultSession != nil && !isFocusResultOverlayDismissed
+    }
+
+    private var bottomBarMode: StartFocusCTA.Mode {
+        completedResultSession == nil ? .startFocus : .viewFish
     }
 
     private func presentStartFocusSheet() {
@@ -492,6 +567,14 @@ private struct HomePage: View {
         isStartFocusSheetPresented = true
     }
 
+    private func performBottomBarAction() {
+        if completedResultSession == nil {
+            presentStartFocusSheet()
+        } else {
+            viewCompletedSessionFish()
+        }
+    }
+
     private func refreshVillagePage() async {
         await refreshLiveVillageData(
             session: sessionStore.session,
@@ -500,91 +583,137 @@ private struct HomePage: View {
         )
         await friendStore.loadFriends(for: sessionStore.session)
         await berryStore.loadBalance(for: sessionStore.session)
-        await berryStore.loadPendingBerryRewards(for: sessionStore.session)
     }
 
     private func villageHeight(for viewportHeight: CGFloat) -> CGFloat {
         max(280, viewportHeight - 54)
     }
 
-    private func collectPendingBerryRewards() {
+    private func viewCompletedSessionFish() {
+        guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return }
+        isFishCatchSheetPresented = true
         Task {
-            let rewardSummary = berryStore.pendingRewardSummary
-            guard rewardSummary.hasRewards,
-                  await berryStore.collectPendingBerryRewards(for: sessionStore.session) != nil else { return }
-            collectedBerryReward = CollectedBerryReward(summary: rewardSummary)
+            await fishStore.loadSessionCatches(
+                sessionID: resultSession.id,
+                for: sessionStore.session,
+                retryIfEmpty: true
+            )
+        }
+    }
+
+    private func simulateMockViewFish() {
+        fishStore.loadMockSessionCatches()
+        isFishCatchSheetPresented = true
+    }
+
+    private func retryCompletedSessionFishFetch() {
+        guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return }
+        Task {
+            await fishStore.loadSessionCatches(
+                sessionID: resultSession.id,
+                for: sessionStore.session,
+                retryIfEmpty: true
+            )
+        }
+    }
+
+    private func finishFishCatchFlow() {
+        fishStore.clearSessionCatches()
+        if focusStore.resultSession?.status == .completed {
+            focusStore.resetResult()
+        }
+    }
+
+    private func finishFocusResultOverlay() {
+        if focusStore.resultSession?.status == .completed {
+            isFocusResultOverlayDismissed = true
+        } else {
+            focusStore.resetResult()
         }
     }
 }
 
-private struct CollectedBerryReward: Identifiable {
-    let id = UUID()
-    let summary: BerryRewardSummary
-}
-
-private struct BerryCollectionSuccessSheet: View {
+private struct FishCatchSuccessSheet: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    let summary: BerryRewardSummary
+    let catches: [FishCatch]
+    let isLoading: Bool
+    let notice: String?
+    @Binding var measuredHeight: CGFloat
+    let onRetry: () -> Void
     let onDone: () -> Void
 
-    private var rows: [BerryCollectionTierRow] {
-        summary.berryTiers.enumerated().map { index, tier in
-            BerryCollectionTierRow(id: index, tier: BerryCollectionTier(tier))
+    private var rows: [CaughtFishRow] {
+        catches.enumerated().map { index, fishCatch in
+            CaughtFishRow(id: index, fishCatch: fishCatch)
         }
     }
 
     var body: some View {
         VStack(spacing: PicoSpacing.standard) {
-            VStack(spacing: PicoSpacing.compact) {
-                Text("Berries collected")
-                    .font(PicoTypography.cardTitle)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .multilineTextAlignment(.center)
-
-                Text("+\(formattedBerryCount(summary.totalBerryValue))")
-                    .font(PicoTypography.sectionTitle)
-                    .foregroundStyle(PicoColors.primary)
-                    .multilineTextAlignment(.center)
-            }
+            Text("Fish caught")
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .multilineTextAlignment(.center)
 
             ZStack {
                 FocusCompleteConfettiView(reduceMotion: reduceMotion)
                     .frame(width: 280, height: 112)
                     .allowsHitTesting(false)
 
-                VStack(spacing: PicoSpacing.compact) {
-                    ForEach(rows) { row in
-                        HStack(spacing: PicoSpacing.iconTextGap) {
-                            BerryCollectionTierSwatch(tier: row.tier)
+                if isLoading {
+                    ProgressView()
+                        .tint(PicoColors.primary)
+                } else if rows.isEmpty {
+                    VStack(spacing: PicoSpacing.compact) {
+                        Text(notice ?? "No fish found for this session yet.")
+                            .font(PicoTypography.body)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
 
-                            Text(row.label)
-                                .font(PicoTypography.body.weight(.semibold))
-                                .foregroundStyle(PicoColors.textPrimary)
-
-                            Text(row.rarityLabel)
-                                .font(PicoTypography.caption.weight(.bold))
-                                .foregroundStyle(row.tier.rarityTextColor)
-                                .padding(.horizontal, PicoSpacing.compact)
-                                .padding(.vertical, 4)
-                                .background(row.tier.rarityBadgeBackground)
-                                .clipShape(Capsule(style: .continuous))
-
-                            Spacer(minLength: 0)
-
-                            Text(row.valueLabel)
-                                .font(PicoTypography.body.weight(.bold))
-                                .foregroundStyle(row.tier.valueColor)
-                                .monospacedDigit()
+                        Button("Retry") {
+                            onRetry()
                         }
-                        .padding(.horizontal, PicoSpacing.standard)
-                        .padding(.vertical, PicoSpacing.compact)
-                        .background(row.tier.rowBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
-                                .stroke(row.tier.rowBorder, lineWidth: 1)
-                        )
+                        .buttonStyle(PicoSecondaryButtonStyle())
+                    }
+                    .padding(.horizontal, PicoSpacing.cardPadding)
+                } else {
+                    VStack(spacing: PicoSpacing.iconTextGap) {
+                        ForEach(rows) { row in
+                            HStack(spacing: PicoSpacing.standard) {
+                                FishCatchIcon(
+                                    fish: row.fish,
+                                    size: 68,
+                                    imagePadding: 0,
+                                    showsChrome: false
+                                )
+
+                                Text(row.label)
+                                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                                    .foregroundStyle(PicoColors.textPrimary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.82)
+
+                                Spacer(minLength: 0)
+
+                                Text(row.rarityLabel)
+                                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                                    .foregroundStyle(row.fish.rarityTextColor)
+                                    .padding(.horizontal, PicoSpacing.compact)
+                                    .padding(.vertical, 4)
+                                    .background(row.fish.rarityBadgeBackground)
+                                    .clipShape(Capsule(style: .continuous))
+                            }
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 6)
+                            .background(row.fish.rowBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                                    .stroke(row.fish.rowBorder, lineWidth: 1)
+                            )
+                        }
                     }
                 }
             }
@@ -599,188 +728,190 @@ private struct BerryCollectionSuccessSheet: View {
         .padding(.horizontal, PicoSpacing.cardPadding)
         .padding(.top, PicoSpacing.section)
         .padding(.bottom, PicoSpacing.standard)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: SheetHeightPreferenceKey.self, value: proxy.size.height)
+            }
+        )
+        .onPreferenceChange(SheetHeightPreferenceKey.self) { height in
+            guard height > 0 else { return }
+            let roundedHeight = ceil(height)
+            guard abs(measuredHeight - roundedHeight) > 0.5 else { return }
+            measuredHeight = roundedHeight
+        }
     }
 }
 
-private struct BerryCollectionTierRow: Identifiable {
+private struct CaughtFishRow: Identifiable {
     let id: Int
-    let tier: BerryCollectionTier
+    let fishCatch: FishCatch
 
-    var label: String {
-        "\(tier.name) berry"
+    var fish: FishType {
+        fishCatch.fishType
     }
 
-    var valueLabel: String {
-        "+\(tier.value)"
+    var label: String {
+        fishCatch.displayName
     }
 
     var rarityLabel: String {
-        tier.rarityName
+        fishCatch.rarityLabel
     }
 }
 
-private enum BerryCollectionTier: Hashable {
-    case black
-    case white
-    case red
-
-    init(_ tier: BerryTier) {
-        switch tier {
-        case .black:
-            self = .black
-        case .white:
-            self = .white
-        case .red:
-            self = .red
-        }
-    }
-
-    var name: String {
-        switch self {
-        case .black:
-            "black"
-        case .white:
-            "white"
-        case .red:
-            "red"
-        }
-    }
-
-    var value: Int {
-        switch self {
-        case .black:
-            1
-        case .white:
-            2
-        case .red:
-            3
-        }
-    }
-
+private extension FishType {
     var rowBackground: Color {
         switch self {
-        case .black:
+        case .bass:
             PicoColors.softSurface.opacity(0.72)
-        case .white:
+        case .salmon:
             Color(hex: 0xEAF6DE).opacity(0.9)
-        case .red:
+        case .tuna:
             Color(hex: 0xFCE8CC).opacity(0.92)
         }
     }
 
     var rowBorder: Color {
         switch self {
-        case .black:
+        case .bass:
             PicoColors.border.opacity(0.42)
-        case .white:
+        case .salmon:
             PicoColors.primary.opacity(0.34)
-        case .red:
+        case .tuna:
             PicoColors.highlightBorder.opacity(0.36)
         }
     }
 
     var valueColor: Color {
         switch self {
-        case .black:
+        case .bass:
             PicoColors.textPrimary
-        case .white:
+        case .salmon:
             PicoColors.primary
-        case .red:
+        case .tuna:
             PicoColors.highlightBorder
         }
     }
 
     var rarityName: String {
         switch self {
-        case .black:
+        case .bass:
             "common"
-        case .white:
+        case .salmon:
             "uncommon"
-        case .red:
+        case .tuna:
             "rare"
         }
     }
 
     var rarityTextColor: Color {
         switch self {
-        case .black:
+        case .bass:
             PicoColors.textSecondary
-        case .white:
+        case .salmon:
             PicoColors.primary
-        case .red:
+        case .tuna:
             PicoColors.highlightBorder
         }
     }
 
     var rarityBadgeBackground: Color {
         switch self {
-        case .black:
+        case .bass:
             PicoColors.textSecondary.opacity(0.12)
-        case .white:
+        case .salmon:
             PicoColors.primary.opacity(0.14)
-        case .red:
+        case .tuna:
             PicoColors.highlight.opacity(0.18)
-        }
-    }
-
-    var fill: Color {
-        switch self {
-        case .black:
-            Color(hex: 0x252525)
-        case .white:
-            Color(hex: 0xFFFDF6)
-        case .red:
-            PicoColors.error
         }
     }
 
     var border: Color {
         switch self {
-        case .black:
+        case .bass:
             Color(hex: 0x111111)
-        case .white:
+        case .salmon:
             PicoColors.border
-        case .red:
+        case .tuna:
             PicoColors.error.opacity(0.68)
         }
     }
 
     var iconBackground: Color {
         switch self {
-        case .black:
+        case .bass:
             Color(hex: 0xEEF2E7)
-        case .white:
+        case .salmon:
             Color(hex: 0x7B8F62).opacity(0.28)
-        case .red:
+        case .tuna:
             Color(hex: 0xFBE7EA)
         }
     }
 
+    var imageResourceName: String {
+        switch self {
+        case .bass:
+            "Fish_Bass"
+        case .salmon:
+            "Fish_Salmon"
+        case .tuna:
+            "Fish_Tuna"
+        }
+    }
+
+    var imageResourceCandidates: [String] {
+        [
+            imageResourceName,
+            "fish/\(imageResourceName)",
+            "Icons/fish/\(imageResourceName)",
+            "\(imageResourceName).png",
+            "fish/\(imageResourceName).png",
+            "Icons/fish/\(imageResourceName).png"
+        ]
+    }
 }
 
-private struct BerryCollectionTierSwatch: View {
-    let tier: BerryCollectionTier
+private struct FishCatchIcon: View {
+    let fish: FishType
+    var size: CGFloat = 34
+    var imagePadding: CGFloat = 5
+    var showsChrome = true
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
-                .fill(tier.iconBackground)
+        iconContent
+            .frame(width: size, height: size)
+            .background {
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
+                        .fill(fish.iconBackground)
+                }
+            }
+            .overlay {
+                if showsChrome {
+                    RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
+                        .stroke(fish.border.opacity(0.34), lineWidth: 1)
+                }
+            }
+            .shadow(color: showsChrome ? fish.border.opacity(0.16) : .clear, radius: 4, x: 0, y: 2)
+            .accessibilityHidden(true)
+    }
 
-            Circle()
-                .fill(tier.fill)
-                .frame(width: 18, height: 18)
-                .overlay(
-                    Circle()
-                        .stroke(tier.border.opacity(0.72), lineWidth: 1)
-                )
+    @ViewBuilder
+    private var iconContent: some View {
+        if let image = fishImage {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .padding(imagePadding)
+        } else {
+            Image(systemName: "fish")
+                .font(.system(size: size * 0.62, weight: .semibold))
+                .foregroundStyle(fish.valueColor)
         }
-        .frame(width: 34, height: 34)
-        .overlay(
-            RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
-                .stroke(tier.border.opacity(0.34), lineWidth: 1)
-        )
-        .shadow(color: tier.border.opacity(0.16), radius: 4, x: 0, y: 2)
-        .accessibilityHidden(true)
+    }
+
+    private var fishImage: UIImage? {
+        fish.imageResourceCandidates.lazy.compactMap { UIImage(named: $0) }.first
     }
 }
 
@@ -1496,20 +1627,12 @@ private struct VillageHeroSection: View {
 }
 
 private struct HomeFocusBottomBar: View {
+    let mode: StartFocusCTA.Mode
     let isLoadingBalance: Bool
     let balanceNotice: String?
-    let hasPendingBerryRewards: Bool
-    let isLoadingPendingBerryRewards: Bool
-    let isCollectingBerries: Bool
     let incomingInviteCount: Int
-    let isFishingTestMode: Bool
-    let toggleFishingTestMode: () -> Void
-    let startFocus: () -> Void
-    let collectRewards: () -> Void
-
-    private var usesCollectMode: Bool {
-        hasPendingBerryRewards || isLoadingPendingBerryRewards
-    }
+    let mockViewFishAction: () -> Void
+    let action: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
@@ -1530,18 +1653,46 @@ private struct HomeFocusBottomBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            FishingTestToggleButton(
-                isFishingMode: isFishingTestMode,
-                action: toggleFishingTestMode
-            )
+            if mode == .startFocus {
+                Button(action: mockViewFishAction) {
+                    HStack(spacing: PicoSpacing.compact) {
+                        Image(systemName: "fish")
+                            .font(.system(size: 16, weight: .semibold))
+                            .accessibilityHidden(true)
+
+                        Text("View fish")
+                            .font(PicoTypography.body.weight(.bold))
+
+                        Spacer(minLength: 0)
+
+                        Text("Mock")
+                            .font(PicoTypography.caption.weight(.bold))
+                            .foregroundStyle(PicoColors.primary)
+                            .padding(.horizontal, PicoSpacing.compact)
+                            .padding(.vertical, 4)
+                            .background(PicoColors.primary.opacity(0.12))
+                            .clipShape(Capsule(style: .continuous))
+                    }
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .padding(.horizontal, PicoSpacing.standard)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 46)
+                    .background(PicoColors.surface.opacity(0.94))
+                    .clipShape(Capsule(style: .continuous))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(PicoColors.border, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
 
             StartFocusCTA(
-                mode: usesCollectMode ? .collectRewards : .startFocus,
+                mode: mode,
                 incomingInviteCount: incomingInviteCount,
-                isLoading: usesCollectMode && (isLoadingPendingBerryRewards || isCollectingBerries),
-                action: usesCollectMode ? collectRewards : startFocus
+                isLoading: false,
+                action: action
             )
-            .disabled(usesCollectMode && (isLoadingPendingBerryRewards || isCollectingBerries || !hasPendingBerryRewards))
         }
         .padding(.horizontal, 44)
         .padding(.top, PicoSpacing.compact)
@@ -1554,53 +1705,10 @@ private struct HomeFocusBottomBar: View {
     }
 }
 
-private struct FishingTestToggleButton: View {
-    let isFishingMode: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: PicoSpacing.iconTextGap) {
-                Image(systemName: "fish")
-                    .font(.system(size: 16, weight: .semibold))
-
-                Text(isFishingMode ? "Stop fishing test" : "Test fishing")
-                    .font(PicoTypography.body.weight(.semibold))
-
-                Spacer(minLength: PicoSpacing.compact)
-
-                Text(isFishingMode ? "On" : "Off")
-                    .font(PicoTypography.caption.weight(.bold))
-                    .foregroundStyle(isFishingMode ? PicoColors.textOnPrimary : PicoColors.textSecondary)
-                    .padding(.horizontal, PicoSpacing.iconTextGap)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(isFishingMode ? PicoColors.primary : PicoColors.softSurface)
-                    )
-            }
-            .foregroundStyle(PicoColors.textPrimary)
-            .padding(.horizontal, PicoSpacing.standard)
-            .frame(maxWidth: .infinity)
-            .frame(height: 44)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(PicoColors.surface)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(PicoColors.border, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(isFishingMode ? "Stop fishing test" : "Test fishing"))
-    }
-}
-
 private struct StartFocusCTA: View {
     enum Mode {
         case startFocus
-        case collectRewards
+        case viewFish
     }
 
     let mode: Mode
@@ -1612,8 +1720,8 @@ private struct StartFocusCTA: View {
         switch mode {
         case .startFocus:
             "Start Focus"
-        case .collectRewards:
-            "Collect berries"
+        case .viewFish:
+            "View fish"
         }
     }
 
@@ -1624,8 +1732,9 @@ private struct StartFocusCTA: View {
                     Text(title)
                         .font(.system(size: 22, weight: .bold, design: .rounded))
 
-                    if mode == .collectRewards {
-                        BerryBalanceIcon(size: 24)
+                    if mode == .viewFish {
+                        Image(systemName: "fish")
+                            .font(.system(size: 22, weight: .semibold))
                             .accessibilityHidden(true)
                     }
 
@@ -1661,16 +1770,16 @@ private struct StartFocusCTA: View {
         switch mode {
         case .startFocus:
             PicoColors.textOnPrimary
-        case .collectRewards:
-            PicoColors.textPrimary
+        case .viewFish:
+            PicoColors.textOnPrimary
         }
     }
 
     private var background: some View {
         Capsule(style: .continuous)
             .fill(
-                mode == .collectRewards
-                    ? PicoColors.highlightBackground
+                mode == .viewFish
+                    ? Color(hex: 0x54B8FF)
                     : PicoColors.primary
             )
     }
@@ -1678,7 +1787,7 @@ private struct StartFocusCTA: View {
     private var border: some View {
         Capsule(style: .continuous)
             .stroke(
-                mode == .collectRewards
+                mode == .viewFish
                     ? Color.clear
                     : Color.clear,
                 lineWidth: 1
@@ -1689,13 +1798,13 @@ private struct StartFocusCTA: View {
         switch mode {
         case .startFocus:
             PicoColors.primary.opacity(0.24)
-        case .collectRewards:
-            Color.clear
+        case .viewFish:
+            Color(hex: 0x54B8FF).opacity(0.22)
         }
     }
 }
 
-private struct StartFocusSheetHeightPreferenceKey: PreferenceKey {
+private struct SheetHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -1752,10 +1861,10 @@ private struct StartFocusSheet: View {
         .background(PicoColors.appBackground.ignoresSafeArea())
         .background(
             GeometryReader { proxy in
-                Color.clear.preference(key: StartFocusSheetHeightPreferenceKey.self, value: proxy.size.height)
+                Color.clear.preference(key: SheetHeightPreferenceKey.self, value: proxy.size.height)
             }
         )
-        .onPreferenceChange(StartFocusSheetHeightPreferenceKey.self) { height in
+        .onPreferenceChange(SheetHeightPreferenceKey.self) { height in
             guard usesContentSizedLayout, height > 0 else { return }
             let roundedHeight = ceil(height)
             guard abs(measuredHeight - roundedHeight) > 0.5 else { return }
@@ -2785,13 +2894,14 @@ private struct ActiveSessionTimerStrip: View {
 
 private struct FocusCompleteOverlay: View {
     let session: FocusSession
+    let done: () -> Void
 
     var body: some View {
         ZStack {
             PicoColors.appBackground
                 .ignoresSafeArea()
 
-            FocusCompleteCard(session: session)
+            FocusCompleteCard(session: session, done: done)
                 .padding(.horizontal, PicoSpacing.standard)
                 .frame(maxWidth: 350)
         }
@@ -2806,6 +2916,7 @@ private struct FocusCompleteCard: View {
     @EnvironmentObject private var focusStore: FocusStore
 
     let session: FocusSession
+    let done: () -> Void
 
     private var avatarConfig: AvatarConfig {
         sessionStore.profile?.avatarConfig ?? AvatarCatalog.defaultConfig
@@ -2854,7 +2965,7 @@ private struct FocusCompleteCard: View {
                 .padding(.top, PicoSpacing.standard)
             } else {
                 Button("Done") {
-                    focusStore.resetResult()
+                    done()
                 }
                 .buttonStyle(PicoPrimaryButtonStyle())
                 .padding(.top, PicoSpacing.standard)
@@ -2880,7 +2991,7 @@ private struct FocusCompleteCard: View {
     }
 
     private var scoreLabel: String {
-        session.status == .completed ? "Berries pending" : formattedBerryCount(0)
+        session.status == .completed ? "Fish caught" : formattedBerryCount(0)
     }
 
     private var streakLabel: String {
@@ -3360,12 +3471,422 @@ private struct BerryAmountLabel: View {
     }
 }
 
+private struct FishingPage: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var fishStore: FishStore
+
+    private var fishCounts: [FishType: Int] {
+        Dictionary(
+            uniqueKeysWithValues: FishType.allCases.map { fishType in
+                (fishType, fishStore.inventory.filter { $0.fishType == fishType }.count)
+            }
+        )
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: PicoSpacing.section) {
+                if let notice = fishStore.notice {
+                    ProfileNoticeCard(text: notice)
+                }
+
+                ForEach(FishingTier.allCases) { tier in
+                    FishingTierSection(
+                        tier: tier,
+                        fish: FishingCatalogFish.fish(in: tier),
+                        counts: fishCounts,
+                        isLoading: fishStore.isLoadingInventory
+                    )
+                }
+            }
+            .padding(.horizontal, PicoSpacing.standard)
+            .padding(.vertical, PicoSpacing.section)
+            .padding(.bottom, PicoSpacing.largeSection)
+        }
+        .picoScreenBackground()
+        .task {
+            await loadFishingData()
+        }
+        .refreshable {
+            await loadFishingData()
+        }
+    }
+
+    private func loadFishingData() async {
+        await fishStore.loadInventory(for: sessionStore.session)
+    }
+}
+
+private enum FishingTier: String, CaseIterable, Identifiable {
+    case common
+    case rare
+    case superRare = "super rare"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .common:
+            "Common"
+        case .rare:
+            "Rare"
+        case .superRare:
+            "Super Rare"
+        }
+    }
+
+    var directoryName: String {
+        switch self {
+        case .rare:
+            "Rare"
+        case .superRare:
+            "super rare"
+        default:
+            rawValue
+        }
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .common:
+            PicoColors.primary
+        case .rare:
+            PicoColors.highlightBorder
+        case .superRare:
+            PicoColors.secondaryAccent
+        }
+    }
+
+    var cardBackground: Color {
+        switch self {
+        case .common:
+            Color(hex: 0xF3FAEA)
+        case .rare:
+            Color(hex: 0xFFF7E8)
+        case .superRare:
+            Color(hex: 0xF2F0FF)
+        }
+    }
+
+    var badgeBackground: Color {
+        accentColor.opacity(0.14)
+    }
+
+    var sectionIconName: String {
+        switch self {
+        case .common:
+            "fish"
+        case .rare:
+            "star.fill"
+        case .superRare:
+            "crown.fill"
+        }
+    }
+}
+
+private struct FishingCatalogFish: Identifiable {
+    let tier: FishingTier
+    let displayName: String
+    let assetName: String
+    let matchingFishType: FishType?
+
+    var id: String {
+        "\(tier.rawValue)-\(assetName)"
+    }
+
+    var imageResourceCandidates: [String] {
+        [
+            assetName,
+            "\(assetName).png",
+            "fish/\(tier.directoryName)/\(assetName)",
+            "fish/\(tier.directoryName)/\(assetName).png",
+            "Icons/fish/\(tier.directoryName)/\(assetName)",
+            "Icons/fish/\(tier.directoryName)/\(assetName).png"
+        ]
+    }
+
+    static func fish(in tier: FishingTier) -> [FishingCatalogFish] {
+        all.filter { $0.tier == tier }
+    }
+
+    static let all: [FishingCatalogFish] = [
+        FishingCatalogFish(tier: .common, displayName: "Bass", assetName: "Fish_Bass", matchingFishType: .bass),
+        FishingCatalogFish(tier: .common, displayName: "Crab", assetName: "SeaShellfish_Crab_Red", matchingFishType: nil),
+        FishingCatalogFish(tier: .common, displayName: "Halibut", assetName: "Fish_Halibut", matchingFishType: nil),
+        FishingCatalogFish(tier: .common, displayName: "Herring", assetName: "Fish_Herring", matchingFishType: nil),
+        FishingCatalogFish(tier: .common, displayName: "Salmon", assetName: "Fish_Salmon", matchingFishType: .salmon),
+        FishingCatalogFish(tier: .common, displayName: "Shrimp", assetName: "SeaShellfish_Shrimp_Pink", matchingFishType: nil),
+
+        FishingCatalogFish(tier: .rare, displayName: "Tuna", assetName: "Fish_Tuna", matchingFishType: .tuna),
+        FishingCatalogFish(tier: .rare, displayName: "Anglerfish", assetName: "DeepSeaFish_AnglerFish", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Butterflyfish", assetName: "TropicalFish_ButterflyFish", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Clownfish", assetName: "TropicalFish_Clownfish_Orange", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Eel", assetName: "Fish_Eel", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Jellyfish", assetName: "SeaInvertebrate_Jellyfish_Blue", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Lionfish", assetName: "TropicalFish_LionFish", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Lobster", assetName: "SeaShellfish_Lobster_Red", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Marlin", assetName: "Fish_MarlinSwordfish", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Nautilus", assetName: "SeaShellfish_Nautilus", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Octopus", assetName: "SeaInvertebrate_Octopus_Orange", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Pufferfish", assetName: "Fish_PufferFish", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Seahorse", assetName: "Fish_SeaHorse_Yellow", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Squid", assetName: "SeaInvertebrate_Squid_Pink", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Stingray", assetName: "Fish_StingRay", matchingFishType: nil),
+        FishingCatalogFish(tier: .rare, displayName: "Turtle", assetName: "SeaReptile_Turtle", matchingFishType: nil),
+
+        FishingCatalogFish(tier: .superRare, displayName: "Blobfish", assetName: "DeepSeaFish_BlobFish", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Blue Lobster", assetName: "SeaShellfish_Lobster_Blue", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Dolphin", assetName: "SeaMammal_Dolphin", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Great White", assetName: "Fish_GreatWhiteShark", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Hammerhead", assetName: "Fish_HammerHeadShark", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Narwhal", assetName: "SeaMammal_Narwhale", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Orca", assetName: "SeaMammal_Orca", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Sunfish", assetName: "Fish_Sunfish", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Whale", assetName: "SeaMammal_Whale", matchingFishType: nil),
+        FishingCatalogFish(tier: .superRare, displayName: "Whale Shark", assetName: "Fish_WhaleShark", matchingFishType: nil)
+    ]
+}
+
+private struct FishingTierSection: View {
+    let tier: FishingTier
+    let fish: [FishingCatalogFish]
+    let counts: [FishType: Int]
+    let isLoading: Bool
+
+    private var unlockedCount: Int {
+        fish.filter { catalogFish in
+            guard let matchingFishType = catalogFish.matchingFishType else { return false }
+            return counts[matchingFishType, default: 0] > 0
+        }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            FishingSectionHeader(
+                iconName: tier.sectionIconName,
+                title: tier.title,
+                countText: "\(unlockedCount) / \(fish.count)",
+                countIcon: "archivebox.fill",
+                accentColor: tier.accentColor,
+                isLoading: isLoading
+            )
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 94), spacing: PicoSpacing.iconTextGap)],
+                spacing: PicoSpacing.iconTextGap
+            ) {
+                ForEach(fish) { catalogFish in
+                    FishingCollectionTile(
+                        fish: catalogFish,
+                        count: count(for: catalogFish)
+                    )
+                }
+            }
+        }
+        .picoCreamCard(
+            cornerRadius: PicoRadius.large,
+            showsShadow: false,
+            padding: PicoCreamCardStyle.contentPadding,
+            background: tier.cardBackground,
+            border: tier.accentColor.opacity(0.3)
+        )
+    }
+
+    private func count(for catalogFish: FishingCatalogFish) -> Int {
+        guard let matchingFishType = catalogFish.matchingFishType else { return 0 }
+        return counts[matchingFishType, default: 0]
+    }
+}
+
+private struct FishingCollectionTile: View {
+    let fish: FishingCatalogFish
+    let count: Int
+
+    private var isUnlocked: Bool {
+        count > 0
+    }
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.iconTextGap) {
+            FishingCatalogIcon(
+                fish: fish,
+                isUnlocked: isUnlocked,
+                size: 90
+            )
+            .frame(height: 94)
+
+            VStack(spacing: 6) {
+                Text(isUnlocked ? fish.displayName : "???")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.68)
+
+                FishingRarityBadge(
+                    rarityName: fish.tier.title.lowercased(),
+                    textColor: fish.tier.accentColor,
+                    background: fish.tier.badgeBackground
+                )
+
+                if isUnlocked {
+                    Text("x\(count)")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .monospacedDigit()
+                } else {
+                    Label("Locked", systemImage: "lock.fill")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 214)
+        .padding(.horizontal, PicoSpacing.compact)
+        .padding(.vertical, PicoSpacing.standard)
+        .background(tileBackground)
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                .stroke(tileBorder, lineWidth: 1)
+        )
+    }
+
+    private var tileBackground: Color {
+        if !isUnlocked {
+            return PicoColors.softSurface.opacity(0.72)
+        }
+
+        return PicoColors.surface.opacity(0.56)
+    }
+
+    private var tileBorder: Color {
+        if !isUnlocked {
+            return PicoColors.border.opacity(0.7)
+        }
+
+        return fish.tier.accentColor.opacity(0.46)
+    }
+}
+
+private struct FishingSectionHeader: View {
+    let iconName: String
+    let title: String
+    let countText: String
+    let countIcon: String?
+    var accentColor: Color = PicoColors.textSecondary
+    let isLoading: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: PicoSpacing.iconTextGap) {
+            Image(systemName: iconName)
+                .font(.system(size: 23, weight: .bold))
+                .foregroundStyle(accentColor)
+                .frame(width: 28, height: 36, alignment: .top)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(PicoTypography.sectionTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+
+            Spacer(minLength: 0)
+
+            if isLoading {
+                ProgressView()
+                    .tint(PicoColors.primary)
+                    .frame(height: 36)
+            } else {
+                HStack(spacing: 6) {
+                    if let countIcon {
+                        Image(systemName: countIcon)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(accentColor)
+                    }
+
+                    Text(countText)
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, PicoSpacing.iconTextGap)
+                .padding(.vertical, 8)
+                .background(PicoColors.softSurface.opacity(0.76))
+                .clipShape(Capsule(style: .continuous))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(PicoColors.border.opacity(0.84), lineWidth: 1)
+                )
+            }
+        }
+    }
+}
+
+private struct FishingCatalogIcon: View {
+    let fish: FishingCatalogFish
+    let isUnlocked: Bool
+    var size: CGFloat
+
+    var body: some View {
+        Group {
+            if let fishImage {
+                Image(uiImage: fishImage)
+                    .resizable()
+                    .scaledToFit()
+                    .saturation(isUnlocked ? 1 : 0)
+                    .brightness(isUnlocked ? 0 : -0.98)
+                    .contrast(isUnlocked ? 1 : 1.8)
+                    .opacity(1)
+            } else {
+                Image(systemName: "fish")
+                    .font(.system(size: size * 0.66, weight: .bold))
+                    .foregroundStyle(isUnlocked ? fish.tier.accentColor : Color.black.opacity(0.94))
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private var fishImage: UIImage? {
+        fish.imageResourceCandidates.lazy.compactMap { UIImage(named: $0) }.first
+    }
+}
+
+private struct FishingRarityBadge: View {
+    let rarityName: String
+    let textColor: Color
+    let background: Color
+
+    var body: some View {
+        Text(rarityName)
+            .font(.system(size: 13, weight: .bold, design: .rounded))
+            .foregroundStyle(textColor)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .padding(.horizontal, PicoSpacing.compact)
+            .padding(.vertical, 5)
+            .background(background)
+            .clipShape(Capsule(style: .continuous))
+    }
+}
+
 private struct StorePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var berryStore: BerryStore
+    @EnvironmentObject private var fishStore: FishStore
+    @State private var selectedMode: StoreMode = .buy
 
     private var purchasableHats: [AvatarHat] {
         AvatarHat.allCases.filter { $0 != .none }
+    }
+
+    private var fishGroups: [StoreFishGroup] {
+        StoreFishGroup.groups(from: fishStore.inventory)
     }
 
     var body: some View {
@@ -3377,26 +3898,49 @@ private struct StorePage: View {
                     ProfileNoticeCard(text: notice)
                 }
 
-                VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-                    StoreHatsSectionHeader()
+                if let notice = fishStore.notice {
+                    ProfileNoticeCard(text: notice)
+                }
 
-                    VStack(spacing: PicoSpacing.compact) {
-                        ForEach(purchasableHats) { hat in
-                            StoreHatRow(
-                                hat: hat,
-                                berryBalance: berryStore.balance.berries,
-                                isOwned: hat.isOwned(in: sessionStore.ownedHats),
-                                isPurchasing: berryStore.purchasingHat == hat,
-                                isPurchaseDisabled: berryStore.purchasingHat != nil || berryStore.isLoadingBalance || sessionStore.session == nil
-                            ) {
-                                purchase(hat)
-                            }
-                        }
+                Picker("Store mode", selection: $selectedMode) {
+                    ForEach(StoreMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
                     }
                 }
-                .picoCreamCard(
-                    padding: PicoCreamCardStyle.contentPadding
-                )
+                .pickerStyle(.segmented)
+
+                Group {
+                    switch selectedMode {
+                    case .buy:
+                        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+                            StoreHatsSectionHeader()
+
+                            VStack(spacing: PicoSpacing.compact) {
+                                ForEach(purchasableHats) { hat in
+                                    StoreHatRow(
+                                        hat: hat,
+                                        berryBalance: berryStore.balance.berries,
+                                        isOwned: hat.isOwned(in: sessionStore.ownedHats),
+                                        isPurchasing: berryStore.purchasingHat == hat,
+                                        isPurchaseDisabled: berryStore.purchasingHat != nil || berryStore.isLoadingBalance || sessionStore.session == nil
+                                    ) {
+                                        purchase(hat)
+                                    }
+                                }
+                            }
+                        }
+                        .picoCreamCard(
+                            padding: PicoCreamCardStyle.contentPadding
+                        )
+                    case .sell:
+                        StoreFishSection(
+                            groups: fishGroups,
+                            isLoading: fishStore.isLoadingInventory,
+                            isSelling: fishStore.isSellingFish,
+                            sellGroup: sellFishGroup
+                        )
+                    }
+                }
             }
             .padding(.horizontal, PicoSpacing.standard)
             .padding(.vertical, PicoSpacing.section)
@@ -3406,6 +3950,7 @@ private struct StorePage: View {
         .task {
             await sessionStore.loadProfileIfNeeded()
             await berryStore.loadBalance(for: sessionStore.session)
+            await fishStore.loadInventory(for: sessionStore.session)
         }
     }
 
@@ -3440,6 +3985,188 @@ private struct StorePage: View {
             guard let result = await berryStore.purchaseAvatarHat(hat, for: sessionStore.session) else { return }
             sessionStore.applyOwnedHats(result.ownedHats)
         }
+    }
+
+    private func sellFishGroup(_ group: StoreFishGroup) {
+        guard let fishCatch = group.catches.first else { return }
+        sellFish([fishCatch])
+    }
+
+    private func sellFish(_ catches: [FishCatch]) {
+        let catchIDs = catches.map(\.id)
+        Task {
+            guard let result = await fishStore.sellFish(catchIDs: catchIDs, for: sessionStore.session) else { return }
+            berryStore.applyBalance(result.balance)
+            await fishStore.loadInventory(for: sessionStore.session)
+        }
+    }
+}
+
+private enum StoreMode: String, CaseIterable, Identifiable {
+    case buy
+    case sell
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .buy:
+            "Buy"
+        case .sell:
+            "Sell"
+        }
+    }
+}
+
+private struct StoreFishGroup: Identifiable {
+    var id: FishType { fishType }
+
+    let fishType: FishType
+    let catches: [FishCatch]
+
+    var count: Int {
+        catches.count
+    }
+
+    var totalValue: Int {
+        catches.reduce(0) { $0 + $1.sellValue }
+    }
+
+    var unitValue: Int {
+        catches.first?.sellValue ?? fishType.sellValue
+    }
+
+    static func groups(from catches: [FishCatch]) -> [StoreFishGroup] {
+        FishType.allCases.compactMap { fishType in
+            let matchingCatches = catches.filter { $0.fishType == fishType }
+            guard !matchingCatches.isEmpty else { return nil }
+            return StoreFishGroup(fishType: fishType, catches: matchingCatches)
+        }
+    }
+}
+
+private struct StoreFishSection: View {
+    let groups: [StoreFishGroup]
+    let isLoading: Bool
+    let isSelling: Bool
+    let sellGroup: (StoreFishGroup) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            HStack(spacing: PicoSpacing.compact) {
+                Image(systemName: "fish")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(width: 24, height: 24)
+
+                Text("Your fish")
+                    .font(PicoTypography.cardTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+
+                Spacer(minLength: 0)
+
+                if isLoading {
+                    ProgressView()
+                        .tint(PicoColors.primary)
+                }
+            }
+
+            if groups.isEmpty && !isLoading {
+                Text("No fish to sell yet.")
+                    .font(PicoTypography.body)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, PicoSpacing.tiny)
+            } else {
+                VStack(spacing: PicoSpacing.compact) {
+                    ForEach(groups) { group in
+                        StoreFishGroupRow(
+                            group: group,
+                            isSelling: isSelling,
+                            sell: {
+                                sellGroup(group)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        .picoCreamCard(
+            padding: PicoCreamCardStyle.contentPadding
+        )
+    }
+}
+
+private struct StoreFishGroupRow: View {
+    let group: StoreFishGroup
+    let isSelling: Bool
+    let sell: () -> Void
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.standard) {
+            fishIcon
+
+            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                Text(group.fishType.displayName)
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+
+                BerryAmountLabel(
+                    count: group.unitValue,
+                    font: PicoTypography.caption.weight(.bold),
+                    iconSize: 15,
+                    textColor: PicoColors.textPrimary
+                )
+            }
+
+            Spacer(minLength: PicoSpacing.compact)
+
+            VStack(alignment: .trailing, spacing: PicoSpacing.compact) {
+                Button("Sell") {
+                    sell()
+                }
+                .buttonStyle(StoreBuyButtonStyle())
+                .disabled(isSelling)
+                .accessibilityLabel(Text("Sell one \(group.fishType.displayName)"))
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
+        .background(group.fishType.rowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                .stroke(group.fishType.rowBorder, lineWidth: 1)
+        )
+    }
+
+    private var fishIcon: some View {
+        ZStack {
+            FishCatchIcon(
+                fish: group.fishType,
+                size: 68,
+                imagePadding: 0,
+                showsChrome: false
+            )
+
+            Text("x \(group.count)")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(PicoColors.textPrimary)
+                .monospacedDigit()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(PicoColors.surface.opacity(0.92))
+                .clipShape(Capsule(style: .continuous))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(group.fishType.rowBorder, lineWidth: 1)
+                )
+                .offset(x: 2, y: 2)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        }
+        .frame(width: 72, height: 72)
     }
 }
 
