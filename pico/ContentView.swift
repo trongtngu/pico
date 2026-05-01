@@ -390,6 +390,7 @@ private struct HomePage: View {
     @State private var fishCatchSheetHeight: CGFloat = 430
     @State private var isFishCatchSheetPresented = false
     @State private var isFocusResultOverlayDismissed = false
+    @State private var villageMapStyle: VillageMapStyle = .originalIsland
 
     var body: some View {
         ZStack {
@@ -403,8 +404,10 @@ private struct HomePage: View {
                                 isLoading: villageStore.isLoadingResidents,
                                 notice: villageStore.notice,
                                 isFishingMode: focusStore.activeSession != nil,
+                                mapStyle: villageMapStyle,
                                 height: villageHeight(for: viewport.size.height)
                             )
+                            .gesture(villageMapSwipeGesture)
 
                         }
                         .padding(.horizontal, PicoSpacing.standard)
@@ -594,6 +597,22 @@ private struct HomePage: View {
 
     private func villageHeight(for viewportHeight: CGFloat) -> CGFloat {
         max(280, viewportHeight - 54)
+    }
+
+    private var villageMapSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 28)
+            .onEnded { value in
+                let horizontalDistance = value.translation.width
+                let verticalDistance = value.translation.height
+                guard abs(horizontalDistance) > 60,
+                      abs(horizontalDistance) > abs(verticalDistance) * 1.25 else {
+                    return
+                }
+
+                withAnimation(.snappy(duration: 0.22)) {
+                    villageMapStyle = horizontalDistance > 0 ? .sandIsland : .originalIsland
+                }
+            }
     }
 
     private func viewCompletedSessionFish() {
@@ -861,21 +880,7 @@ private struct CaughtFishRow: Identifiable {
     }
 
     var imageResourceCandidates: [String] {
-        let directCandidates = [
-            imageResourceName,
-            "\(imageResourceName).png"
-        ]
-
-        let tierCandidates = FishingTier(rarity: rarity)?.directoryNames.flatMap { directoryName in
-            [
-                "fish/\(directoryName)/\(imageResourceName)",
-                "fish/\(directoryName)/\(imageResourceName).png",
-                "Icons/fish/\(directoryName)/\(imageResourceName)",
-                "Icons/fish/\(directoryName)/\(imageResourceName).png"
-            ]
-        } ?? []
-
-        return directCandidates + tierCandidates
+        fishImageResourceCandidates(named: imageResourceName)
     }
 }
 
@@ -1580,6 +1585,7 @@ private struct VillageHeroSection: View {
     let isLoading: Bool
     let notice: String?
     let isFishingMode: Bool
+    let mapStyle: VillageMapStyle
     let height: CGFloat
 
     var body: some View {
@@ -1587,7 +1593,8 @@ private struct VillageHeroSection: View {
             VillageView(
                 residents: residents,
                 currentUserProfile: currentUserProfile,
-                isFishingMode: isFishingMode
+                isFishingMode: isFishingMode,
+                mapStyle: mapStyle
             )
                 .frame(maxWidth: .infinity)
                 .frame(height: height)
@@ -3522,17 +3529,6 @@ private enum FishingTier: String, CaseIterable, Identifiable {
         }
     }
 
-    var directoryNames: [String] {
-        switch self {
-        case .common:
-            ["common"]
-        case .rare:
-            ["Rare", "rare"]
-        case .ultraRare:
-            ["super rare", "ultra rare", "Ultra Rare"]
-        }
-    }
-
     var accentColor: Color {
         switch self {
         case .common:
@@ -3582,6 +3578,17 @@ private enum FishingTier: String, CaseIterable, Identifiable {
     }
 }
 
+private func fishImageResourceCandidates(named assetName: String) -> [String] {
+    [
+        "Icons/fish/\(assetName)",
+        "Icons/fish/\(assetName).png",
+        "fish/\(assetName)",
+        "fish/\(assetName).png",
+        assetName,
+        "\(assetName).png"
+    ]
+}
+
 private struct FishingCatalogFish: Identifiable {
     let seaCritterID: FishID
     let tier: FishingTier
@@ -3594,21 +3601,7 @@ private struct FishingCatalogFish: Identifiable {
     }
 
     var imageResourceCandidates: [String] {
-        let directCandidates = [
-            assetName,
-            "\(assetName).png"
-        ]
-
-        let tierCandidates = tier.directoryNames.flatMap { directoryName in
-            [
-                "fish/\(directoryName)/\(assetName)",
-                "fish/\(directoryName)/\(assetName).png",
-                "Icons/fish/\(directoryName)/\(assetName)",
-                "Icons/fish/\(directoryName)/\(assetName).png"
-            ]
-        }
-
-        return directCandidates + tierCandidates
+        fishImageResourceCandidates(named: assetName)
     }
 
     init?(
@@ -4040,21 +4033,7 @@ private struct StoreFishGroup: Identifiable {
     }
 
     var imageResourceCandidates: [String] {
-        let directCandidates = [
-            assetName,
-            "\(assetName).png"
-        ]
-
-        let tierCandidates = FishingTier(rarity: rarity)?.directoryNames.flatMap { directoryName in
-            [
-                "fish/\(directoryName)/\(assetName)",
-                "fish/\(directoryName)/\(assetName).png",
-                "Icons/fish/\(directoryName)/\(assetName)",
-                "Icons/fish/\(directoryName)/\(assetName).png"
-            ]
-        } ?? []
-
-        return directCandidates + tierCandidates
+        fishImageResourceCandidates(named: assetName)
     }
 
     var rowBackground: Color {

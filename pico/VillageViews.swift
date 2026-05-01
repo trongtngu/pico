@@ -8,6 +8,11 @@
 import SpriteKit
 import SwiftUI
 
+enum VillageMapStyle: String {
+    case originalIsland
+    case sandIsland
+}
+
 struct VillagePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
@@ -54,6 +59,7 @@ struct VillageView: View {
     let residents: [VillageResident]
     let currentUserProfile: UserProfile?
     var isFishingMode = false
+    var mapStyle: VillageMapStyle = .originalIsland
 
     private static let gridSize = 7
     private var gridResidents: [VillageResident] {
@@ -72,7 +78,7 @@ struct VillageView: View {
         let residentID = gridResidents
             .map { "\($0.id.uuidString)-\($0.profile.avatarConfig.selectedHat.rawValue)-\($0.bondLevel)" }
             .joined(separator: "|")
-        return "\(rewardSeed)-\(isFishingMode)-\(residentID)"
+        return "\(rewardSeed)-\(isFishingMode)-\(mapStyle.rawValue)-\(residentID)"
     }
 
     private var rewardSeed: String {
@@ -88,7 +94,8 @@ struct VillageView: View {
                     gridSize: Self.gridSize,
                     residents: gridResidents,
                     rewardSeed: rewardSeed,
-                    isFishingMode: isFishingMode
+                    isFishingMode: isFishingMode,
+                    mapStyle: mapStyle
                 ),
                 options: [.allowsTransparency]
             )
@@ -142,30 +149,66 @@ private final class VillageScene: SKScene {
         2: 4,
         3: 5
     ]
-    private static let mainFishingSpot = FishingSpot(
+    private static let sandIslandWaterTiles: Set<TileCoordinate> = [
+        TileCoordinate(row: 0, column: 0),
+        TileCoordinate(row: 0, column: 1),
+        TileCoordinate(row: 0, column: 5),
+        TileCoordinate(row: 0, column: 6),
+        TileCoordinate(row: 1, column: 0),
+        TileCoordinate(row: 1, column: 6),
+        TileCoordinate(row: 2, column: 6),
+        TileCoordinate(row: 4, column: 0),
+        TileCoordinate(row: 5, column: 0),
+        TileCoordinate(row: 5, column: 6),
+        TileCoordinate(row: 6, column: 0),
+        TileCoordinate(row: 6, column: 1),
+        TileCoordinate(row: 6, column: 6)
+    ]
+    private static let originalMainFishingSpot = FishingSpot(
         tile: TileCoordinate(row: 1, column: 2),
         animationRow: 1,
         isFlipped: true
     )
-    private static let villagerFishingSpots = [
+    private static let originalVillagerFishingSpots = [
         FishingSpot(tile: TileCoordinate(row: 2, column: 3), animationRow: 1, isFlipped: true),
         FishingSpot(tile: TileCoordinate(row: 3, column: 4), animationRow: 1, isFlipped: true),
         FishingSpot(tile: TileCoordinate(row: 4, column: 5), animationRow: 3, isFlipped: true)
+    ]
+    private static let sandMainFishingSpot = FishingSpot(
+        tile: TileCoordinate(row: 2, column: 5),
+        animationRow: 1,
+        isFlipped: true
+    )
+    private static let sandVillagerFishingSpots = [
+        FishingSpot(tile: TileCoordinate(row: 1, column: 1), animationRow: 1, isFlipped: false),
+        FishingSpot(tile: TileCoordinate(row: 1, column: 5), animationRow: 1, isFlipped: true),
+        FishingSpot(tile: TileCoordinate(row: 5, column: 1), animationRow: 1, isFlipped: false),
+        FishingSpot(tile: TileCoordinate(row: 5, column: 5), animationRow: 1, isFlipped: true),
+        FishingSpot(tile: TileCoordinate(row: 6, column: 5), animationRow: 3, isFlipped: true)
     ]
 
     private let gridSize: Int
     private let residents: [VillageResident]
     private let rewardSeed: String
     private let isFishingMode: Bool
+    private let mapStyle: VillageMapStyle
     private var renderedSize: CGSize = .zero
     private var villagers: [VillagerNode] = []
     private var lastUpdateTime: TimeInterval?
 
-    init(size: CGSize, gridSize: Int, residents: [VillageResident], rewardSeed: String, isFishingMode: Bool) {
+    init(
+        size: CGSize,
+        gridSize: Int,
+        residents: [VillageResident],
+        rewardSeed: String,
+        isFishingMode: Bool,
+        mapStyle: VillageMapStyle
+    ) {
         self.gridSize = gridSize
         self.residents = Array(residents.prefix(gridSize * gridSize))
         self.rewardSeed = rewardSeed
         self.isFishingMode = isFishingMode
+        self.mapStyle = mapStyle
         super.init(size: size)
         scaleMode = .resizeFill
         backgroundColor = .clear
@@ -205,11 +248,36 @@ private final class VillageScene: SKScene {
             tileAnchorPoint: Self.tileAnchorPoint
         )
         let grassTexture = Self.texture(named: "GrassBlock_3.png", in: Self.gridAtlas(named: "Grass"))
+        let sandAtlas = Self.gridAtlas(named: "SandBlocks")
+        let sandTexture = Self.texture(named: "GridTile_Sand_Discrete.png", in: sandAtlas)
         let waterTexture = Self.texture(named: "GroundTile_Water.png", in: Self.gridAtlas(named: "Water"))
 
         for tile in TileCoordinate.all(in: gridSize) {
-            let texture = isWaterTile(tile) ? waterTexture : grassTexture
+            let texture = texture(
+                for: tile,
+                grassTexture: grassTexture,
+                sandTexture: sandTexture,
+                waterTexture: waterTexture
+            )
             addTileSprite(texture: texture, tile: tile, layout: layout)
+        }
+    }
+
+    private func texture(
+        for tile: TileCoordinate,
+        grassTexture: SKTexture,
+        sandTexture: SKTexture,
+        waterTexture: SKTexture
+    ) -> SKTexture {
+        guard !isWaterTile(tile) else {
+            return waterTexture
+        }
+
+        switch mapStyle {
+        case .originalIsland:
+            return grassTexture
+        case .sandIsland:
+            return sandTexture
         }
     }
 
@@ -229,11 +297,20 @@ private final class VillageScene: SKScene {
     }
 
     private func isWaterTile(_ tile: TileCoordinate) -> Bool {
-        guard gridSize == 7, let waterStartColumn = Self.waterStartColumnByRow[tile.row] else {
+        guard gridSize == 7 else {
             return false
         }
 
-        return tile.column >= waterStartColumn
+        switch mapStyle {
+        case .originalIsland:
+            guard let waterStartColumn = Self.waterStartColumnByRow[tile.row] else {
+                return false
+            }
+
+            return tile.column >= waterStartColumn
+        case .sandIsland:
+            return Self.sandIslandWaterTiles.contains(tile)
+        }
     }
 
     private var walkableTiles: [TileCoordinate] {
@@ -241,7 +318,12 @@ private final class VillageScene: SKScene {
     }
 
     private var fishingSpots: [FishingSpot] {
-        [Self.mainFishingSpot] + Self.villagerFishingSpots
+        switch mapStyle {
+        case .originalIsland:
+            return [Self.originalMainFishingSpot] + Self.originalVillagerFishingSpots
+        case .sandIsland:
+            return [Self.sandMainFishingSpot] + Self.sandVillagerFishingSpots
+        }
     }
 
     private func addTileSprite(
