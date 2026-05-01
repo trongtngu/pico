@@ -31,7 +31,7 @@ struct PendingBerryReward: Identifiable, Equatable {
     let createdAt: Date?
 }
 
-enum BerryBushBerryTier: Equatable, Hashable {
+enum BerryTier: Equatable, Hashable {
     case black
     case white
     case red
@@ -48,7 +48,7 @@ struct BerryRewardSummary: Equatable {
         totalBerryValue > 0 && (blackBerries > 0 || whiteBerries > 0 || redBerries > 0)
     }
 
-    var bushBerryTiers: [BerryBushBerryTier] {
+    var berryTiers: [BerryTier] {
         Array(repeating: .red, count: redBerries)
             + Array(repeating: .white, count: whiteBerries)
             + Array(repeating: .black, count: blackBerries)

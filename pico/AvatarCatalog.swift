@@ -188,6 +188,7 @@ enum AvatarFinalAtlasKind {
     case idleRegular
     case idleHappy
     case walkRegular
+    case fishing
 
     var rawBaseName: String {
         switch self {
@@ -197,6 +198,8 @@ enum AvatarFinalAtlasKind {
             "Char_Idle_Happy"
         case .walkRegular:
             "Char_Walk_Regular"
+        case .fishing:
+            "Layer0_Body_Blank"
         }
     }
 
@@ -206,6 +209,8 @@ enum AvatarFinalAtlasKind {
             "Idle"
         case .walkRegular:
             "Walk"
+        case .fishing:
+            "Fishing"
         }
     }
 
@@ -215,7 +220,7 @@ enum AvatarFinalAtlasKind {
         switch self {
         case .idleRegular, .idleHappy:
             8
-        case .walkRegular:
+        case .walkRegular, .fishing:
             6
         }
     }
@@ -247,6 +252,14 @@ enum AvatarLayeredAtlas {
         scarf: AvatarScarf?,
         filteringMode: SKTextureFilteringMode
     ) -> AvatarLayeredFrames {
+        if kind == .fishing {
+            return fishingFrames(
+                hat: hat,
+                scarf: scarf,
+                filteringMode: filteringMode
+            )
+        }
+
         let layers = rawLayerNames(kind: kind, hat: hat, scarf: scarf).map { rawLayerName in
             AvatarTextureLayer(
                 frames: sheetFrames(
@@ -261,6 +274,46 @@ enum AvatarLayeredAtlas {
             rowCount: kind.rowCount,
             frameCount: kind.frameCount,
             layers: layers
+        )
+    }
+
+    private static func fishingFrames(
+        hat: AvatarHat,
+        scarf: AvatarScarf?,
+        filteringMode: SKTextureFilteringMode
+    ) -> AvatarLayeredFrames {
+        var layers = [
+            textureLayer(named: "NegativeLayer_FishingPole_Wood", kind: .fishing, filteringMode: filteringMode),
+            textureLayer(named: "Layer0_Body_Blank", kind: .fishing, filteringMode: filteringMode),
+            textureLayer(named: "Layer1_Face_Regular", kind: .fishing, filteringMode: filteringMode)
+        ]
+
+        if let scarf {
+            layers.append(textureLayer(named: "Layer9_Scarf_\(scarf.fishingRawLayerName)", kind: .fishing, filteringMode: filteringMode))
+        }
+        if let hatLayerName = hat.rawLayerName {
+            layers.append(textureLayer(named: "Layer11_\(hatLayerName)", kind: .fishing, filteringMode: filteringMode))
+        }
+        layers.append(textureLayer(named: "Layer13_FishingPole_Wood", kind: .fishing, filteringMode: filteringMode))
+
+        return AvatarLayeredFrames(
+            rowCount: AvatarFinalAtlasKind.fishing.rowCount,
+            frameCount: AvatarFinalAtlasKind.fishing.frameCount,
+            layers: layers
+        )
+    }
+
+    private static func textureLayer(
+        named rawLayerName: String,
+        kind: AvatarFinalAtlasKind,
+        filteringMode: SKTextureFilteringMode
+    ) -> AvatarTextureLayer {
+        AvatarTextureLayer(
+            frames: sheetFrames(
+                rawLayerName: rawLayerName,
+                kind: kind,
+                filteringMode: filteringMode
+            )
         )
     }
 
@@ -329,7 +382,7 @@ enum AvatarLayeredAtlas {
     ) -> [String] {
         var layerNames = [kind.rawBaseName]
         if let scarf {
-            layerNames.append("Layer9_Scarf_\(scarf.rawLayerName)_\(kind.motionName)")
+            layerNames.append("Layer9_Scarf_\(scarf.rawLayerName(for: kind))_\(kind.motionName)")
         }
         if let hatLayerName = hat.rawLayerName {
             layerNames.append("Layer11_\(hatLayerName)_\(kind.motionName)")
@@ -342,7 +395,7 @@ enum AvatarLayeredAtlas {
         kind: AvatarFinalAtlasKind,
         filteringMode: SKTextureFilteringMode
     ) -> [[SKTexture]] {
-        let atlas = SKTextureAtlas(named: rawLayerName)
+        let atlas = atlas(named: rawLayerName, kind: kind)
         let textureName = atlas.textureNames.first ?? "\(rawLayerName).png"
         let sheetTexture = atlas.textureNamed(textureName)
         sheetTexture.filteringMode = filteringMode
@@ -361,6 +414,24 @@ enum AvatarLayeredAtlas {
                 texture.filteringMode = filteringMode
                 return texture
             }
+        }
+    }
+
+    private static func atlas(named rawLayerName: String, kind: AvatarFinalAtlasKind) -> SKTextureAtlas {
+        let nestedAtlas = SKTextureAtlas(named: atlasName(for: rawLayerName, kind: kind))
+        if !nestedAtlas.textureNames.isEmpty {
+            return nestedAtlas
+        }
+
+        return SKTextureAtlas(named: rawLayerName)
+    }
+
+    private static func atlasName(for rawLayerName: String, kind: AvatarFinalAtlasKind) -> String {
+        switch kind {
+        case .fishing:
+            "Atlases/Fishing/\(rawLayerName)"
+        case .idleRegular, .idleHappy, .walkRegular:
+            "Atlases/Character_Sheets_Raw/\(rawLayerName)"
         }
     }
 }
@@ -383,10 +454,25 @@ private extension AvatarHat {
 }
 
 private extension AvatarScarf {
-    var rawLayerName: String {
-        switch self {
+    func rawLayerName(for kind: AvatarFinalAtlasKind) -> String {
+        if kind == .fishing {
+            return fishingRawLayerName
+        }
+
+        return switch self {
         case .green:
             "Green"
+        case .blue:
+            "Sky"
+        case .orange:
+            "Orange"
+        }
+    }
+
+    var fishingRawLayerName: String {
+        switch self {
+        case .green:
+            "Olive"
         case .blue:
             "Sky"
         case .orange:
@@ -431,13 +517,21 @@ final class AvatarLayeredSpriteNode: SKNode {
         with frames: AvatarLayeredFrames,
         row: Int,
         timePerFrame: TimeInterval,
-        key: String
+        key: String,
+        delayBetweenCycles: TimeInterval = 0
     ) {
         let layerTextures = frames.textures(forRow: row)
         ensureLayerNodes(count: layerTextures.count)
         for (index, textures) in layerTextures.enumerated() {
+            let animation = SKAction.animate(with: textures, timePerFrame: timePerFrame)
+            let action: SKAction
+            if delayBetweenCycles > 0 {
+                action = .repeatForever(.sequence([animation, .wait(forDuration: delayBetweenCycles)]))
+            } else {
+                action = .repeatForever(animation)
+            }
             layerNodes[index].run(
-                .repeatForever(.animate(with: textures, timePerFrame: timePerFrame)),
+                action,
                 withKey: key
             )
         }
@@ -496,6 +590,19 @@ struct AvatarHappyIdleFrames {
             hat: hat,
             scarf: scarf,
             filteringMode: .nearest
+        )
+    }
+}
+
+struct AvatarFishingFrames {
+    let layeredFrames: AvatarLayeredFrames
+
+    init(hat: AvatarHat, scarf: AvatarScarf? = nil, filteringMode: SKTextureFilteringMode = .nearest) {
+        layeredFrames = AvatarLayeredAtlas.frames(
+            kind: .fishing,
+            hat: hat,
+            scarf: scarf,
+            filteringMode: filteringMode
         )
     }
 }

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+    <dict>
+        <key>codeandweb</key>
+        <dict>
+            <key>generator</key>
+            <string>TexturePacker 7.12.0 - https://www.codeandweb.com/texturepacker</string>
+            <key>smartupdate</key>
+            <string>$TexturePacker:SmartUpdate:16a16f03fb6efe4ed0fcb91f01d15403:f8d2b5a32d224c69568123e4df5f42a6:aa21cff35b3aabaad5e8f2eabcbe5154$</string>
+        </dict>
+        <key>format</key>
+        <string>APPL</string>
+        <key>images</key>
+        <array>
+            <dict>
+                <key>path</key>
+                <string>Grass.1.png</string>
+                <key>size</key>
+                <string>{500,500}</string>
+                <key>subimages</key>
+                <array>
+                    <dict>
+                        <key>aliases</key>
+                        <array/>
+                        <key>isFullyOpaque</key>
+                        <false/>
+                        <key>name</key>
+                        <string>GrassBlock_3.png</string>
+                        <key>spriteOffset</key>
+                        <string>{0,0}</string>
+                        <key>spriteSourceSize</key>
+                        <string>{500,500}</string>
+                        <key>textureRect</key>
+                        <string>{{0,0},{500,500}}</string>
+                        <key>textureRotated</key>
+                        <false/>
+                    </dict>
+                </array>
+            </dict>
+        </array>
+        <key>version</key>
+        <integer>1</integer>
+    </dict>
+</plist>
