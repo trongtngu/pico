@@ -59,11 +59,16 @@ final class FocusStore: ObservableObject {
     private var realtimeChannelID: String?
     private var isRealtimeRefreshing = false
     private var isDeviceLocking = false
+    private var selectedIslandID = PicoIsland.original.backendID
     private var knownVillageResidentIDs: Set<UUID>?
 
     init(focusService: FocusService? = nil, userDefaults: UserDefaults = .standard) {
         self.focusService = focusService ?? FocusService()
         self.userDefaults = userDefaults
+    }
+
+    var isIslandSelectionLocked: Bool {
+        lobbySession != nil || activeSession != nil
     }
 
     deinit {
@@ -122,6 +127,15 @@ final class FocusStore: ObservableObject {
         }
     }
 
+    func updateSelectedIslandID(_ islandID: String?) {
+        guard let islandID, !islandID.isEmpty else {
+            selectedIslandID = PicoIsland.original.backendID
+            return
+        }
+
+        selectedIslandID = islandID
+    }
+
     func createLobby(
         mode: FocusSessionMode,
         durationSeconds: Int? = nil,
@@ -139,6 +153,7 @@ final class FocusStore: ObservableObject {
             let session = try await focusService.createSession(
                 mode: mode,
                 durationSeconds: clampedDuration,
+                islandID: selectedIslandID,
                 for: authSession
             )
             applyOpenSession(session, authSession: authSession)
@@ -220,7 +235,11 @@ final class FocusStore: ObservableObject {
         defer { activeInviteID = nil }
 
         do {
-            let session = try await focusService.joinSession(invite.id, for: authSession)
+            let session = try await focusService.joinSession(
+                invite.id,
+                islandID: selectedIslandID,
+                for: authSession
+            )
             incomingInvites.removeAll { $0.id == invite.id }
             applyOpenSession(session, authSession: authSession)
             guard !session.isFinished else {
@@ -378,7 +397,11 @@ final class FocusStore: ObservableObject {
         defer { isFinishing = false }
 
         do {
-            let syncResult = try await sync(pendingResult, session: savedState.session, authSession: authSession)
+            let syncResult = try await sync(
+                pendingResult,
+                session: savedState.session,
+                authSession: authSession
+            )
             let optimisticSession = pendingResult.optimisticSession(from: savedState.session)
             resultSession = pendingResult.shouldUseSavedSession(syncResult.session, originalSession: savedState.session)
                 ? syncResult.session
@@ -557,10 +580,40 @@ final class FocusStore: ObservableObject {
     }
 
     private func syncOpenSessionState(for authSession: AuthSession) async {
+        let previousActiveSession = activeSession ?? liveSavedSession()
+
         do {
             let detail = try await focusService.fetchCurrentSessionDetail(for: authSession)
-            guard let detail, !detail.session.isFinished else {
+            guard let detail else {
+                if let previousActiveSession,
+                   previousActiveSession.isLive,
+                   previousActiveSession.remainingSeconds() == 0 {
+                    await finish(
+                        previousActiveSession,
+                        pendingResult: .complete,
+                        authSession: authSession,
+                        preCompletionVillageResidentIDs: knownVillageResidentIDs
+                    )
+                    return
+                }
+
+                if resultSession != nil || hasPendingResultSync {
+                    lobbySession = nil
+                    activeSession = nil
+                    sessionDetail = nil
+                    subscribeToRealtime(for: authSession, sessionID: nil)
+                    await loadIncomingInvites(for: authSession)
+                    return
+                }
+
                 clearFocusSessionState()
+                subscribeToRealtime(for: authSession, sessionID: nil)
+                await loadIncomingInvites(for: authSession)
+                return
+            }
+
+            if detail.session.isFinished {
+                applyOpenSession(detail.session, authSession: authSession)
                 subscribeToRealtime(for: authSession, sessionID: nil)
                 await loadIncomingInvites(for: authSession)
                 return
@@ -628,7 +681,11 @@ final class FocusStore: ObservableObject {
         ))
 
         do {
-            let syncResult = try await sync(pendingResult, session: session, authSession: authSession)
+            let syncResult = try await sync(
+                pendingResult,
+                session: session,
+                authSession: authSession
+            )
             resultSession = pendingResult.shouldUseSavedSession(syncResult.session, originalSession: session)
                 ? syncResult.session
                 : optimisticSession

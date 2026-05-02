@@ -24,10 +24,6 @@ struct FishID: RawRepresentable, Codable, Equatable, Hashable {
         try container.encode(rawValue)
     }
 
-    static let bass = FishID(rawValue: "bass")
-    static let salmon = FishID(rawValue: "salmon")
-    static let tuna = FishID(rawValue: "tuna")
-
     var displayName: String {
         rawValue.split(separator: "_")
             .map { word in
@@ -59,7 +55,7 @@ enum FishRarity: String, Codable, Equatable, Hashable {
         case .rare:
             "rare"
         case .ultraRare:
-            "ultra rare"
+            "super rare"
         }
     }
 }
@@ -260,20 +256,28 @@ final class FishService {
         )
     }
 
-    func fetchFishCatalog(for authSession: AuthSession) async throws -> [FishCatalogItem] {
-        let response: [FishCatalogResponse] = try await send(
-            path: "/rest/v1/sea_critters?select=id,display_name,rarity,sell_value,asset_name,sort_order,drop_weight,is_enabled&is_enabled=eq.true&order=sort_order.asc",
+    func fetchFishCatalog(
+        for authSession: AuthSession,
+        islandID: String = PicoIsland.original.backendID
+    ) async throws -> [FishCatalogItem] {
+        let response: [IslandFishCatalogResponse] = try await send(
+            path: Self.islandFishCatalogPath(islandID: islandID),
             method: "GET",
             accessToken: authSession.accessToken
         )
 
         return response.map(\.catalogItem)
+            .sorted { $0.sortOrder < $1.sortOrder }
     }
 
-    func fetchCollectionCounts(for authSession: AuthSession) async throws -> [FishCount] {
+    func fetchCollectionCounts(
+        for authSession: AuthSession,
+        islandID: String = PicoIsland.original.backendID
+    ) async throws -> [FishCount] {
         let response: [FishCountResponse] = try await send(
-            path: "/rest/v1/user_fish_collection_counts?select=sea_critter_id,display_name,rarity,sell_value,asset_name,sort_order,count&order=sort_order.asc",
-            method: "GET",
+            path: Self.islandCollectionCountsPath,
+            method: "POST",
+            body: IslandFishRequest(islandId: islandID.isEmpty ? PicoIsland.original.backendID : islandID),
             accessToken: authSession.accessToken
         )
 
@@ -282,8 +286,9 @@ final class FishService {
 
     func fetchInventoryCounts(for authSession: AuthSession) async throws -> [FishCount] {
         let response: [FishCountResponse] = try await send(
-            path: "/rest/v1/user_fish_inventory_counts?select=sea_critter_id,display_name,rarity,sell_value,asset_name,sort_order,count&order=sort_order.asc",
-            method: "GET",
+            path: Self.inventoryCountsPath,
+            method: "POST",
+            body: EmptyFishRequest(),
             accessToken: authSession.accessToken
         )
 
@@ -304,6 +309,14 @@ final class FishService {
 
         return result.saleResult
     }
+
+    static func islandFishCatalogPath(islandID: String?) -> String {
+        let resolvedIslandID = islandID?.isEmpty == false ? islandID! : PicoIsland.original.backendID
+        return "/rest/v1/island_sea_critters?select=sea_critters(id,display_name,rarity,sell_value,asset_name,sort_order,drop_weight,is_enabled)&island_id=eq.\(resolvedIslandID)&is_enabled=eq.true"
+    }
+
+    static let islandCollectionCountsPath = "/rest/v1/rpc/fetch_user_fish_collection_counts"
+    static let inventoryCountsPath = "/rest/v1/rpc/fetch_user_fish_inventory_counts"
 
     private func fetchFishCatches(path: String, accessToken: String) async throws -> [FishCatch] {
         let response: [FishCatchResponse] = try await send(
@@ -422,6 +435,12 @@ private struct FishSaleRequest: Encodable {
     let catchIds: [UUID]
 }
 
+private struct IslandFishRequest: Encodable {
+    let islandId: String
+}
+
+private struct EmptyFishRequest: Encodable {}
+
 private struct FishCatalogResponse: Decodable {
     let id: FishID
     let displayName: String
@@ -443,6 +462,14 @@ private struct FishCatalogResponse: Decodable {
             dropWeight: dropWeight,
             isEnabled: isEnabled
         )
+    }
+}
+
+private struct IslandFishCatalogResponse: Decodable {
+    let seaCritters: FishCatalogResponse
+
+    var catalogItem: FishCatalogItem {
+        seaCritters.catalogItem
     }
 }
 

@@ -6,6 +6,9 @@
 //
 
 import SwiftUI
+#if canImport(CoreText)
+import CoreText
+#endif
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -35,6 +38,43 @@ enum PicoColors {
     static let error = Color(hex: 0xE85D5D)
     static let info = Color(hex: 0x5B8DEF)
     static let destructiveBackground = Color(hex: 0xFDECEC)
+
+    static let fishRarityCommon = Color(hex: 0x7A817A)
+    static let fishRarityRare = Color(hex: 0xD88A2D)
+    static let fishRarityUltraRare = Color(hex: 0x7A4FA3)
+}
+
+struct PicoFishRarityStyle {
+    let mainColor: Color
+    let accentColor: Color
+    let pillTextColor: Color
+    let pillBackgroundColor: Color
+    let rowBackgroundColor: Color
+    let rowBorderColor: Color
+    let iconFallbackColor: Color
+
+    init(mainColor: Color) {
+        self.mainColor = mainColor
+        accentColor = mainColor
+        pillTextColor = mainColor
+        pillBackgroundColor = mainColor.opacity(0.14)
+        rowBackgroundColor = mainColor.opacity(0.10)
+        rowBorderColor = mainColor.opacity(0.34)
+        iconFallbackColor = mainColor
+    }
+}
+
+extension FishRarity {
+    var picoStyle: PicoFishRarityStyle {
+        switch self {
+        case .common:
+            PicoFishRarityStyle(mainColor: PicoColors.fishRarityCommon)
+        case .rare:
+            PicoFishRarityStyle(mainColor: PicoColors.fishRarityRare)
+        case .ultraRare:
+            PicoFishRarityStyle(mainColor: PicoColors.fishRarityUltraRare)
+        }
+    }
 }
 
 enum PicoSpacing {
@@ -58,13 +98,118 @@ enum PicoRadius {
 }
 
 enum PicoTypography {
-    static let screenTitle = Font.system(size: 42, weight: .bold, design: .rounded)
-    static let sectionTitle = Font.system(size: 26, weight: .bold, design: .rounded)
-    static let cardTitle = Font.system(size: 21, weight: .bold, design: .rounded)
-    static let body = Font.system(size: 17, weight: .regular, design: .rounded)
-    static let caption = Font.system(size: 14, weight: .medium, design: .rounded)
-    static let tabLabel = Font.system(size: 13, weight: .semibold, design: .rounded)
-    static let button = Font.system(size: 17, weight: .bold, design: .rounded)
+    static let screenTitle = primary(size: 42, weight: .bold)
+    static let sectionTitle = primary(size: 26, weight: .bold)
+    static let topBarTitle = primary(size: 24, weight: .bold)
+    static let cardTitle = primary(size: 21, weight: .bold)
+    static let compactTitle = primary(size: 20, weight: .bold)
+    static let actionTitle = primary(size: 22, weight: .bold)
+    static let largeValue = primary(size: 44, weight: .bold)
+    static let durationValue = primary(size: 40, weight: .bold)
+    static let fishName = primary(size: 28, weight: .bold)
+    static let countValue = primary(size: 22, weight: .bold)
+    static let primaryLabel = primary(size: 17, weight: .bold)
+    static let primaryLabelSemibold = primary(size: 17, weight: .semibold)
+    static let statusLabel = primary(size: 14, weight: .semibold)
+    static let smallAction = primary(size: 14, weight: .bold)
+    static let badgeCount = primary(size: 11, weight: .bold)
+    static let body = secondary(size: 17, weight: .regular)
+    static let bodySemibold = secondary(size: 17, weight: .semibold)
+    static let caption = secondary(size: 14, weight: .medium)
+    static let captionSemibold = secondary(size: 14, weight: .semibold)
+    static let compactCaption = secondary(size: 13, weight: .medium)
+    static let tinyCaption = secondary(size: 11, weight: .medium)
+    static let tinyCaptionBold = secondary(size: 11, weight: .bold)
+    static let pill = primary(size: 13, weight: .bold)
+    static let largePill = primary(size: 15, weight: .bold)
+    static let compactValue = primary(size: 16, weight: .bold)
+    static let inlineValue = primary(size: 17, weight: .bold)
+    static let tabLabel = primary(size: 13, weight: .semibold)
+    static let button = primary(size: 17, weight: .bold)
+
+    static func primary(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        PicoFontRegistrar.registerFontsIfNeeded()
+        return Font.custom(PicoFontName.quicksand(weight), size: size)
+    }
+
+    static func secondary(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        PicoFontRegistrar.registerFontsIfNeeded()
+        return Font.custom(PicoFontName.splineSans(weight), size: size)
+    }
+
+    static func symbol(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
+    }
+}
+
+private enum PicoFontName {
+    static func quicksand(_ weight: Font.Weight) -> String {
+        switch weight {
+        case .ultraLight, .thin, .light:
+            "Quicksand-Light"
+        case .medium:
+            "Quicksand-Medium"
+        case .semibold:
+            "Quicksand-SemiBold"
+        case .bold, .heavy, .black:
+            "Quicksand-Bold"
+        default:
+            "Quicksand-Regular"
+        }
+    }
+
+    static func splineSans(_ weight: Font.Weight) -> String {
+        switch weight {
+        case .ultraLight, .thin, .light:
+            "SplineSans-Light"
+        case .medium:
+            "SplineSans-Medium"
+        case .semibold:
+            "SplineSans-SemiBold"
+        case .bold, .heavy, .black:
+            "SplineSans-Bold"
+        default:
+            "SplineSans-Regular"
+        }
+    }
+}
+
+private enum PicoFontRegistrar {
+    static func registerFontsIfNeeded() {
+        _ = registeredFonts
+    }
+
+    private static let registeredFonts: Void = {
+        #if canImport(CoreText)
+        let fontFiles = [
+            "Quicksand-Light",
+            "Quicksand-Regular",
+            "Quicksand-Medium",
+            "Quicksand-SemiBold",
+            "Quicksand-Bold",
+            "SplineSans-Light",
+            "SplineSans-Regular",
+            "SplineSans-Medium",
+            "SplineSans-SemiBold",
+            "SplineSans-Bold"
+        ]
+        let fontDirectories: [String?] = [
+            nil,
+            "fonts/Quicksand_Complete/Fonts/OTF",
+            "fonts/SplineSans_Complete/Fonts/OTF"
+        ]
+
+        for fontFile in fontFiles {
+            guard let fontURL = fontDirectories.compactMap({
+                Bundle.main.url(forResource: fontFile, withExtension: "otf", subdirectory: $0)
+            }).first else {
+                continue
+            }
+
+            CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
+        }
+        #endif
+    }()
 }
 
 enum PicoShadow {

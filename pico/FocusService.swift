@@ -180,13 +180,15 @@ final class FocusService {
     func createSession(
         mode: FocusSessionMode,
         durationSeconds: Int,
+        islandID: String = PicoIsland.original.backendID,
         for authSession: AuthSession
     ) async throws -> FocusSession {
         try await sessionResponse(
             path: "/rest/v1/rpc/create_focus_session",
             body: CreateFocusSessionRequest(
                 sessionMode: mode.rawValue,
-                durationSeconds: durationSeconds
+                durationSeconds: durationSeconds,
+                islandId: islandID.isEmpty ? PicoIsland.original.backendID : islandID
             ),
             accessToken: authSession.accessToken
         )
@@ -270,10 +272,17 @@ final class FocusService {
         return response.focusReconciliationResult
     }
 
-    func joinSession(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
+    func joinSession(
+        _ id: UUID,
+        islandID: String = PicoIsland.original.backendID,
+        for authSession: AuthSession
+    ) async throws -> FocusSession {
         try await sessionResponse(
             path: "/rest/v1/rpc/join_focus_session",
-            body: FocusSessionIDRequest(targetSessionId: id),
+            body: JoinFocusSessionRequest(
+                targetSessionId: id,
+                islandId: islandID.isEmpty ? PicoIsland.original.backendID : islandID
+            ),
             accessToken: authSession.accessToken
         )
     }
@@ -427,6 +436,7 @@ enum FocusDateFormatter {
 private struct CreateFocusSessionRequest: Encodable {
     let sessionMode: String
     let durationSeconds: Int
+    let islandId: String
 }
 
 private struct UpdateFocusSessionConfigRequest: Encodable {
@@ -441,6 +451,11 @@ private struct InviteFocusSessionMembersRequest: Encodable {
 
 private struct FocusSessionIDRequest: Encodable {
     let targetSessionId: UUID
+}
+
+private struct JoinFocusSessionRequest: Encodable {
+    let targetSessionId: UUID
+    let islandId: String
 }
 
 private struct EmptyFocusRequest: Encodable {}

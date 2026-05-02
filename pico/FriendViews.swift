@@ -42,7 +42,7 @@ struct FriendsPage: View {
 
                 VStack(alignment: .leading, spacing: PicoSpacing.compact) {
                     Text("Friends")
-                        .font(PicoTypography.caption.weight(.bold))
+                        .font(PicoTypography.statusLabel)
                         .foregroundStyle(PicoColors.textSecondary)
                         .textCase(.uppercase)
 
@@ -71,7 +71,7 @@ struct FriendsPage: View {
         if friendStore.isLoadingFriends {
             HStack(spacing: PicoSpacing.standard) {
                 Text("Loading friends")
-                    .font(PicoTypography.body.weight(.semibold))
+                    .font(PicoTypography.primaryLabelSemibold)
                     .foregroundStyle(PicoColors.textPrimary)
 
                 Spacer(minLength: 0)
@@ -216,7 +216,7 @@ private struct IncomingRequestsPage: View {
         if friendStore.isLoadingIncomingRequests {
             HStack(spacing: PicoSpacing.standard) {
                 Text("Loading requests")
-                    .font(PicoTypography.body.weight(.semibold))
+                    .font(PicoTypography.primaryLabelSemibold)
                     .foregroundStyle(PicoColors.textPrimary)
 
                 Spacer(minLength: 0)
@@ -296,7 +296,7 @@ private struct FriendProfileRowView: View {
 
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                 Text(profile.displayName)
-                    .font(PicoTypography.body.weight(.semibold))
+                    .font(PicoTypography.primaryLabelSemibold)
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
 
@@ -418,7 +418,7 @@ private struct AddFriendSearchResultRow: View {
                             .tint(PicoColors.textOnPrimary)
                     }
                 }
-                .font(PicoTypography.caption.weight(.bold))
+                .font(PicoTypography.smallAction)
                 .foregroundStyle(PicoColors.textOnPrimary)
                 .padding(.horizontal, PicoSpacing.iconTextGap)
                 .frame(height: 34)
@@ -436,7 +436,7 @@ private struct AddFriendSearchResultRow: View {
             PicoIcon(icon, size: 14)
             Text(text)
         }
-        .font(PicoTypography.caption.weight(.bold))
+        .font(PicoTypography.smallAction)
         .foregroundStyle(PicoColors.textSecondary)
         .lineLimit(1)
     }
@@ -453,14 +453,14 @@ private struct FriendActionButtonContent: View {
                 .foregroundStyle(PicoColors.primary)
 
             Text(title)
-                .font(PicoTypography.caption.weight(.semibold))
+                .font(PicoTypography.statusLabel)
                 .foregroundStyle(PicoColors.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
 
             if badgeCount > 0 {
                 Text("\(badgeCount)")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .font(PicoTypography.badgeCount)
                     .foregroundStyle(PicoColors.textOnPrimary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -555,7 +555,7 @@ private struct FriendCompactPrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(PicoTypography.caption.weight(.bold))
+            .font(PicoTypography.smallAction)
             .foregroundStyle(PicoColors.textOnPrimary)
             .frame(maxWidth: .infinity, minHeight: 44)
             .padding(.horizontal, PicoSpacing.standard)
@@ -573,7 +573,7 @@ private struct FriendCompactCardButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(PicoTypography.caption.weight(.bold))
+            .font(PicoTypography.smallAction)
             .foregroundStyle(foreground)
             .frame(maxWidth: .infinity, minHeight: 44)
             .padding(.horizontal, PicoSpacing.standard)

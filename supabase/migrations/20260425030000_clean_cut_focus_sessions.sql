@@ -63,6 +63,7 @@ where status in ('lobby', 'live');
 create table public.session_members (
     session_id uuid not null references public.focus_sessions(id) on delete cascade,
     user_id uuid not null references public.user_profiles(user_id) on delete cascade,
+    island_id text not null default 'default' references public.islands(id),
     role text not null default 'participant',
     status text not null default 'invited',
     created_at timestamptz not null default now(),
@@ -73,6 +74,9 @@ create table public.session_members (
     constraint session_members_status
         check (status in ('invited', 'joined', 'declined', 'left'))
 );
+
+create index session_members_island_id_idx
+on public.session_members (island_id);
 
 create table public.session_events (
     id uuid primary key default gen_random_uuid(),
