@@ -331,7 +331,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .home:
-            "Village"
+            "Island"
         case .fishing:
             "Fishing"
         case .store:
@@ -1007,6 +1007,10 @@ private struct BondsPage: View {
         villageStore.residents
             .filter { $0.completedPairSessions > 0 }
             .sorted {
+                if $0.bondLevel != $1.bondLevel {
+                    return $0.bondLevel > $1.bondLevel
+                }
+
                 if $0.completedPairSessions != $1.completedPairSessions {
                     return $0.completedPairSessions > $1.completedPairSessions
                 }
@@ -1078,7 +1082,7 @@ private struct BondsPage: View {
                     .tint(PicoColors.primary)
             }
             .padding(PicoSpacing.standard)
-            .picoCreamCard()
+            .picoCreamCard(showsShadow: false)
         } else if bonds.isEmpty {
             VStack(spacing: PicoSpacing.compact) {
                 PicoIcon(.sparklesRegular, size: 28)
@@ -1096,7 +1100,7 @@ private struct BondsPage: View {
             }
             .frame(maxWidth: .infinity)
             .padding(PicoSpacing.cardPadding)
-            .picoCreamCard()
+            .picoCreamCard(showsShadow: false)
         } else {
             BondsListCard(
                 residents: bonds,
@@ -1140,16 +1144,95 @@ private struct BondsListCard: View {
     let ownerID: UUID?
     let onClaim: (VillageResident) -> Void
 
+    private var groups: [BondCardGroup] {
+        Dictionary(grouping: residents, by: \.bondLevel)
+            .map { level, residents in
+                BondCardGroup(
+                    level: level,
+                    residents: residents.sorted {
+                        if $0.completedPairSessions != $1.completedPairSessions {
+                            return $0.completedPairSessions > $1.completedPairSessions
+                        }
+
+                        return $0.profile.displayName.localizedCaseInsensitiveCompare($1.profile.displayName) == .orderedAscending
+                    }
+                )
+            }
+            .sorted { $0.level > $1.level }
+    }
+
     var body: some View {
-        VStack(spacing: PicoSpacing.compact) {
-            ForEach(residents) { resident in
-                BondRowView(
-                    resident: resident,
+        VStack(spacing: PicoSpacing.section) {
+            ForEach(groups) { group in
+                BondCardGroupView(
+                    group: group,
                     ownerID: ownerID,
                     onClaim: onClaim
                 )
             }
         }
+        .padding(.leading, PicoSpacing.compact)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct BondCardGroup: Identifiable {
+    let level: Int
+    let residents: [VillageResident]
+
+    var id: Int { level }
+
+    var scarf: AvatarScarf? {
+        AvatarScarf(bondLevel: level)
+    }
+}
+
+private struct BondCardGroupView: View {
+    let group: BondCardGroup
+    let ownerID: UUID?
+    let onClaim: (VillageResident) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+            heading
+                .padding(.horizontal, PicoSpacing.tiny)
+
+            VStack(spacing: PicoSpacing.compact) {
+                ForEach(group.residents) { resident in
+                    BondRowView(
+                        resident: resident,
+                        ownerID: ownerID,
+                        onClaim: onClaim
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.contentPadding)
+    }
+
+    private var heading: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            if let scarf = group.scarf {
+                BondScarfIcon(scarf: scarf)
+                    .frame(width: 24, height: 20)
+            }
+
+            Text("Level \(group.level)")
+                .font(PicoTypography.primaryLabelSemibold)
+                .foregroundStyle(PicoColors.textPrimary)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(accessibilityHeading))
+    }
+
+    private var accessibilityHeading: String {
+        guard let scarf = group.scarf else {
+            return "Level \(group.level)"
+        }
+
+        return "\(scarf.displayName) scarf, Level \(group.level)"
     }
 }
 
@@ -1185,45 +1268,54 @@ private struct BondRowView: View {
         BondScarfProgress(xp: xp, claimableReward: pendingReward)
     }
 
-    private var currentScarf: AvatarScarf? {
-        AvatarScarf(bondLevel: visibleBondLevel)
+    private var hasPendingReward: Bool {
+        pendingReward != nil
     }
 
-    private var cardBackground: Color {
-        pendingReward == nil
-            ? PicoCreamCardStyle.background
-            : PicoColors.highlight.opacity(0.18)
+    private var rowBackground: Color {
+        hasPendingReward
+            ? PicoColors.highlightBackground.opacity(0.18)
+            : PicoCreamCardStyle.background
     }
 
-    private var cardBorder: Color {
-        pendingReward == nil
-            ? PicoCreamCardStyle.border
-            : PicoColors.highlight.opacity(0.42)
+    private var rowBorder: Color {
+        hasPendingReward
+            ? PicoColors.highlightBorder.opacity(0.42)
+            : PicoCreamCardStyle.border
     }
 
     var body: some View {
         Group {
-            if pendingReward != nil {
+            if hasPendingReward {
                 Button {
                     onClaim(resident)
                 } label: {
-                    rowContent
+                    rowSurface
                 }
                 .buttonStyle(.plain)
             } else {
-                rowContent
+                rowSurface
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous))
-        .picoCreamCard(
-            padding: PicoSpacing.cardPadding,
-            background: cardBackground,
-            border: cardBorder
-        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             Text("\(resident.profile.displayName), bond level \(resident.bondLevel), \(xp) sessions, \(scarfProgress.accessibilitySummary)")
         )
+    }
+
+    private var rowSurface: some View {
+        rowContent
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(PicoSpacing.standard)
+            .background(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .fill(rowBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .stroke(rowBorder, lineWidth: PicoCreamCardStyle.borderWidth)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
     }
 
     private var rowContent: some View {
@@ -1236,18 +1328,11 @@ private struct BondRowView: View {
                 )
 
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(resident.profile.displayName)
-                            .font(PicoTypography.primaryLabelSemibold)
-                            .foregroundStyle(PicoColors.textPrimary)
-                            .lineLimit(1)
-                            .layoutPriority(1)
-
-                        if let currentScarf {
-                            BondScarfIcon(scarf: currentScarf)
-                                .frame(width: 20, height: 16)
-                        }
-                    }
+                    Text(resident.profile.displayName)
+                        .font(PicoTypography.primaryLabelSemibold)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
 
                     HStack(spacing: PicoSpacing.tiny) {
                         Text("@\(resident.profile.username)")
@@ -1395,7 +1480,7 @@ private struct BondScarfProgress {
 
     var caption: String? {
         if claimableReward != nil {
-            return "Tap to claim reward"
+            return "Tap to collect reward"
         }
 
         guard let targetMilestone else {
@@ -1442,7 +1527,7 @@ private struct BondScarfMilestone {
         BondScarfMilestone(level: 2, name: "green", requiredXP: 3),
         BondScarfMilestone(level: 3, name: "blue", requiredXP: 6),
         BondScarfMilestone(level: 4, name: "orange", requiredXP: 9),
-        BondScarfMilestone(level: 5, name: "orange", requiredXP: 12)
+        BondScarfMilestone(level: 5, name: "purple", requiredXP: 12)
     ]
 }
 
@@ -1466,6 +1551,19 @@ private struct BondScarfReward: Equatable {
 }
 
 private extension AvatarScarf {
+    var displayName: String {
+        switch self {
+        case .green:
+            "Green"
+        case .blue:
+            "Blue"
+        case .orange:
+            "Orange"
+        case .purple:
+            "Purple"
+        }
+    }
+
     var iconResourceCandidates: [String] {
         let iconName = switch self {
         case .green:
@@ -1474,6 +1572,8 @@ private extension AvatarScarf {
             "Scarf_Sky"
         case .orange:
             "Scarf_Orange"
+        case .purple:
+            "Scarf_Purple"
         }
 
         return [
@@ -1813,10 +1913,10 @@ private struct FishingPoleCTAIcon: View {
 
     private var image: UIImage? {
         [
-            "Icons/FishingPole",
-            "Icons/FishingPole.png",
-            "FishingPole",
-            "FishingPole.png"
+            "Icons/FishingPole_New",
+            "Icons/FishingPole_New.png",
+            "FishingPole_New",
+            "FishingPole_New.png"
         ]
             .lazy
             .compactMap { UIImage(named: $0) }
@@ -2051,15 +2151,17 @@ private struct FocusModePickerSheetContent: View {
     var body: some View {
         VStack(spacing: PicoSpacing.iconTextGap) {
             FocusModeRow(
-                icon: .clockRegular,
-                title: "Solo"
+                imageName: "Bucket",
+                title: "Solo",
+                titleFont: PicoTypography.body
             ) {
                 step = .soloConfig
             }
 
             FocusModeRow(
-                icon: .usersRegular,
-                title: "With friends"
+                imageName: "Scroll",
+                title: "With friends",
+                titleFont: PicoTypography.body
             ) {
                 step = .multiplayerConfig
             }
@@ -2194,11 +2296,12 @@ private struct IncomingFocusInviteSheetRow: View {
 
 private struct FocusDurationBadge: View {
     let seconds: Int
+    var imageName: String? = nil
+    var imageFrameSize = CGSize(width: 18, height: 18)
 
     var body: some View {
         HStack(spacing: 6) {
-            PicoIcon(.clockRegular, size: 13)
-                .foregroundStyle(PicoColors.primary)
+            iconView
 
             Text(homeFormattedDurationMinutes(seconds))
                 .font(PicoTypography.caption.monospacedDigit())
@@ -2214,27 +2317,84 @@ private struct FocusDurationBadge: View {
         )
         .fixedSize()
     }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if let image {
+            Image(uiImage: image)
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: imageFrameSize.width, height: imageFrameSize.height)
+        } else {
+            PicoIcon(.clockRegular, size: 13)
+                .foregroundStyle(PicoColors.primary)
+        }
+    }
+
+    private var image: UIImage? {
+        guard let imageName else { return nil }
+        return [
+            "Icons/\(imageName)",
+            "Icons/\(imageName).png",
+            imageName,
+            "\(imageName).png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
+    }
 }
 
 private struct FocusModeRow: View {
-    let icon: PicoIconAsset
+    let icon: PicoIconAsset?
+    let imageName: String?
     let title: String
+    let titleFont: Font
     var isHighlighted = false
     let action: () -> Void
     private let iconSize: CGFloat = 28
     private let iconFrameSize: CGFloat = 36
     private let chevronSize: CGFloat = 17
 
+    init(
+        icon: PicoIconAsset,
+        title: String,
+        titleFont: Font = PicoTypography.body.weight(.bold),
+        isHighlighted: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.imageName = nil
+        self.title = title
+        self.titleFont = titleFont
+        self.isHighlighted = isHighlighted
+        self.action = action
+    }
+
+    init(
+        imageName: String,
+        title: String,
+        titleFont: Font = PicoTypography.body.weight(.bold),
+        isHighlighted: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.icon = nil
+        self.imageName = imageName
+        self.title = title
+        self.titleFont = titleFont
+        self.isHighlighted = isHighlighted
+        self.action = action
+    }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: PicoSpacing.standard) {
-                PicoIcon(icon, size: iconSize)
-                    .foregroundStyle(iconColor)
-                    .frame(width: iconFrameSize, height: iconFrameSize)
+                iconView
 
                 VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                     Text(title)
-                        .font(PicoTypography.body.weight(.bold))
+                        .font(titleFont)
                         .foregroundStyle(titleColor)
                 }
 
@@ -2255,6 +2415,33 @@ private struct FocusModeRow: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if let image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: iconFrameSize, height: iconFrameSize)
+        } else if let icon {
+            PicoIcon(icon, size: iconSize)
+                .foregroundStyle(iconColor)
+                .frame(width: iconFrameSize, height: iconFrameSize)
+        }
+    }
+
+    private var image: UIImage? {
+        guard let imageName else { return nil }
+        return [
+            "Icons/\(imageName)",
+            "Icons/\(imageName).png",
+            imageName,
+            "\(imageName).png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
     }
 
     private var titleColor: Color {
@@ -2283,15 +2470,77 @@ private enum FocusSheetActionIconPlacement {
     case trailing
 }
 
+private struct SheetActionImageIcon: View {
+    let imageName: String
+    let frameSize: CGSize
+
+    var body: some View {
+        if let image {
+            Image(uiImage: image)
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: frameSize.width, height: frameSize.height)
+        }
+    }
+
+    private var image: UIImage? {
+        [
+            "Icons/\(imageName)",
+            "Icons/\(imageName).png",
+            imageName,
+            "\(imageName).png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
+    }
+}
+
 private struct FocusSheetActionLabel: View {
     let title: String
-    let icon: PicoIconAsset
+    let icon: PicoIconAsset?
+    let imageName: String?
     var placement: FocusSheetActionIconPlacement = .leading
     var showsProgress = false
     var progressTint: Color = PicoColors.textPrimary
 
     private let iconSize: CGFloat = 22
     private let iconFrameSize: CGFloat = 28
+    private let imageFrameSize: CGSize?
+
+    init(
+        title: String,
+        icon: PicoIconAsset,
+        placement: FocusSheetActionIconPlacement = .leading,
+        showsProgress: Bool = false,
+        progressTint: Color = PicoColors.textPrimary
+    ) {
+        self.title = title
+        self.icon = icon
+        self.imageName = nil
+        self.placement = placement
+        self.showsProgress = showsProgress
+        self.progressTint = progressTint
+        self.imageFrameSize = nil
+    }
+
+    init(
+        title: String,
+        imageName: String,
+        imageFrameSize: CGSize? = nil,
+        placement: FocusSheetActionIconPlacement = .leading,
+        showsProgress: Bool = false,
+        progressTint: Color = PicoColors.textPrimary
+    ) {
+        self.title = title
+        self.icon = nil
+        self.imageName = imageName
+        self.placement = placement
+        self.showsProgress = showsProgress
+        self.progressTint = progressTint
+        self.imageFrameSize = imageFrameSize
+    }
 
     var body: some View {
         HStack(spacing: PicoSpacing.iconTextGap) {
@@ -2313,9 +2562,31 @@ private struct FocusSheetActionLabel: View {
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
+    @ViewBuilder
     private var iconView: some View {
-        PicoIcon(icon, size: iconSize)
-            .frame(width: iconFrameSize, height: iconFrameSize)
+        if let image {
+            let frameSize = imageFrameSize ?? CGSize(width: iconFrameSize, height: iconFrameSize)
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: frameSize.width, height: frameSize.height)
+        } else if let icon {
+            PicoIcon(icon, size: iconSize)
+                .frame(width: iconFrameSize, height: iconFrameSize)
+        }
+    }
+
+    private var image: UIImage? {
+        guard let imageName else { return nil }
+        return [
+            "Icons/\(imageName)",
+            "Icons/\(imageName).png",
+            imageName,
+            "\(imageName).png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
     }
 }
 
@@ -2459,6 +2730,10 @@ private struct SoloFocusConfigSheetContent: View {
             } label: {
                 HStack {
                     Text("Start")
+                    FishingPoleCTAIcon()
+                        .frame(width: 22, height: 22)
+                        .accessibilityHidden(true)
+
                     if isBusy {
                         ProgressView()
                             .tint(PicoColors.textOnPrimary)
@@ -2523,7 +2798,8 @@ private struct MultiplayerDurationSheetContent: View {
             } label: {
                 FocusSheetActionLabel(
                     title: "Invite friends",
-                    icon: .userPlusRegular
+                    imageName: "Envolope",
+                    imageFrameSize: CGSize(width: 27, height: 22)
                 )
             }
             .buttonStyle(PicoSecondaryButtonStyle())
@@ -2569,7 +2845,8 @@ private struct MultiplayerInviteFriendsSheetContent: View {
             } label: {
                 FocusSheetActionLabel(
                     title: buttonTitle,
-                    icon: .paperAirplaneRegular,
+                    imageName: "Bottle_Message",
+                    imageFrameSize: CGSize(width: 16, height: 24),
                     placement: .trailing,
                     showsProgress: isBusy,
                     progressTint: PicoColors.textPrimary
@@ -2691,7 +2968,11 @@ private struct MultiplayerLobbySheetContent: View {
 	    var body: some View {
 	        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
 	            if let session {
-                FocusDurationBadge(seconds: session.durationSeconds)
+                FocusDurationBadge(
+                    seconds: session.durationSeconds,
+                    imageName: "Anchor",
+                    imageFrameSize: CGSize(width: 13, height: 20)
+                )
                     .frame(maxWidth: .infinity, alignment: .center)
 
                 HStack(spacing: PicoSpacing.iconTextGap) {
@@ -2706,8 +2987,10 @@ private struct MultiplayerLobbySheetContent: View {
                             step = .multiplayerInviteMore
                         } label: {
                             HStack(spacing: PicoSpacing.compact) {
-                                PicoIcon(.userPlusRegular, size: 17)
-                                    .frame(width: 22, height: 22)
+                                SheetActionImageIcon(
+                                    imageName: "Bottle_Message",
+                                    frameSize: CGSize(width: 13, height: 19)
+                                )
                                 Text("Invite")
                             }
                                 .font(PicoTypography.caption.weight(.semibold))
@@ -2766,6 +3049,10 @@ private struct MultiplayerLobbySheetContent: View {
                     } label: {
                         HStack {
                             Text("Start")
+                            FishingPoleCTAIcon()
+                                .frame(width: 22, height: 22)
+                                .accessibilityHidden(true)
+
                             if focusStore.isStarting {
                                 ProgressView()
                                     .tint(PicoColors.textOnPrimary)
@@ -3685,23 +3972,24 @@ private struct FishingCollectionHeader: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: PicoSpacing.standard) {
-            HStack(alignment: .center, spacing: PicoSpacing.compact) {
-                FishingCountIcon(name: "DarkWood_Chest")
-                    .frame(width: 24, height: 24)
+            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                HStack(spacing: PicoSpacing.compact) {
+                    FishingCountIcon(name: "DarkWood_Chest")
+                        .frame(width: 24, height: 24)
 
-                VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                     Text("Collection")
                         .font(PicoTypography.cardTitle)
                         .foregroundStyle(PicoColors.textPrimary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
-
-                    Text(discoveryText)
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textSecondary)
-                        .lineLimit(2)
                 }
+
+                Text(discoveryText)
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .lineLimit(2)
             }
+            .padding(.leading, PicoSpacing.compact)
             .accessibilityElement(children: .combine)
 
             Spacer(minLength: PicoSpacing.compact)
@@ -3819,7 +4107,8 @@ private struct FishingInventoryRow: View {
                     .font(PicoTypography.fishName)
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+                    .minimumScaleFactor(0.5)
+                    .allowsTightening(true)
 
                 rarityTag
             }
@@ -4079,8 +4368,15 @@ private enum FishingTier: String, CaseIterable, Identifiable {
         rarityStyle.pillBackgroundColor
     }
 
-    var cardBackground: Color {
-        rarityStyle.rowBackgroundColor
+    var headerIconName: String {
+        switch self {
+        case .common:
+            "Wood_Chest"
+        case .rare:
+            "LightWood_Chest"
+        case .ultraRare:
+            "FantasyWood_Chest"
+        }
     }
 
     nonisolated init?(rarity: FishRarity) {
@@ -4178,9 +4474,11 @@ private struct FishingTierSection: View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
             FishingSectionHeader(
                 title: tier.title,
-                countText: "\(unlockedCount) / \(fish.count)",
+                titleIconName: tier.headerIconName,
+                countText: "\(unlockedCount)/\(fish.count)",
                 countIconName: "Bucket",
                 accentColor: tier.accentColor,
+                isComplete: unlockedCount == fish.count && !fish.isEmpty,
                 isLoading: isLoading
             )
 
@@ -4199,9 +4497,7 @@ private struct FishingTierSection: View {
         .picoCreamCard(
             cornerRadius: PicoRadius.large,
             showsShadow: false,
-            padding: PicoCreamCardStyle.contentPadding,
-            background: tier.cardBackground,
-            border: tier.accentColor.opacity(0.3)
+            padding: PicoCreamCardStyle.contentPadding
         )
     }
 
@@ -4271,7 +4567,7 @@ private struct FishingCollectionTile: View {
             return PicoColors.softSurface.opacity(0.72)
         }
 
-        return PicoColors.surface.opacity(0.56)
+        return PicoCreamCardStyle.background
     }
 
     private var tileBorder: Color {
@@ -4279,23 +4575,30 @@ private struct FishingCollectionTile: View {
             return PicoColors.border.opacity(0.7)
         }
 
-        return fish.tier.accentColor.opacity(0.46)
+        return PicoCreamCardStyle.border
     }
 }
 
 private struct FishingSectionHeader: View {
     let title: String
+    let titleIconName: String?
     let countText: String
     let countIconName: String?
     var accentColor: Color = PicoColors.textSecondary
+    var isComplete = false
     let isLoading: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: PicoSpacing.iconTextGap) {
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .center, spacing: PicoSpacing.iconTextGap) {
+            HStack(spacing: PicoSpacing.compact) {
+                if let titleIconName {
+                    FishingCountIcon(name: titleIconName)
+                        .frame(width: 24, height: 24)
+                }
+
                 Text(title)
                     .font(PicoTypography.sectionTitle)
-                    .foregroundStyle(accentColor)
+                    .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
             }
@@ -4309,25 +4612,37 @@ private struct FishingSectionHeader: View {
             } else {
                 HStack(spacing: 6) {
                     if let countIconName {
-                        FishingCountIcon(name: countIconName, fallbackColor: accentColor)
+                        FishingCountIcon(name: countIconName, fallbackColor: countForegroundColor)
                             .frame(width: 17, height: 17)
                     }
 
                     Text(countText)
                         .font(PicoTypography.inlineValue)
-                        .foregroundStyle(accentColor)
+                        .foregroundStyle(countForegroundColor)
                         .monospacedDigit()
                 }
                 .padding(.horizontal, PicoSpacing.iconTextGap)
                 .padding(.vertical, 8)
-                .background(accentColor.opacity(0.14))
+                .background(countBackgroundColor)
                 .clipShape(Capsule(style: .continuous))
                 .overlay(
                     Capsule(style: .continuous)
-                        .stroke(accentColor.opacity(0.34), lineWidth: 1)
+                        .stroke(countBorderColor, lineWidth: 1)
                 )
             }
         }
+    }
+
+    private var countForegroundColor: Color {
+        isComplete ? accentColor : PicoColors.textSecondary
+    }
+
+    private var countBackgroundColor: Color {
+        isComplete ? accentColor.opacity(0.14) : PicoColors.softSurface.opacity(0.76)
+    }
+
+    private var countBorderColor: Color {
+        isComplete ? accentColor.opacity(0.34) : PicoColors.border.opacity(0.84)
     }
 }
 
@@ -4611,6 +4926,17 @@ private struct StoreFishGroup: Identifiable {
         rarityStyle.rowBorderColor
     }
 
+    private var raritySortRank: Int {
+        switch rarity {
+        case .common:
+            0
+        case .rare:
+            1
+        case .ultraRare:
+            2
+        }
+    }
+
     static func groups(
         from catches: [FishCatch],
         catalog: [FishCatalogItem],
@@ -4637,6 +4963,10 @@ private struct StoreFishGroup: Identifiable {
                 )
             }
             .sorted { lhs, rhs in
+                if lhs.raritySortRank != rhs.raritySortRank {
+                    return lhs.raritySortRank > rhs.raritySortRank
+                }
+
                 if lhs.sortOrder != rhs.sortOrder {
                     return lhs.sortOrder < rhs.sortOrder
                 }
@@ -4710,7 +5040,8 @@ private struct StoreFishGroupRow: View {
                     .font(PicoTypography.fishName)
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+                    .minimumScaleFactor(0.5)
+                    .allowsTightening(true)
 
                 BerryAmountLabel(
                     count: group.unitValue,
@@ -4929,18 +5260,20 @@ private struct ProfilePage: View {
 
                 if sessionStore.profile != nil {
                     ProfileAvatarOutfitCard(
-                        avatarConfig: avatarConfig,
-                        canCycleHats: ownedHats.count >= 2,
-                        previousHat: selectPreviousHat,
-                        nextHat: selectNextHat
+                        avatarConfig: avatarConfig
                     )
 
                     ProfileHatCollectionCard(
                         selection: $avatarConfig,
-                        ownedHats: sessionStore.ownedHats
+                        ownedHats: sessionStore.ownedHats,
+                        canCycleHats: ownedHats.count >= 2,
+                        showsSaveButton: hasProfileChanges,
+                        canSave: canSave,
+                        isSaving: sessionStore.isProfileSaving,
+                        previousHat: selectPreviousHat,
+                        nextHat: selectNextHat,
+                        save: saveProfile
                     )
-
-                    saveProfileButton
                 }
 
                 if let profileNotice = sessionStore.profileNotice {
@@ -5011,36 +5344,18 @@ private struct ProfilePage: View {
         }
     }
 
-    private var saveProfileButton: some View {
-        Button {
-            Task {
-                await sessionStore.updateProfile(
-                    displayName: displayName,
-                    avatarConfig: avatarConfig
-                )
-            }
-        } label: {
-            HStack(spacing: PicoSpacing.compact) {
-                Text("Save Profile")
-
-                if sessionStore.isProfileSaving {
-                    ProgressView()
-                        .tint(PicoColors.textOnPrimary)
-                }
-            }
-        }
-        .buttonStyle(PicoPrimaryButtonStyle())
-        .disabled(!canSave || sessionStore.isProfileSaving)
-        .opacity((canSave && !sessionStore.isProfileSaving) ? 1 : 0.62)
-    }
-
     private var canSave: Bool {
         guard let profile = sessionStore.profile else { return false }
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasValidDisplayName = (1...40).contains(normalizedDisplayName.count)
         let hasOwnedHat = avatarConfig.selectedHat.isOwned(in: sessionStore.ownedHats)
-        let hasChanges = normalizedDisplayName != profile.displayName || avatarConfig != profile.avatarConfig
-        return hasValidDisplayName && hasOwnedHat && hasChanges
+        return hasValidDisplayName && hasOwnedHat && hasProfileChanges
+    }
+
+    private var hasProfileChanges: Bool {
+        guard let profile = sessionStore.profile else { return false }
+        let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedDisplayName != profile.displayName || avatarConfig != profile.avatarConfig
     }
 
     private var ownedHats: [AvatarHat] {
@@ -5073,6 +5388,15 @@ private struct ProfilePage: View {
 
         let nextIndex = (currentIndex + offset + hats.count) % hats.count
         avatarConfig = avatarConfig.withHat(hats[nextIndex])
+    }
+
+    private func saveProfile() {
+        Task {
+            await sessionStore.updateProfile(
+                displayName: displayName,
+                avatarConfig: avatarConfig
+            )
+        }
     }
 }
 
@@ -5186,10 +5510,6 @@ private struct ProfileCardView: View {
             }
 
             Spacer(minLength: 0)
-
-            PicoIcon(.pencilRegular, size: 17)
-                .foregroundStyle(PicoColors.textSecondary)
-                .frame(width: 36, height: 36)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous))
@@ -5202,28 +5522,33 @@ private struct ProfileCardView: View {
 
 private struct ProfileAvatarOutfitCard: View {
     let avatarConfig: AvatarConfig
-    let canCycleHats: Bool
-    let previousHat: () -> Void
-    let nextHat: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: PicoSpacing.compact) {
-                UserAvatar(config: avatarConfig)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 190)
-            }
+        UserAvatar(config: avatarConfig)
             .frame(maxWidth: .infinity)
-                .padding(.top, PicoSpacing.standard)
-                .padding(.horizontal, PicoSpacing.cardPadding)
-                .padding(.bottom, PicoSpacing.compact)
+            .frame(height: 190)
+            .padding(.top, PicoSpacing.standard)
+            .padding(.horizontal, PicoSpacing.cardPadding)
+            .padding(.bottom, PicoSpacing.compact)
+            .picoCreamCard()
+    }
+}
 
-            PicoCardDivider(horizontalPadding: 0)
+private struct ProfileHatCollectionCard: View {
+    @Binding var selection: AvatarConfig
+    let ownedHats: Set<AvatarHat>
+    let canCycleHats: Bool
+    let showsSaveButton: Bool
+    let canSave: Bool
+    let isSaving: Bool
+    let previousHat: () -> Void
+    let nextHat: () -> Void
+    let save: () -> Void
 
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
             HStack(spacing: PicoSpacing.standard) {
-                Text("Hats")
-                    .font(PicoTypography.primaryLabelSemibold)
-                    .foregroundStyle(PicoColors.textPrimary)
+                StoreHatsSectionHeader()
 
                 Spacer(minLength: 0)
 
@@ -5232,10 +5557,42 @@ private struct ProfileAvatarOutfitCard: View {
                     hatButton(icon: .chevronRightRegular, action: nextHat)
                 }
             }
-            .padding(.horizontal, PicoCreamCardStyle.contentPadding)
-            .padding(.vertical, PicoSpacing.standard)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: PicoSpacing.standard) {
+                    ForEach(AvatarHat.allCases) { hat in
+                        hatCollectionItem(hat)
+                    }
+                }
+            }
+
+            if showsSaveButton {
+                HStack {
+                    Spacer(minLength: 0)
+
+                    Button(action: save) {
+                        HStack(spacing: PicoSpacing.tiny) {
+                            Text("Save")
+
+                            if isSaving {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                    .tint(PicoColors.primary)
+                            }
+                        }
+                        .font(PicoTypography.primaryLabelSemibold)
+                        .foregroundStyle(canSave && !isSaving ? PicoColors.primary : PicoColors.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSave || isSaving)
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
-        .picoCreamCard()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .picoCreamCard(
+            padding: PicoCreamCardStyle.contentPadding
+        )
     }
 
     private func hatButton(icon: PicoIconAsset, action: @escaping () -> Void) -> some View {
@@ -5246,31 +5603,6 @@ private struct ProfileAvatarOutfitCard: View {
         }
         .buttonStyle(.plain)
         .disabled(!canCycleHats)
-    }
-}
-
-private struct ProfileHatCollectionCard: View {
-    @Binding var selection: AvatarConfig
-    let ownedHats: Set<AvatarHat>
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-            Text("Hat Collection")
-                .font(PicoTypography.primaryLabelSemibold)
-                .foregroundStyle(PicoColors.textPrimary)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: PicoSpacing.standard) {
-                    ForEach(AvatarHat.allCases) { hat in
-                        hatCollectionItem(hat)
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .picoCreamCard(
-            padding: PicoCreamCardStyle.contentPadding
-        )
     }
 
     private func hatCollectionItem(_ hat: AvatarHat) -> some View {

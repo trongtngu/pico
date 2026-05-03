@@ -21,7 +21,7 @@ struct FriendsPage: View {
                     } label: {
                         FriendActionButtonContent(
                             title: "Add friend",
-                            icon: .userPlusRegular
+                            imageName: "Envolope"
                         )
                     }
                     .buttonStyle(.plain)
@@ -32,7 +32,7 @@ struct FriendsPage: View {
                     } label: {
                         FriendActionButtonContent(
                             title: "Requests",
-                            icon: .inboxRegular,
+                            imageName: "Letter",
                             badgeCount: friendStore.incomingRequests.count
                         )
                     }
@@ -40,14 +40,7 @@ struct FriendsPage: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                VStack(alignment: .leading, spacing: PicoSpacing.compact) {
-                    Text("Friends")
-                        .font(PicoTypography.statusLabel)
-                        .foregroundStyle(PicoColors.textSecondary)
-                        .textCase(.uppercase)
-
-                    friendsContent
-                }
+                friendsContent
 
                 if let notice = friendStore.notice {
                     FriendNoticeCard(text: notice)
@@ -230,7 +223,7 @@ private struct IncomingRequestsPage: View {
             FriendEmptyStateCard(
                 title: "No incoming requests",
                 message: "Friend requests sent to you will appear here.",
-                icon: .inboxRegular
+                imageName: "Letter"
             )
         } else {
             ForEach(friendStore.incomingRequests) { request in
@@ -444,13 +437,27 @@ private struct AddFriendSearchResultRow: View {
 
 private struct FriendActionButtonContent: View {
     let title: String
-    let icon: PicoIconAsset
+    let icon: PicoIconAsset?
+    let imageName: String?
     var badgeCount: Int = 0
+
+    init(title: String, icon: PicoIconAsset, badgeCount: Int = 0) {
+        self.title = title
+        self.icon = icon
+        self.imageName = nil
+        self.badgeCount = badgeCount
+    }
+
+    init(title: String, imageName: String, badgeCount: Int = 0) {
+        self.title = title
+        self.icon = nil
+        self.imageName = imageName
+        self.badgeCount = badgeCount
+    }
 
     var body: some View {
         HStack(spacing: PicoSpacing.iconTextGap) {
-            PicoIcon(icon, size: 15)
-                .foregroundStyle(PicoColors.primary)
+            iconView
 
             Text(title)
                 .font(PicoTypography.statusLabel)
@@ -477,6 +484,34 @@ private struct FriendActionButtonContent: View {
                 .stroke(PicoCreamCardStyle.border, lineWidth: PicoCreamCardStyle.borderWidth)
         )
         .shadow(color: PicoShadow.raisedCardColor, radius: PicoShadow.raisedCardRadius, x: PicoShadow.raisedCardX, y: PicoShadow.raisedCardY)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if let image {
+            Image(uiImage: image)
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 22, height: 22)
+        } else if let icon {
+            PicoIcon(icon, size: 15)
+                .foregroundStyle(PicoColors.primary)
+                .frame(width: 22, height: 22)
+        }
+    }
+
+    private var image: UIImage? {
+        guard let imageName else { return nil }
+        return [
+            "Icons/\(imageName)",
+            "Icons/\(imageName).png",
+            imageName,
+            "\(imageName).png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
     }
 }
 
@@ -592,12 +627,26 @@ private struct FriendCompactCardButtonStyle: ButtonStyle {
 private struct FriendEmptyStateCard: View {
     let title: String
     let message: String
-    let icon: PicoIconAsset
+    let icon: PicoIconAsset?
+    let imageName: String?
+
+    init(title: String, message: String, icon: PicoIconAsset) {
+        self.title = title
+        self.message = message
+        self.icon = icon
+        self.imageName = nil
+    }
+
+    init(title: String, message: String, imageName: String) {
+        self.title = title
+        self.message = message
+        self.icon = nil
+        self.imageName = imageName
+    }
 
     var body: some View {
         VStack(spacing: PicoSpacing.compact) {
-            PicoIcon(icon, size: 28)
-                .foregroundStyle(PicoColors.primary)
+            iconView
 
             Text(title)
                 .font(PicoTypography.cardTitle)
@@ -612,6 +661,34 @@ private struct FriendEmptyStateCard: View {
         .frame(maxWidth: .infinity)
         .padding(PicoSpacing.cardPadding)
         .picoCreamCard()
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if let image {
+            Image(uiImage: image)
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 34, height: 34)
+        } else if let icon {
+            PicoIcon(icon, size: 28)
+                .foregroundStyle(PicoColors.primary)
+                .frame(width: 34, height: 34)
+        }
+    }
+
+    private var image: UIImage? {
+        guard let imageName else { return nil }
+        return [
+            "Icons/\(imageName)",
+            "Icons/\(imageName).png",
+            imageName,
+            "\(imageName).png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
     }
 }
 

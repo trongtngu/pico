@@ -154,6 +154,7 @@ enum AvatarScarf: Int, Equatable {
     case green = 2
     case blue = 3
     case orange = 4
+    case purple = 5
 
     init?(bondLevel: Int) {
         switch bondLevel {
@@ -161,8 +162,10 @@ enum AvatarScarf: Int, Equatable {
             self = .green
         case 3:
             self = .blue
-        case 4...:
+        case 4:
             self = .orange
+        case 5...:
+            self = .purple
         default:
             return nil
         }
@@ -176,6 +179,8 @@ enum AvatarScarf: Int, Equatable {
             "Blue"
         case .orange:
             "Orange"
+        case .purple:
+            "Purple"
         }
     }
 }
@@ -466,6 +471,8 @@ private extension AvatarScarf {
             "Sky"
         case .orange:
             "Orange"
+        case .purple:
+            "Purple"
         }
     }
 
@@ -476,6 +483,8 @@ private extension AvatarScarf {
         case .blue:
             "Sky"
         case .orange:
+            "Orange"
+        case .purple:
             "Orange"
         }
     }
