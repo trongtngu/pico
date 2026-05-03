@@ -11,6 +11,7 @@ struct FriendsPage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var villageStore: VillageStore
+    @State private var selectedSection: SocialSection = .friends
 
     var body: some View {
         ScrollView {
@@ -20,7 +21,7 @@ struct FriendsPage: View {
                         AddFriendPage()
                     } label: {
                         FriendActionButtonContent(
-                            title: "Add friend",
+                            title: "Add Friend",
                             imageName: "Envolope"
                         )
                     }
@@ -40,10 +41,23 @@ struct FriendsPage: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                friendsContent
+                Picker("Social section", selection: $selectedSection) {
+                    ForEach(SocialSection.allCases) { section in
+                        Text(section.title)
+                            .tag(section)
+                    }
+                }
+                .pickerStyle(.segmented)
 
-                if let notice = friendStore.notice {
-                    FriendNoticeCard(text: notice)
+                switch selectedSection {
+                case .friends:
+                    friendsContent
+
+                    if let notice = friendStore.notice {
+                        FriendNoticeCard(text: notice)
+                    }
+                case .bonds:
+                    BondsContent()
                 }
             }
             .padding(PicoSpacing.standard)
@@ -89,6 +103,22 @@ struct FriendsPage: View {
         await friendStore.loadFriends(for: sessionStore.session)
         await friendStore.loadIncomingRequests(for: sessionStore.session)
         await villageStore.loadResidents(for: sessionStore.session)
+    }
+}
+
+private enum SocialSection: String, CaseIterable, Identifiable {
+    case friends
+    case bonds
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .friends:
+            "Friends"
+        case .bonds:
+            "Bonds"
+        }
     }
 }
 
@@ -720,6 +750,7 @@ struct FriendViews_Previews: PreviewProvider {
                 .environmentObject(AuthSessionStore.preview(session: AuthSession.preview))
                 .environmentObject(FriendStore.preview)
                 .environmentObject(VillageStore.preview)
+                .environmentObject(BondRewardClaimStore())
         }
     }
 }

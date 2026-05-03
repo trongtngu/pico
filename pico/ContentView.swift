@@ -322,7 +322,6 @@ private enum AppTab: String, CaseIterable, Identifiable {
     case home
     case fishing
     case store
-    case bonds
     case friends
     case settings
 
@@ -336,10 +335,8 @@ private enum AppTab: String, CaseIterable, Identifiable {
             "Fishing"
         case .store:
             "Store"
-        case .bonds:
-            "Bonds"
         case .friends:
-            "Friends"
+            "Social"
         case .settings:
             "Profile"
         }
@@ -366,8 +363,6 @@ private enum AppTab: String, CaseIterable, Identifiable {
             .sparklesRegular
         case .store:
             isSelected ? .buildingStorefrontSolid : .buildingStorefrontRegular
-        case .bonds:
-            isSelected ? .sparklesSolid : .sparklesRegular
         case .friends:
             isSelected ? .usersSolid : .usersRegular
         case .settings:
@@ -391,8 +386,6 @@ private enum AppTab: String, CaseIterable, Identifiable {
             FishingPage()
         case .store:
             StorePage()
-        case .bonds:
-            BondsPage()
         case .friends:
             FriendsPage()
         case .settings:
@@ -1000,6 +993,29 @@ private struct BondsPage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
     @EnvironmentObject private var villageStore: VillageStore
+
+    var body: some View {
+        ScrollView {
+            BondsContent()
+                .padding(PicoSpacing.standard)
+        }
+        .background(PicoColors.appBackground.ignoresSafeArea())
+        .task {
+            await villageStore.loadResidents(for: sessionStore.session)
+        }
+        .refreshable {
+            await refreshLiveVillageData(
+                session: sessionStore.session,
+                focusStore: focusStore,
+                villageStore: villageStore
+            )
+        }
+    }
+}
+
+struct BondsContent: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var villageStore: VillageStore
     @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
     @State private var claimedReward: BondRewardClaimCelebration?
 
@@ -1020,39 +1036,26 @@ private struct BondsPage: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: PicoSpacing.compact) {
-                bondsContent
+        VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+            bondsContent
 
-                if let notice = villageStore.notice {
-                    Text(notice)
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(PicoSpacing.standard)
-                        .background(
-                            RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous)
-                                .fill(PicoCreamCardStyle.background)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous)
-                                .stroke(PicoCreamCardStyle.border, lineWidth: PicoCreamCardStyle.borderWidth)
-                        )
-                }
+            if let notice = villageStore.notice {
+                Text(notice)
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(PicoSpacing.standard)
+                    .background(
+                        RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous)
+                            .fill(PicoCreamCardStyle.background)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous)
+                            .stroke(PicoCreamCardStyle.border, lineWidth: PicoCreamCardStyle.borderWidth)
+                    )
             }
-            .padding(PicoSpacing.standard)
         }
-        .background(PicoColors.appBackground.ignoresSafeArea())
-        .task {
-            await villageStore.loadResidents(for: sessionStore.session)
-        }
-        .refreshable {
-            await refreshLiveVillageData(
-                session: sessionStore.session,
-                focusStore: focusStore,
-                villageStore: villageStore
-            )
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $claimedReward) { celebration in
             BondRewardCelebrationSheet(celebration: celebration) {
                 claimedReward = nil
