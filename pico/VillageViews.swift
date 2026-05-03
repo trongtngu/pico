@@ -7,6 +7,7 @@
 
 import SpriteKit
 import SwiftUI
+import UIKit
 
 enum VillageMapStyle: String {
     case originalIsland
@@ -141,6 +142,37 @@ private struct FishingSpot {
     let isFlipped: Bool
 }
 
+private enum ForestDecoration {
+    case greenBush1
+    case greenBush2
+    case mushroomPoisones3
+    case mushroomPoisones4
+
+    var widthScale: CGFloat {
+        switch self {
+        case .greenBush1:
+            0.64
+        case .greenBush2:
+            0.62
+        case .mushroomPoisones3:
+            0.32
+        case .mushroomPoisones4:
+            0.30
+        }
+    }
+
+    func offset(in layout: VillageSceneLayout) -> CGVector {
+        switch self {
+        case .greenBush1, .greenBush2:
+            CGVector(dx: 0, dy: layout.tileHeight * 0.28)
+        case .mushroomPoisones3:
+            CGVector(dx: layout.tileWidth * 0.14, dy: layout.tileHeight * 0.14)
+        case .mushroomPoisones4:
+            CGVector(dx: -layout.tileWidth * 0.13, dy: layout.tileHeight * 0.16)
+        }
+    }
+}
+
 private final class VillageScene: SKScene {
     private static let tileAnchorPoint = CGPoint(x: 0.5, y: 0.71)
     private static let waterStartColumnByRow = [
@@ -149,6 +181,35 @@ private final class VillageScene: SKScene {
         2: 4,
         3: 5
     ]
+    private static let originalIslandFlowerTiles: Set<TileCoordinate> = [
+        TileCoordinate(row: 2, column: 1),
+        TileCoordinate(row: 4, column: 1),
+        TileCoordinate(row: 4, column: 4),
+        TileCoordinate(row: 6, column: 3)
+    ]
+    private static let originalIslandTreeTiles: Set<TileCoordinate> = [
+        TileCoordinate(row: 0, column: 0),
+        TileCoordinate(row: 5, column: 0)
+    ]
+    private static let originalIslandStage2TreeTiles: Set<TileCoordinate> = [
+        TileCoordinate(row: 6, column: 6)
+    ]
+    private static let originalIslandBushTiles: [TileCoordinate: ForestDecoration] = [
+        TileCoordinate(row: 2, column: 0): .greenBush1,
+        TileCoordinate(row: 6, column: 4): .greenBush2
+    ]
+    private static let originalIslandMushroomTiles: [TileCoordinate: ForestDecoration] = [
+        TileCoordinate(row: 3, column: 0): .mushroomPoisones4,
+        TileCoordinate(row: 3, column: 3): .mushroomPoisones3,
+        TileCoordinate(row: 5, column: 6): .mushroomPoisones3,
+        TileCoordinate(row: 6, column: 2): .mushroomPoisones4
+    ]
+    private static var originalIslandObstacleTiles: Set<TileCoordinate> {
+        originalIslandTreeTiles
+            .union(originalIslandStage2TreeTiles)
+            .union(originalIslandBushTiles.keys)
+            .union(originalIslandMushroomTiles.keys)
+    }
     private static let sandIslandWaterTiles: Set<TileCoordinate> = [
         TileCoordinate(row: 0, column: 0),
         TileCoordinate(row: 0, column: 1),
@@ -175,16 +236,14 @@ private final class VillageScene: SKScene {
         FishingSpot(tile: TileCoordinate(row: 4, column: 5), animationRow: 3, isFlipped: true)
     ]
     private static let sandMainFishingSpot = FishingSpot(
-        tile: TileCoordinate(row: 2, column: 5),
+        tile: TileCoordinate(row: 1, column: 1),
         animationRow: 1,
-        isFlipped: true
+        isFlipped: false
     )
     private static let sandVillagerFishingSpots = [
-        FishingSpot(tile: TileCoordinate(row: 1, column: 1), animationRow: 1, isFlipped: false),
         FishingSpot(tile: TileCoordinate(row: 1, column: 5), animationRow: 1, isFlipped: true),
         FishingSpot(tile: TileCoordinate(row: 5, column: 1), animationRow: 1, isFlipped: false),
-        FishingSpot(tile: TileCoordinate(row: 5, column: 5), animationRow: 1, isFlipped: true),
-        FishingSpot(tile: TileCoordinate(row: 6, column: 5), animationRow: 3, isFlipped: true)
+        FishingSpot(tile: TileCoordinate(row: 6, column: 5), animationRow: 1, isFlipped: true)
     ]
 
     private let gridSize: Int
@@ -248,24 +307,110 @@ private final class VillageScene: SKScene {
             tileAnchorPoint: Self.tileAnchorPoint
         )
         let grassTexture = Self.texture(named: "GrassBlock_3.png", in: Self.gridAtlas(named: "Grass"))
+        let flowerAtlas = Self.atlas(named: "Atlases/GrassBlocks_White_Flowers", fallbackName: "GrassBlocks_White_Flowers")
+        let flowerTextures = [
+            Self.texture(named: "GrassBlock_Flowers_White_1.png", in: flowerAtlas),
+            Self.texture(named: "GrassBlock_Flowers_White_2.png", in: flowerAtlas),
+            Self.texture(named: "GrassBlock_Flowers_White_3.png", in: flowerAtlas)
+        ]
         let sandAtlas = Self.gridAtlas(named: "SandBlocks")
         let sandTexture = Self.texture(named: "GridTile_Sand_Discrete.png", in: sandAtlas)
         let waterTexture = Self.texture(named: "GroundTile_Water.png", in: Self.gridAtlas(named: "Water"))
+        let treeTexture = Self.imageTexture(candidates: [
+            "Icons/AppleTree_Stage4",
+            "Icons/AppleTree_Stage4.png",
+            "AppleTree_Stage4",
+            "AppleTree_Stage4.png",
+            "Icons/Appletree_Stage4",
+            "Icons/Appletree_Stage4.png",
+            "Appletree_Stage4",
+            "Appletree_Stage4.png",
+            "Icons/Appletree_Spring-0",
+            "Icons/Appletree_Spring-0.png",
+            "Appletree_Spring-0",
+            "Appletree_Spring-0.png"
+        ])
+        let stage2TreeTexture = Self.imageTexture(candidates: [
+            "Icons/AppleTree_Stage2",
+            "Icons/AppleTree_Stage2.png",
+            "AppleTree_Stage2",
+            "AppleTree_Stage2.png",
+            "Icons/Appletree_Stage2",
+            "Icons/Appletree_Stage2.png",
+            "Appletree_Stage2",
+            "Appletree_Stage2.png",
+            "Icons/AppleTree_Stage4",
+            "Icons/AppleTree_Stage4.png",
+            "AppleTree_Stage4",
+            "AppleTree_Stage4.png"
+        ])
+        let bushTextures: [ForestDecoration: SKTexture] = [
+            .greenBush1: Self.imageTexture(candidates: [
+                "Icons/Bush_GreenBush1-0",
+                "Icons/Bush_GreenBush1-0.png",
+                "Bush_GreenBush1-0",
+                "Bush_GreenBush1-0.png"
+            ]),
+            .greenBush2: Self.imageTexture(candidates: [
+                "Icons/Bush_GreenBush2-0",
+                "Icons/Bush_GreenBush2-0.png",
+                "Bush_GreenBush2-0",
+                "Bush_GreenBush2-0.png"
+            ])
+        ].compactMapValues { $0 }
+        let mushroomTextures: [ForestDecoration: SKTexture] = [
+            .mushroomPoisones3: Self.imageTexture(candidates: [
+                "Icons/Mushroom_Poisones3",
+                "Icons/Mushroom_Poisones3.png",
+                "Mushroom_Poisones3",
+                "Mushroom_Poisones3.png"
+            ]),
+            .mushroomPoisones4: Self.imageTexture(candidates: [
+                "Icons/Mushroom_Poisones4",
+                "Icons/Mushroom_Poisones4.png",
+                "Mushroom_Poisones4",
+                "Mushroom_Poisones4.png"
+            ])
+        ].compactMapValues { $0 }
 
         for tile in TileCoordinate.all(in: gridSize) {
             let texture = texture(
                 for: tile,
                 grassTexture: grassTexture,
+                flowerTextures: flowerTextures,
                 sandTexture: sandTexture,
                 waterTexture: waterTexture
             )
             addTileSprite(texture: texture, tile: tile, layout: layout)
+        }
+
+        if let treeTexture {
+            for tile in Self.originalIslandTreeTiles where mapStyle == .originalIsland {
+                addTreeSprite(texture: treeTexture, tile: tile, layout: layout)
+            }
+        }
+
+        if let stage2TreeTexture {
+            for tile in Self.originalIslandStage2TreeTiles where mapStyle == .originalIsland {
+                addTreeSprite(texture: stage2TreeTexture, tile: tile, layout: layout, widthScale: 0.56)
+            }
+        }
+
+        for (tile, decoration) in Self.originalIslandBushTiles where mapStyle == .originalIsland {
+            guard let texture = bushTextures[decoration] else { continue }
+            addDecorationSprite(texture: texture, tile: tile, layout: layout, decoration: decoration)
+        }
+
+        for (tile, decoration) in Self.originalIslandMushroomTiles where mapStyle == .originalIsland {
+            guard let texture = mushroomTextures[decoration] else { continue }
+            addDecorationSprite(texture: texture, tile: tile, layout: layout, decoration: decoration)
         }
     }
 
     private func texture(
         for tile: TileCoordinate,
         grassTexture: SKTexture,
+        flowerTextures: [SKTexture],
         sandTexture: SKTexture,
         waterTexture: SKTexture
     ) -> SKTexture {
@@ -275,6 +420,11 @@ private final class VillageScene: SKScene {
 
         switch mapStyle {
         case .originalIsland:
+            if Self.originalIslandFlowerTiles.contains(tile), !flowerTextures.isEmpty {
+                let textureIndex = abs(tile.row * 7 + tile.column) % flowerTextures.count
+                return flowerTextures[textureIndex]
+            }
+
             return grassTexture
         case .sandIsland:
             return sandTexture
@@ -288,12 +438,26 @@ private final class VillageScene: SKScene {
     }
 
     private static func gridAtlas(named name: String) -> SKTextureAtlas {
-        let nestedAtlas = SKTextureAtlas(named: "Atlases/GridBlocks/\(name)")
+        atlas(named: "Atlases/GridBlocks/\(name)", fallbackName: name)
+    }
+
+    private static func atlas(named nestedName: String, fallbackName: String) -> SKTextureAtlas {
+        let nestedAtlas = SKTextureAtlas(named: nestedName)
         if !nestedAtlas.textureNames.isEmpty {
             return nestedAtlas
         }
 
-        return SKTextureAtlas(named: name)
+        return SKTextureAtlas(named: fallbackName)
+    }
+
+    private static func imageTexture(candidates: [String]) -> SKTexture? {
+        guard let image = candidates.lazy.compactMap({ UIImage(named: $0) }).first else {
+            return nil
+        }
+
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .linear
+        return texture
     }
 
     private func isWaterTile(_ tile: TileCoordinate) -> Bool {
@@ -314,7 +478,20 @@ private final class VillageScene: SKScene {
     }
 
     private var walkableTiles: [TileCoordinate] {
-        TileCoordinate.all(in: gridSize).filter { !isWaterTile($0) }
+        TileCoordinate.all(in: gridSize).filter { isWalkableTile($0) }
+    }
+
+    private func isWalkableTile(_ tile: TileCoordinate) -> Bool {
+        guard !isWaterTile(tile) else {
+            return false
+        }
+
+        switch mapStyle {
+        case .originalIsland:
+            return !Self.originalIslandObstacleTiles.contains(tile)
+        case .sandIsland:
+            return true
+        }
     }
 
     private var fishingSpots: [FishingSpot] {
@@ -337,6 +514,43 @@ private final class VillageScene: SKScene {
         sprite.size = CGSize(width: layout.tileWidth, height: layout.tileWidth)
         sprite.position = center
         sprite.zPosition = -center.y - 1_000
+        addChild(sprite)
+    }
+
+    private func addTreeSprite(
+        texture: SKTexture,
+        tile: TileCoordinate,
+        layout: VillageSceneLayout,
+        widthScale: CGFloat = 1.25
+    ) {
+        let basePosition = layout.characterPosition(for: tile)
+        let aspectRatio = texture.size().height / max(texture.size().width, 1)
+        let sprite = SKSpriteNode(texture: texture)
+        sprite.anchorPoint = CGPoint(x: 0.5, y: 0.12)
+        sprite.size = CGSize(width: layout.tileWidth * widthScale, height: layout.tileWidth * widthScale * aspectRatio)
+        sprite.position = basePosition
+        sprite.zPosition = -basePosition.y
+        addChild(sprite)
+    }
+
+    private func addDecorationSprite(
+        texture: SKTexture,
+        tile: TileCoordinate,
+        layout: VillageSceneLayout,
+        decoration: ForestDecoration
+    ) {
+        let center = layout.center(for: tile)
+        let offset = decoration.offset(in: layout)
+        let position = CGPoint(x: center.x + offset.dx, y: center.y + offset.dy)
+        let aspectRatio = texture.size().height / max(texture.size().width, 1)
+        let sprite = SKSpriteNode(texture: texture)
+        sprite.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        sprite.size = CGSize(
+            width: layout.tileWidth * decoration.widthScale,
+            height: layout.tileWidth * decoration.widthScale * aspectRatio
+        )
+        sprite.position = position
+        sprite.zPosition = -position.y
         addChild(sprite)
     }
 
