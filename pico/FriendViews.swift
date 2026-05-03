@@ -92,7 +92,7 @@ struct FriendsPage: View {
             FriendEmptyStateCard(
                 title: "No friends yet",
                 message: "Add a friend by searching for their username.",
-                icon: .usersRegular
+                imageName: "Envolope"
             )
         } else {
             FriendsListCard(friends: friendStore.friends)

@@ -1088,8 +1088,13 @@ struct BondsContent: View {
             .picoCreamCard(showsShadow: false)
         } else if bonds.isEmpty {
             VStack(spacing: PicoSpacing.compact) {
-                PicoIcon(.sparklesRegular, size: 28)
-                    .foregroundStyle(PicoColors.primary)
+                if let greenScarfImage {
+                    Image(uiImage: greenScarfImage)
+                        .renderingMode(.original)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 34, height: 34)
+                }
 
                 Text("No bonds yet")
                     .font(PicoTypography.cardTitle)
@@ -1111,6 +1116,18 @@ struct BondsContent: View {
                 onClaim: claimReward
             )
         }
+    }
+
+    private var greenScarfImage: UIImage? {
+        [
+            "Icons/Scarf_Green",
+            "Icons/Scarf_Green.png",
+            "Scarf_Green",
+            "Scarf_Green.png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
     }
 
     private func claimReward(for resident: VillageResident) {

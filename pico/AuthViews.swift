@@ -32,18 +32,56 @@ struct AuthGateView: View {
 }
 
 private struct AuthRootView: View {
+    @State private var route: AuthRoute = .entry
     @State private var mode: AuthMode = .login
 
     var body: some View {
         NavigationStack {
-            AuthFormView(mode: $mode)
-                .navigationTitle(mode.title)
-                .toolbarTitleDisplayMode(.large)
-                .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
-                .background(PicoColors.appBackground.ignoresSafeArea())
-                .tint(PicoColors.primary)
+            Group {
+                switch route {
+                case .entry:
+                    AuthEntryView(
+                        onGetStarted: {
+                            route = .onboarding
+                        },
+                        onLogin: {
+                            mode = .login
+                            route = .auth
+                        }
+                    )
+                    .navigationBarHidden(true)
+                case .onboarding:
+                    OnboardingSequenceView(
+                        onBackToEntry: {
+                            route = .entry
+                        },
+                        onSignup: {
+                            mode = .signup
+                            route = .auth
+                        },
+                        onLogin: {
+                            mode = .login
+                            route = .auth
+                        }
+                    )
+                    .navigationBarHidden(true)
+                case .auth:
+                    AuthFormView(mode: $mode)
+                        .navigationTitle(mode.title)
+                        .toolbarTitleDisplayMode(.large)
+                        .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
+                }
+            }
+            .background(PicoColors.appBackground.ignoresSafeArea())
+            .tint(PicoColors.primary)
         }
     }
+}
+
+private enum AuthRoute {
+    case entry
+    case onboarding
+    case auth
 }
 
 private struct AuthFormView: View {
@@ -212,7 +250,7 @@ private struct AuthFormView: View {
     }
 }
 
-private enum AuthMode: String, CaseIterable, Identifiable {
+enum AuthMode: String, CaseIterable, Identifiable {
     case login
     case signup
 
