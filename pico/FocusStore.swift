@@ -402,18 +402,33 @@ final class FocusStore: ObservableObject {
                 session: savedState.session,
                 authSession: authSession
             )
-            let optimisticSession = pendingResult.optimisticSession(from: savedState.session)
-            resultSession = pendingResult.shouldUseSavedSession(syncResult.session, originalSession: savedState.session)
-                ? syncResult.session
-                : optimisticSession
-            hasPendingResultSync = false
-            clearSavedState()
-            subscribeToRealtime(for: authSession, sessionID: nil)
-            await loadIncomingInvites(for: authSession)
+            await applySyncedPendingResult(
+                syncResult.session,
+                pendingResult: pendingResult,
+                originalSession: savedState.session,
+                authSession: authSession
+            )
         } catch {
             guard !error.isCancellation else { return }
+            if await recoverAlreadyAppliedPendingResult(
+                pendingResult,
+                session: savedState.session,
+                authSession: authSession
+            ) {
+                return
+            }
+
+            if error.isMissingFocusSessionState {
+                await clearStalePendingResult(
+                    pendingResult,
+                    session: savedState.session,
+                    authSession: authSession
+                )
+                return
+            }
+
             hasPendingResultSync = true
-            notice = "Result saved locally. It will retry when the app opens again."
+            notice = displayMessage(for: error) ?? "Result saved locally. It will retry when the app opens again."
         }
     }
 
@@ -686,20 +701,89 @@ final class FocusStore: ObservableObject {
                 session: session,
                 authSession: authSession
             )
-            resultSession = pendingResult.shouldUseSavedSession(syncResult.session, originalSession: session)
-                ? syncResult.session
-                : optimisticSession
-            hasPendingResultSync = false
-            clearSavedState()
-            subscribeToRealtime(for: authSession, sessionID: nil)
-            await loadIncomingInvites(for: authSession)
+            await applySyncedPendingResult(
+                syncResult.session,
+                pendingResult: pendingResult,
+                originalSession: session,
+                authSession: authSession
+            )
         } catch {
             if !error.isCancellation {
-                notice = "Result saved locally. It will retry when the app opens again."
+                let recovered = await recoverAlreadyAppliedPendingResult(
+                    pendingResult,
+                    session: session,
+                    authSession: authSession
+                )
+                if recovered {
+                    return
+                }
+
+                if error.isMissingFocusSessionState {
+                    await clearStalePendingResult(
+                        pendingResult,
+                        session: session,
+                        authSession: authSession
+                    )
+                } else {
+                    notice = displayMessage(for: error) ?? "Result saved locally. It will retry when the app opens again."
+                }
             }
         }
 
         isFinishing = false
+    }
+
+    private func applySyncedPendingResult(
+        _ syncedSession: FocusSession,
+        pendingResult: PendingFocusResult,
+        originalSession: FocusSession,
+        authSession: AuthSession
+    ) async {
+        let optimisticSession = pendingResult.optimisticSession(from: originalSession)
+        resultSession = pendingResult.shouldUseSavedSession(syncedSession, originalSession: originalSession)
+            ? syncedSession
+            : optimisticSession
+        hasPendingResultSync = false
+        notice = nil
+        clearSavedState()
+        subscribeToRealtime(for: authSession, sessionID: nil)
+        await loadIncomingInvites(for: authSession)
+    }
+
+    private func recoverAlreadyAppliedPendingResult(
+        _ pendingResult: PendingFocusResult,
+        session: FocusSession,
+        authSession: AuthSession
+    ) async -> Bool {
+        guard let userID = authSession.user?.id else { return false }
+
+        do {
+            let detail = try await focusService.fetchSessionDetail(session.id, for: authSession)
+            guard pendingResult.isAlreadyApplied(in: detail, for: userID) else { return false }
+
+            await applySyncedPendingResult(
+                detail.session,
+                pendingResult: pendingResult,
+                originalSession: session,
+                authSession: authSession
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func clearStalePendingResult(
+        _ pendingResult: PendingFocusResult,
+        session: FocusSession,
+        authSession: AuthSession
+    ) async {
+        resultSession = pendingResult.optimisticSession(from: session)
+        hasPendingResultSync = false
+        notice = nil
+        clearSavedState()
+        subscribeToRealtime(for: authSession, sessionID: nil)
+        await loadIncomingInvites(for: authSession)
     }
 
     private func makeCompletionContext(
@@ -913,6 +997,15 @@ private enum PendingFocusResult: Codable, Equatable {
             session.completed()
         case .interrupt:
             session.interrupted()
+        }
+    }
+
+    func isAlreadyApplied(in detail: FocusSessionDetail, for userID: UUID) -> Bool {
+        switch self {
+        case .complete:
+            detail.member(for: userID)?.isCompleted == true
+        case .interrupt:
+            detail.member(for: userID)?.isInterrupted == true || detail.session.status == .interrupted
         }
     }
 }

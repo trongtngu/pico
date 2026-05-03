@@ -3235,9 +3235,17 @@ private struct FocusCompleteCard: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(resultTitle)
-                .font(PicoTypography.body.weight(.bold))
+                .font(PicoTypography.cardTitle)
                 .foregroundStyle(PicoColors.textPrimary)
                 .multilineTextAlignment(.center)
+
+            if let resultSubtitle {
+                Text(resultSubtitle)
+                    .font(PicoTypography.bodySemibold)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, PicoSpacing.tiny)
+            }
 
             if let groupTogetherText {
                 Text(groupTogetherText)
@@ -3251,7 +3259,7 @@ private struct FocusCompleteCard: View {
 
             celebrationContent
 
-            if session.status != .completed {
+            if session.status != .completed && session.status != .interrupted {
                 rewardContent
                     .padding(.top, PicoSpacing.standard)
             }
@@ -3273,8 +3281,16 @@ private struct FocusCompleteCard: View {
                 .buttonStyle(PicoPrimaryButtonStyle())
                 .disabled(focusStore.isFinishing)
                 .padding(.top, PicoSpacing.standard)
+
+                if let notice = focusStore.notice {
+                    Text(notice)
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, PicoSpacing.tiny)
+                }
             } else {
-                Button("Done") {
+                Button(doneButtonTitle) {
                     done()
                 }
                 .buttonStyle(PicoPrimaryButtonStyle())
@@ -3292,12 +3308,20 @@ private struct FocusCompleteCard: View {
         case .completed:
             return "Focus Complete!"
         case .interrupted:
-            return "Session Interrupted"
+            return "Fishing line snapped!"
         case .cancelled:
             return "Session Cancelled"
         case .lobby, .launched, .live:
             return "Session"
         }
+    }
+
+    private var resultSubtitle: String? {
+        session.status == .interrupted ? "The catch slipped away" : nil
+    }
+
+    private var doneButtonTitle: String {
+        session.status == .interrupted ? "Try again" : "Done"
     }
 
     private var scoreLabel: String {
@@ -3336,7 +3360,10 @@ private struct FocusCompleteCard: View {
 
     @ViewBuilder
     private var celebrationContent: some View {
-        if let groupCompletionContext {
+        if session.status == .interrupted {
+            FocusInterruptedLineImage()
+                .padding(.top, PicoSpacing.standard)
+        } else if let groupCompletionContext {
             FocusCompleteGroupCelebrationView(
                 context: groupCompletionContext,
                 reduceMotion: reduceMotion,
@@ -3393,6 +3420,18 @@ private struct FocusCompleteCard: View {
 
     private func groupMetrics(for _: FocusCompletionContext) -> [FocusCompleteMetricModel] {
         []
+    }
+}
+
+private struct FocusInterruptedLineImage: View {
+    var body: some View {
+        if let image = UIImage(named: "Icons/String") ?? UIImage(named: "Icons/String.png") ?? UIImage(named: "String") {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 62)
+                .accessibilityHidden(true)
+        }
     }
 }
 
