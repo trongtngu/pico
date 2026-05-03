@@ -217,12 +217,14 @@ private final class VillageScene: SKScene {
         TileCoordinate(row: 0, column: 6),
         TileCoordinate(row: 1, column: 0),
         TileCoordinate(row: 1, column: 6),
-        TileCoordinate(row: 2, column: 6),
-        TileCoordinate(row: 4, column: 0),
+        TileCoordinate(row: 4, column: 6),
         TileCoordinate(row: 5, column: 0),
+        TileCoordinate(row: 5, column: 5),
         TileCoordinate(row: 5, column: 6),
         TileCoordinate(row: 6, column: 0),
         TileCoordinate(row: 6, column: 1),
+        TileCoordinate(row: 6, column: 4),
+        TileCoordinate(row: 6, column: 5),
         TileCoordinate(row: 6, column: 6)
     ]
     private static let originalMainFishingSpot = FishingSpot(
@@ -243,7 +245,7 @@ private final class VillageScene: SKScene {
     private static let sandVillagerFishingSpots = [
         FishingSpot(tile: TileCoordinate(row: 1, column: 5), animationRow: 1, isFlipped: true),
         FishingSpot(tile: TileCoordinate(row: 5, column: 1), animationRow: 1, isFlipped: false),
-        FishingSpot(tile: TileCoordinate(row: 6, column: 5), animationRow: 1, isFlipped: true)
+        FishingSpot(tile: TileCoordinate(row: 6, column: 3), animationRow: 1, isFlipped: true)
     ]
 
     private let gridSize: Int
