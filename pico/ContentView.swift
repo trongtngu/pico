@@ -2188,7 +2188,7 @@ private struct FocusModePickerSheetContent: View {
 
             if !focusStore.incomingInvites.isEmpty {
                 FocusModeRow(
-                    icon: .envelopeRegular,
+                    imageName: "Letter",
                     title: "Invites",
                     isHighlighted: true
                 ) {

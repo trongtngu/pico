@@ -61,6 +61,8 @@ struct VillageView: View {
     let currentUserProfile: UserProfile?
     var isFishingMode = false
     var mapStyle: VillageMapStyle = .originalIsland
+    var maxTileWidth: CGFloat = 72
+    var mapYOffset: CGFloat = 0
 
     private static let gridSize = 7
     private var gridResidents: [VillageResident] {
@@ -96,7 +98,9 @@ struct VillageView: View {
                     residents: gridResidents,
                     rewardSeed: rewardSeed,
                     isFishingMode: isFishingMode,
-                    mapStyle: mapStyle
+                    mapStyle: mapStyle,
+                    maxTileWidth: maxTileWidth,
+                    mapYOffset: mapYOffset
                 ),
                 options: [.allowsTransparency]
             )
@@ -253,6 +257,8 @@ private final class VillageScene: SKScene {
     private let rewardSeed: String
     private let isFishingMode: Bool
     private let mapStyle: VillageMapStyle
+    private let maxTileWidth: CGFloat
+    private let mapYOffset: CGFloat
     private var renderedSize: CGSize = .zero
     private var villagers: [VillagerNode] = []
     private var lastUpdateTime: TimeInterval?
@@ -263,13 +269,17 @@ private final class VillageScene: SKScene {
         residents: [VillageResident],
         rewardSeed: String,
         isFishingMode: Bool,
-        mapStyle: VillageMapStyle
+        mapStyle: VillageMapStyle,
+        maxTileWidth: CGFloat,
+        mapYOffset: CGFloat
     ) {
         self.gridSize = gridSize
         self.residents = Array(residents.prefix(gridSize * gridSize))
         self.rewardSeed = rewardSeed
         self.isFishingMode = isFishingMode
         self.mapStyle = mapStyle
+        self.maxTileWidth = maxTileWidth
+        self.mapYOffset = mapYOffset
         super.init(size: size)
         scaleMode = .resizeFill
         backgroundColor = .clear
@@ -306,7 +316,9 @@ private final class VillageScene: SKScene {
         let layout = VillageSceneLayout(
             size: size,
             gridSize: gridSize,
-            tileAnchorPoint: Self.tileAnchorPoint
+            tileAnchorPoint: Self.tileAnchorPoint,
+            maxTileWidth: maxTileWidth,
+            mapYOffset: mapYOffset
         )
         let grassTexture = Self.texture(named: "GrassBlock_3.png", in: Self.gridAtlas(named: "Grass"))
         let flowerAtlas = Self.atlas(named: "Atlases/GrassBlocks_White_Flowers", fallbackName: "GrassBlocks_White_Flowers")
@@ -560,7 +572,9 @@ private final class VillageScene: SKScene {
         let layout = VillageSceneLayout(
             size: size,
             gridSize: gridSize,
-            tileAnchorPoint: Self.tileAnchorPoint
+            tileAnchorPoint: Self.tileAnchorPoint,
+            maxTileWidth: maxTileWidth,
+            mapYOffset: mapYOffset
         )
         let spots = fishingSpots
         let normalTiles = walkableTiles
@@ -606,7 +620,9 @@ private final class VillageScene: SKScene {
         let layout = VillageSceneLayout(
             size: size,
             gridSize: gridSize,
-            tileAnchorPoint: Self.tileAnchorPoint
+            tileAnchorPoint: Self.tileAnchorPoint,
+            maxTileWidth: maxTileWidth,
+            mapYOffset: mapYOffset
         )
 
         for villager in villagers {
@@ -848,13 +864,15 @@ private struct VillageSceneLayout {
     let size: CGSize
     let gridSize: Int
     let tileAnchorPoint: CGPoint
+    var maxTileWidth: CGFloat = 72
+    var mapYOffset: CGFloat = 0
 
     var tileWidth: CGFloat {
         let horizontalTiles = 1 + CGFloat(gridSize - 1) * Self.tileSpacingScale
         let verticalTiles = 1 + CGFloat(gridSize - 1) * 0.5 * Self.tileSpacingScale
         let horizontalFit = size.width * 0.90 / horizontalTiles
         let verticalFit = size.height * 0.82 / verticalTiles
-        return max(34, min(horizontalFit, verticalFit, 72))
+        return max(34, min(horizontalFit, verticalFit, maxTileWidth))
     }
 
     var tileHeight: CGFloat {
@@ -882,7 +900,7 @@ private struct VillageSceneLayout {
         let verticalStep = tileHeight / 2 * Self.tileSpacingScale
         let boardHeight = CGFloat(gridSize - 1) * verticalStep * 2 + tileWidth
         let originX = size.width / 2
-        let originY = (size.height + boardHeight) / 2 - tileWidth * (1 - tileAnchorPoint.y)
+        let originY = (size.height + boardHeight) / 2 - tileWidth * (1 - tileAnchorPoint.y) + mapYOffset
         let x = originX + (column - row) * horizontalStep
         let y = originY - (column + row) * verticalStep
 
