@@ -20,7 +20,7 @@ struct AuthEntryView: View {
                     Spacer(minLength: max(28, proxy.safeAreaInsets.top + 20))
 
                     VStack(spacing: PicoSpacing.section) {
-                        OnboardingPlaceholderVisual(symbol: "P", subtitle: "Pico")
+                        AuthEntryAvatarView()
                             .frame(width: 180, height: 180)
 
                         VStack(spacing: PicoSpacing.compact) {
@@ -29,7 +29,7 @@ struct AuthEntryView: View {
                                 .foregroundStyle(PicoColors.textPrimary)
                                 .multilineTextAlignment(.center)
 
-                            Text("Focus together and collect sea creatures along the way.")
+                            Text("Guilt-free focus")
                                 .font(PicoTypography.body)
                                 .foregroundStyle(PicoColors.textSecondary)
                                 .multilineTextAlignment(.center)
@@ -57,6 +57,73 @@ struct AuthEntryView: View {
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
         .preferredColorScheme(.light)
+    }
+}
+
+private struct AuthEntryAvatarView: View {
+    var body: some View {
+        GeometryReader { proxy in
+            SpriteView(
+                scene: AuthEntryAvatarScene(size: proxy.size),
+                options: [.allowsTransparency]
+            )
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .background(Color.clear)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Happy Pico avatar holding a fishing pole"))
+    }
+}
+
+private final class AuthEntryAvatarScene: SKScene {
+    private static let idleActionKey = "auth-entry-idle"
+
+    private var renderedSize: CGSize = .zero
+
+    override init(size: CGSize) {
+        super.init(size: size)
+        scaleMode = .resizeFill
+        backgroundColor = .clear
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        nil
+    }
+
+    override func didMove(to view: SKView) {
+        view.allowsTransparency = true
+        view.isOpaque = false
+        view.backgroundColor = .clear
+        redrawIfNeeded()
+    }
+
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        redrawIfNeeded()
+    }
+
+    private func redrawIfNeeded() {
+        guard size.width > 0, size.height > 0, size != renderedSize else { return }
+
+        renderedSize = size
+        removeAllChildren()
+
+        let frames = AvatarLayeredAtlas.happyIdleFishingPoleFrames(
+            hat: .none,
+            scarf: .green,
+            filteringMode: .nearest
+        )
+        let sprite = AvatarLayeredSpriteNode(frames: frames)
+        let spriteSide = min(size.width, size.height)
+        sprite.spriteSize = CGSize(width: spriteSide, height: spriteSide)
+        sprite.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        sprite.runAnimation(
+            with: frames,
+            row: 0,
+            timePerFrame: 0.10,
+            key: Self.idleActionKey
+        )
+        addChild(sprite)
     }
 }
 
@@ -106,6 +173,9 @@ struct OnboardingSequenceView: View {
                         } else if currentStep == .friendBonds {
                             FriendBondsOnboardingVisual()
                                 .frame(height: visualHeight)
+                        } else if currentStep == .authHandoff {
+                            OnboardingFishingPoleVisual()
+                                .frame(height: visualHeight)
                         } else {
                             OnboardingPlaceholderVisual(
                                 symbol: currentStep.visualSymbol,
@@ -140,7 +210,7 @@ struct OnboardingSequenceView: View {
                                 OnboardingStartFishingTitle()
                             } else if currentStep == .stayFocused {
                                 OnboardingStayFocusedTitle()
-                            } else if currentStep != .brokenLine && currentStep != .rareFish && currentStep != .friendBonds {
+                            } else if currentStep != .brokenLine && currentStep != .rareFish && currentStep != .friendBonds && currentStep != .authHandoff {
                                 Text(currentStep.placeholderText)
                                     .font(PicoTypography.body)
                                     .foregroundStyle(PicoColors.textSecondary)
@@ -151,10 +221,10 @@ struct OnboardingSequenceView: View {
 
                         if currentStep == .authHandoff {
                             VStack(spacing: PicoSpacing.iconTextGap) {
-                                Button("Create account", action: onSignup)
+                                Button("Continue with email", action: onSignup)
                                     .buttonStyle(PicoPrimaryButtonStyle())
 
-                                Button("Log in", action: onLogin)
+                                Button("Already have an account? Log in", action: onLogin)
                                     .buttonStyle(PicoSecondaryButtonStyle())
                             }
                         } else {
@@ -231,7 +301,7 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
         case .friendBonds:
             "Create strong bonds with friends"
         case .authHandoff:
-            "Signup/login"
+            "Create an account"
         }
     }
 
@@ -248,7 +318,7 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
         case .friendBonds:
             ""
         case .authHandoff:
-            "Placeholder copy for creating an account or logging in before entering Pico."
+            ""
         }
     }
 
@@ -366,6 +436,20 @@ private struct FriendBondsOnboardingVisual: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Two happy Pico avatars wearing green scarves"))
+    }
+}
+
+private struct OnboardingFishingPoleVisual: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let avatarSize = min(proxy.size.width * 0.64, min(proxy.size.height * 0.64, 250))
+
+            AuthEntryAvatarView()
+                .frame(width: avatarSize, height: avatarSize)
+                .position(x: proxy.size.width / 2, y: proxy.size.height * 0.52)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Smiling Pico avatar wearing a green scarf and holding a fishing rod"))
     }
 }
 
@@ -573,7 +657,7 @@ private struct OnboardingStayFocusedTitle: View {
                     .font(titleFont)
                     .foregroundStyle(PicoColors.textPrimary)
 
-                OnboardingLanternImage()
+                OnboardingBucketImage()
                     .frame(width: 34, height: 34)
                     .accessibilityHidden(true)
             }
@@ -687,7 +771,7 @@ private struct OnboardingGreenScarfImage: View {
     }
 }
 
-private struct OnboardingLanternImage: View {
+private struct OnboardingBucketImage: View {
     var body: some View {
         Group {
             if let image {
@@ -702,14 +786,14 @@ private struct OnboardingLanternImage: View {
 
     private var image: UIImage? {
         [
-            "Icons/Lantern_On",
-            "Icons/Lantern_On.png",
-            "Icons/lantern_on",
-            "Icons/lantern_on.png",
-            "Lantern_On",
-            "Lantern_On.png",
-            "lantern_on",
-            "lantern_on.png"
+            "Icons/Bucket",
+            "Icons/Bucket.png",
+            "Icons/bucket",
+            "Icons/bucket.png",
+            "Bucket",
+            "Bucket.png",
+            "bucket",
+            "bucket.png"
         ]
             .lazy
             .compactMap { UIImage(named: $0) }

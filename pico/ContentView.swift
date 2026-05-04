@@ -4883,7 +4883,7 @@ private struct StorePage: View {
     private var berryBalanceCard: some View {
         HStack(alignment: .center, spacing: PicoSpacing.standard) {
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
-                Text("Berry balance")
+                Text("Berries")
                     .font(PicoTypography.caption)
                     .foregroundStyle(PicoColors.textSecondary)
 

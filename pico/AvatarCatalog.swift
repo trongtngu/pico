@@ -282,6 +282,33 @@ enum AvatarLayeredAtlas {
         )
     }
 
+    static func happyIdleFishingPoleFrames(
+        hat: AvatarHat,
+        scarf: AvatarScarf?,
+        filteringMode: SKTextureFilteringMode
+    ) -> AvatarLayeredFrames {
+        var layers = rawLayerNames(kind: .idleHappy, hat: hat, scarf: scarf).map { rawLayerName in
+            textureLayer(
+                named: rawLayerName,
+                kind: .idleHappy,
+                filteringMode: filteringMode
+            )
+        }
+        layers.append(
+            textureLayer(
+                named: "Layer13_FishingPole_Wood_Idle",
+                kind: .idleHappy,
+                filteringMode: filteringMode
+            )
+        )
+
+        return AvatarLayeredFrames(
+            rowCount: AvatarFinalAtlasKind.idleHappy.rowCount,
+            frameCount: AvatarFinalAtlasKind.idleHappy.frameCount,
+            layers: layers
+        )
+    }
+
     private static func fishingFrames(
         hat: AvatarHat,
         scarf: AvatarScarf?,
