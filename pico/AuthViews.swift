@@ -33,7 +33,8 @@ struct AuthGateView: View {
 
 private struct AuthRootView: View {
     @State private var route: AuthRoute = .entry
-    @State private var mode: AuthMode = .login
+    @State private var loginReturnRoute: AuthRoute = .entry
+    @State private var signupReturnRoute: AuthRoute = .onboarding
 
     var body: some View {
         NavigationStack {
@@ -45,8 +46,8 @@ private struct AuthRootView: View {
                             route = .onboarding
                         },
                         onLogin: {
-                            mode = .login
-                            route = .auth
+                            loginReturnRoute = .entry
+                            route = .login
                         }
                     )
                     .navigationBarHidden(true)
@@ -56,20 +57,39 @@ private struct AuthRootView: View {
                             route = .entry
                         },
                         onSignup: {
-                            mode = .signup
-                            route = .auth
+                            signupReturnRoute = .onboarding
+                            route = .signup
                         },
                         onLogin: {
-                            mode = .login
-                            route = .auth
+                            loginReturnRoute = .onboarding
+                            route = .login
                         }
                     )
                     .navigationBarHidden(true)
-                case .auth:
-                    AuthFormView(mode: $mode)
-                        .navigationTitle(mode.title)
-                        .toolbarTitleDisplayMode(.large)
-                        .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
+                case .login:
+                    LoginView {
+                        signupReturnRoute = .login
+                        route = .signup
+                    }
+                    .navigationTitle("")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button {
+                                route = loginReturnRoute
+                            } label: {
+                                PicoIcon(.chevronLeftRegular, size: 22)
+                                    .foregroundStyle(PicoColors.textPrimary)
+                            }
+                            .accessibilityLabel(Text("Back"))
+                        }
+                    }
+                    .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
+                case .signup:
+                    SignupFlowView {
+                        route = signupReturnRoute
+                    }
+                    .navigationBarHidden(true)
                 }
             }
             .background(PicoColors.appBackground.ignoresSafeArea())
@@ -81,196 +101,500 @@ private struct AuthRootView: View {
 private enum AuthRoute {
     case entry
     case onboarding
-    case auth
+    case login
+    case signup
 }
 
-private struct AuthFormView: View {
+struct LoginView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
-    @Binding var mode: AuthMode
+
+    let onSignup: () -> Void
+
     @State private var email = ""
     @State private var password = ""
-    @State private var confirmPassword = ""
-    @State private var username = ""
-    @State private var displayName = ""
 
-    private var normalizedUsername: String {
-        username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    private var normalizedEmail: String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var normalizedDisplayName: String {
-        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var canSubmit: Bool {
+        normalizedEmail.contains("@")
+            && password.count >= 6
+            && !sessionStore.isLoading
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: PicoSpacing.section) {
+                    Text("Welcome back")
+                    .font(PicoTypography.sectionTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .multilineTextAlignment(.center)
+
+                    VStack(spacing: PicoSpacing.iconTextGap) {
+                        TextField(
+                            "",
+                            text: $email,
+                            prompt: Text("Email").foregroundStyle(PicoColors.textMuted)
+                        )
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
+                        .autocorrectionDisabled()
+                        .submitLabel(.next)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .authFieldStyle()
+                        .onChange(of: email) {
+                            sessionStore.notice = nil
+                        }
+
+                        SecureField(
+                            "",
+                            text: $password,
+                            prompt: Text("Password").foregroundStyle(PicoColors.textMuted)
+                        )
+                        .textContentType(.password)
+                        .submitLabel(.go)
+                        .onSubmit {
+                            guard canSubmit else { return }
+
+                            Task {
+                                await submit()
+                            }
+                        }
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .authFieldStyle()
+                        .onChange(of: password) {
+                            sessionStore.notice = nil
+                        }
+
+                        if let notice = sessionStore.notice {
+                            Text(notice)
+                                .font(PicoTypography.caption)
+                                .foregroundStyle(PicoColors.textSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(PicoSpacing.standard)
+                                .background(
+                                    RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                                        .fill(PicoColors.softSurface)
+                                )
+                        }
+
+                        Button {
+                            Task {
+                                await submit()
+                            }
+                        } label: {
+                            ZStack {
+                                Text("Log in")
+                                    .frame(maxWidth: .infinity)
+                                    .multilineTextAlignment(.center)
+
+                                if sessionStore.isLoading {
+                                    HStack {
+                                        Spacer()
+
+                                        ProgressView()
+                                            .tint(PicoColors.textOnPrimary)
+                                    }
+                                }
+                            }
+                        }
+                        .disabled(!canSubmit)
+                        .opacity(canSubmit ? 1 : 0.62)
+                        .buttonStyle(PicoPrimaryButtonStyle())
+                    }
+
+                    HStack(spacing: PicoSpacing.tiny) {
+                        Text("Don't have an account?")
+                            .font(PicoTypography.caption)
+                            .foregroundStyle(PicoColors.textSecondary)
+
+                        Button("Sign up", action: onSignup)
+                            .font(PicoTypography.captionSemibold)
+                            .foregroundStyle(PicoColors.primary)
+                            .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: 520)
+                .padding(.horizontal, PicoSpacing.standard)
+                .padding(.vertical, PicoSpacing.largeSection)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: proxy.size.height, alignment: .center)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .background(PicoColors.appBackground.ignoresSafeArea())
+        .toolbarColorScheme(.light, for: .navigationBar)
+        .preferredColorScheme(.light)
+        .onAppear {
+            sessionStore.notice = nil
+        }
+        .onDisappear {
+            sessionStore.notice = nil
+        }
+    }
+
+    private func submit() async {
+        guard canSubmit else { return }
+
+        await sessionStore.signIn(email: normalizedEmail, password: password)
+    }
+}
+
+struct SignupFlowView: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+
+    let onBackToStart: () -> Void
+
+    @State private var currentStep: SignupStep = .email
+    @State private var draft = SignupDraft()
+
+    private var currentIndex: Int {
+        SignupStep.ordered.firstIndex(of: currentStep) ?? 0
+    }
+
+    private var normalizedEmail: String {
+        draft.email.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedUsername: String {
+        draft.username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var normalizedFirstName: String {
+        draft.firstName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var isUsernameValid: Bool {
         normalizedUsername.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) != nil
     }
 
-    private var isDisplayNameValid: Bool {
-        (1...40).contains(normalizedDisplayName.count)
+    private var isFirstNameValid: Bool {
+        (1...40).contains(normalizedFirstName.count)
     }
 
-    private var canSubmit: Bool {
-        let hasCredentials = email.contains("@") && password.count >= 6
-        guard mode == .signup else { return hasCredentials }
-        return hasCredentials
-            && password == confirmPassword
-            && isUsernameValid
-            && isDisplayNameValid
+    private var isPasswordValid: Bool {
+        draft.password.count >= 6
+            && draft.password.range(of: "[^A-Za-z0-9\\s]", options: .regularExpression) != nil
+    }
+
+    private var canContinue: Bool {
+        guard !sessionStore.isLoading else { return false }
+
+        switch currentStep {
+        case .email:
+            return normalizedEmail.contains("@")
+        case .firstName:
+            return isFirstNameValid
+        case .username:
+            return isUsernameValid
+        case .password:
+            return isPasswordValid
+        }
     }
 
     var body: some View {
-        Form {
-            Section {
-                Picker("Mode", selection: $mode) {
-                    ForEach(AuthMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-            .listRowBackground(PicoColors.softSurface)
-
-            Section {
-                TextField(
-                    "",
-                    text: $email,
-                    prompt: Text("Email").foregroundStyle(PicoColors.textMuted)
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                SignupProgressHeader(
+                    currentIndex: currentIndex,
+                    totalCount: SignupStep.ordered.count,
+                    onBack: goBack,
+                    topInset: proxy.safeAreaInsets.top
                 )
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                    .autocorrectionDisabled()
-                    .foregroundStyle(PicoColors.textPrimary)
 
-                SecureField(
-                    "",
-                    text: $password,
-                    prompt: Text("Password").foregroundStyle(PicoColors.textMuted)
-                )
-                    .textContentType(mode == .login ? .password : .newPassword)
-                    .foregroundStyle(PicoColors.textPrimary)
+                VStack(spacing: PicoSpacing.section) {
+                    Spacer(minLength: PicoSpacing.largeSection)
 
-                if mode == .signup {
-                    SecureField(
-                        "",
-                        text: $confirmPassword,
-                        prompt: Text("Confirm password").foregroundStyle(PicoColors.textMuted)
-                    )
-                        .textContentType(.newPassword)
-                        .foregroundStyle(PicoColors.textPrimary)
-                }
-            }
-            .listRowBackground(PicoColors.softSurface)
+                    VStack(spacing: PicoSpacing.compact) {
+                        Text(currentStep.title)
+                            .font(PicoTypography.sectionTitle)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .multilineTextAlignment(.center)
 
-            if mode == .signup {
-                Section {
-                    TextField(
-                        "",
-                        text: $username,
-                        prompt: Text("Username").foregroundStyle(PicoColors.textMuted)
-                    )
-                        .textInputAutocapitalization(.never)
-                        .textContentType(.username)
-                        .autocorrectionDisabled()
-                        .onChange(of: username) {
-                            username = normalizedUsername
-                        }
-                        .foregroundStyle(PicoColors.textPrimary)
-
-                    TextField(
-                        "",
-                        text: $displayName,
-                        prompt: Text("Display name").foregroundStyle(PicoColors.textMuted)
-                    )
-                        .textContentType(.name)
-                        .autocorrectionDisabled()
-                        .foregroundStyle(PicoColors.textPrimary)
-                } header: {
-                    Text("Profile")
-                        .foregroundStyle(PicoColors.textSecondary)
-                } footer: {
-                    Text("Username can use lowercase letters, numbers, and underscores.")
-                        .foregroundStyle(PicoColors.textSecondary)
-                }
-                .listRowBackground(PicoColors.softSurface)
-
-            }
-
-            if let notice = sessionStore.notice {
-                Section {
-                    Text(notice)
-                        .foregroundStyle(PicoColors.textSecondary)
-                }
-                .listRowBackground(PicoColors.softSurface)
-            }
-
-            Section {
-                Button {
-                    Task {
-                        await submit()
-                    }
-                } label: {
-                    HStack {
-                        Text(mode.actionTitle)
-                        Spacer()
-                        if sessionStore.isLoading {
-                            ProgressView()
+                        if let subtitle = currentStep.subtitle {
+                            Text(subtitle)
+                                .font(PicoTypography.body)
+                                .foregroundStyle(PicoColors.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
+
+                    signupField
+
+                    if let notice = sessionStore.notice {
+                        Text(notice)
+                            .font(PicoTypography.caption)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(PicoSpacing.standard)
+                            .background(
+                                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                                    .fill(PicoColors.softSurface)
+                            )
+                    }
+
+                    Button {
+                        Task {
+                            await handlePrimaryAction()
+                        }
+                    } label: {
+                        ZStack {
+                            Text(currentStep == SignupStep.ordered.last ? "Create account" : "Continue")
+                                .frame(maxWidth: .infinity)
+                                .multilineTextAlignment(.center)
+
+                            if sessionStore.isLoading {
+                                HStack {
+                                    Spacer()
+
+                                    ProgressView()
+                                        .tint(PicoColors.textOnPrimary)
+                                }
+                            }
+                        }
+                    }
+                    .disabled(!canContinue)
+                    .opacity(canContinue ? 1 : 0.62)
+                    .buttonStyle(PicoPrimaryButtonStyle())
+
+                    Spacer(minLength: PicoSpacing.largeSection)
                 }
-                .disabled(!canSubmit || sessionStore.isLoading)
-                .foregroundStyle(PicoColors.primary)
+                .frame(maxWidth: 520)
+                .padding(.horizontal, PicoSpacing.standard)
+                .padding(.bottom, max(PicoSpacing.section, proxy.safeAreaInsets.bottom + PicoSpacing.standard))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .listRowBackground(PicoColors.softSurface)
         }
-        .scrollContentBackground(.hidden)
         .background(PicoColors.appBackground.ignoresSafeArea())
-        .tint(PicoColors.primary)
-        .toolbarColorScheme(.light, for: .navigationBar)
         .preferredColorScheme(.light)
-        .onChange(of: mode) {
+        .onAppear {
             sessionStore.notice = nil
-            confirmPassword = ""
+        }
+        .onDisappear {
+            sessionStore.notice = nil
         }
     }
 
-    private func submit() async {
-        switch mode {
-        case .login:
-            await sessionStore.signIn(email: email, password: password)
-        case .signup:
-            await sessionStore.signUp(
-                email: email,
-                password: password,
-                username: normalizedUsername,
-                displayName: normalizedDisplayName,
-                avatarConfig: AvatarCatalog.defaultConfig
+    @ViewBuilder
+    private var signupField: some View {
+        switch currentStep {
+        case .email:
+            TextField(
+                "",
+                text: $draft.email,
+                prompt: Text("Email").foregroundStyle(PicoColors.textMuted)
             )
+            .textInputAutocapitalization(.never)
+            .keyboardType(.emailAddress)
+            .textContentType(.emailAddress)
+            .autocorrectionDisabled()
+            .foregroundStyle(PicoColors.textPrimary)
+            .authFieldStyle()
+            .onChange(of: draft.email) {
+                sessionStore.notice = nil
+            }
+        case .firstName:
+            TextField(
+                "",
+                text: $draft.firstName,
+                prompt: Text("First name").foregroundStyle(PicoColors.textMuted)
+            )
+            .textContentType(.givenName)
+            .autocorrectionDisabled()
+            .foregroundStyle(PicoColors.textPrimary)
+            .authFieldStyle()
+            .onChange(of: draft.firstName) {
+                sessionStore.notice = nil
+            }
+        case .username:
+            TextField(
+                "",
+                text: $draft.username,
+                prompt: Text("Username").foregroundStyle(PicoColors.textMuted)
+            )
+            .textInputAutocapitalization(.never)
+            .textContentType(.username)
+            .autocorrectionDisabled()
+            .foregroundStyle(PicoColors.textPrimary)
+            .authFieldStyle()
+            .onChange(of: draft.username) {
+                draft.username = normalizedUsername
+                sessionStore.notice = nil
+            }
+        case .password:
+            SecureField(
+                "",
+                text: $draft.password,
+                prompt: Text("Password").foregroundStyle(PicoColors.textMuted)
+            )
+            .textContentType(.newPassword)
+            .foregroundStyle(PicoColors.textPrimary)
+            .authFieldStyle()
+            .onChange(of: draft.password) {
+                sessionStore.notice = nil
+            }
+        }
+    }
+
+    private func goBack() {
+        guard currentIndex > 0 else {
+            onBackToStart()
+            return
+        }
+
+        currentStep = SignupStep.ordered[currentIndex - 1]
+    }
+
+    private func handlePrimaryAction() async {
+        guard canContinue else { return }
+
+        guard currentIndex < SignupStep.ordered.index(before: SignupStep.ordered.endIndex) else {
+            await submit()
+            return
+        }
+
+        currentStep = SignupStep.ordered[currentIndex + 1]
+    }
+
+    private func submit() async {
+        guard normalizedEmail.contains("@"),
+              isFirstNameValid,
+              isUsernameValid,
+              isPasswordValid
+        else {
+            return
+        }
+
+        await sessionStore.signUp(
+            email: normalizedEmail,
+            password: draft.password,
+            username: normalizedUsername,
+            displayName: normalizedFirstName,
+            avatarConfig: AvatarCatalog.defaultConfig
+        )
+
+        if sessionStore.session == nil,
+           sessionStore.notice?.hasPrefix("Account created.") == true {
+            await sessionStore.signIn(email: normalizedEmail, password: draft.password)
         }
     }
 }
 
-enum AuthMode: String, CaseIterable, Identifiable {
-    case login
-    case signup
+enum SignupStep: String, CaseIterable, Identifiable {
+    case email
+    case firstName
+    case username
+    case password
+
+    static let ordered: [SignupStep] = [
+        .email,
+        .firstName,
+        .username,
+        .password
+    ]
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .login:
-            "Login"
-        case .signup:
-            "Sign Up"
+        case .email:
+            "What's your email?"
+        case .firstName:
+            "What's your first name?"
+        case .username:
+            "Choose a username"
+        case .password:
+            "Create a password"
         }
     }
 
-    var actionTitle: String {
+    var subtitle: String? {
         switch self {
-        case .login:
-            "Log In"
-        case .signup:
-            "Create Account"
+        case .email:
+            nil
+        case .firstName:
+            nil
+        case .username:
+            "This is how friends will find you"
+        case .password:
+            "At least 6 characters\nOne or more special characters"
         }
+    }
+}
+
+struct SignupDraft {
+    var email = ""
+    var username = ""
+    var firstName = ""
+    var password = ""
+}
+
+private struct SignupProgressHeader: View {
+    let currentIndex: Int
+    let totalCount: Int
+    let onBack: () -> Void
+    let topInset: CGFloat
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            Button(action: onBack) {
+                PicoIcon(.chevronLeftRegular, size: 22)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .frame(width: 48, height: 48)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Back"))
+
+            SignupPageIndicator(
+                currentIndex: currentIndex,
+                totalCount: totalCount
+            )
+            .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, PicoSpacing.standard)
+        .padding(.top, max(0, topInset))
+        .frame(height: topInset + 56, alignment: .top)
+        .background(PicoColors.appBackground)
+    }
+}
+
+private struct SignupPageIndicator: View {
+    let currentIndex: Int
+    let totalCount: Int
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(0..<totalCount, id: \.self) { index in
+                Capsule(style: .continuous)
+                    .fill(index == currentIndex ? PicoColors.primary : PicoColors.border)
+                    .frame(height: 6)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Signup step \(currentIndex + 1) of \(totalCount)"))
+    }
+}
+
+private struct AuthFieldStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(PicoTypography.body)
+            .padding(.horizontal, PicoSpacing.standard)
+            .frame(minHeight: 52)
+            .background(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .fill(PicoColors.softSurface)
+            )
+    }
+}
+
+private extension View {
+    func authFieldStyle() -> some View {
+        modifier(AuthFieldStyle())
     }
 }

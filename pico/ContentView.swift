@@ -3325,7 +3325,7 @@ private struct FocusCompleteCard: View {
         case .completed:
             return "Focus Complete!"
         case .interrupted:
-            return "Fishing line snapped!"
+            return "Focus interrupted!"
         case .cancelled:
             return "Session Cancelled"
         case .lobby, .launched, .live:
@@ -3334,7 +3334,7 @@ private struct FocusCompleteCard: View {
     }
 
     private var resultSubtitle: String? {
-        session.status == .interrupted ? "The catch slipped away" : nil
+        session.status == .interrupted ? "The catch swam away" : nil
     }
 
     private var doneButtonTitle: String {
@@ -3378,7 +3378,7 @@ private struct FocusCompleteCard: View {
     @ViewBuilder
     private var celebrationContent: some View {
         if session.status == .interrupted {
-            FocusInterruptedLineImage()
+            FocusInterruptedEmptyBucketImage()
                 .padding(.top, PicoSpacing.standard)
         } else if let groupCompletionContext {
             FocusCompleteGroupCelebrationView(
@@ -3440,9 +3440,9 @@ private struct FocusCompleteCard: View {
     }
 }
 
-private struct FocusInterruptedLineImage: View {
+private struct FocusInterruptedEmptyBucketImage: View {
     var body: some View {
-        if let image = UIImage(named: "Icons/String") ?? UIImage(named: "Icons/String.png") ?? UIImage(named: "String") {
+        if let image = UIImage(named: "Icons/Empty_Bucket") ?? UIImage(named: "Icons/Empty_Bucket.png") ?? UIImage(named: "Empty_Bucket") {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()

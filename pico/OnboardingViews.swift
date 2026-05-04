@@ -197,6 +197,8 @@ struct OnboardingSequenceView: View {
                                     OnboardingRareSeaCreaturesTitle()
                                 } else if currentStep == .friendBonds {
                                     OnboardingFriendBondsTitle()
+                                } else if currentStep == .authHandoff {
+                                    OnboardingAuthHandoffTitle()
                                 } else {
                                     Text(currentStep.title)
                                         .font(PicoTypography.sectionTitle)
@@ -712,6 +714,19 @@ private struct OnboardingRareSeaCreaturesTitle: View {
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(OnboardingStep.rareFish.title))
+    }
+}
+
+private struct OnboardingAuthHandoffTitle: View {
+    private let titleFont = PicoTypography.primary(size: 24, weight: .semibold)
+
+    var body: some View {
+        Text(OnboardingStep.authHandoff.title)
+            .font(titleFont)
+            .foregroundStyle(PicoColors.textPrimary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(Text(OnboardingStep.authHandoff.title))
     }
 }
 
