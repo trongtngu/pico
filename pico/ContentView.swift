@@ -407,7 +407,6 @@ private struct HomePage: View {
     @State private var isStartFocusSheetPresented = false
     @State private var startFocusStep = StartFocusSheetStep.modePicker
     @State private var startFocusSheetHeight: CGFloat = 360
-    @State private var fishCatchSheetHeight: CGFloat = 430
     @State private var isFishCatchSheetPresented = false
     @State private var isFocusResultOverlayDismissed = false
 
@@ -486,22 +485,17 @@ private struct HomePage: View {
             .presentationBackground(PicoColors.appBackground)
             .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
         }
-        .sheet(isPresented: $isFishCatchSheetPresented, onDismiss: finishFishCatchFlow) {
-            FishCatchSuccessSheet(
+        .fullScreenCover(isPresented: $isFishCatchSheetPresented, onDismiss: finishFishCatchFlow) {
+            FishCatchRevealView(
                 catches: fishStore.currentSessionCatches,
                 catalog: fishStore.fishCatalog,
                 isLoading: fishStore.isLoadingSessionCatches,
                 notice: fishStore.notice,
-                measuredHeight: $fishCatchSheetHeight,
                 onRetry: retryCompletedSessionFishFetch,
                 onDone: {
                     isFishCatchSheetPresented = false
                 }
             )
-            .presentationDetents(fishCatchSheetDetents)
-            .presentationDragIndicator(.visible)
-            .presentationBackground(PicoColors.appBackground)
-            .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
         }
         .task {
             await villageStore.loadResidents(for: sessionStore.session)
@@ -538,32 +532,6 @@ private struct HomePage: View {
         }
         let height = max(220, ceil(startFocusSheetHeight))
         return [.height(height)]
-    }
-
-    private var fishCatchSheetDetents: Set<PresentationDetent> {
-        let expectedRowCount = max(
-            fishStore.currentSessionCatches.count,
-            fishStore.isLoadingSessionCatches ? 3 : 0
-        )
-        let height = max(300, estimatedFishCatchSheetHeight(rowCount: expectedRowCount), ceil(fishCatchSheetHeight))
-        return [.height(height)]
-    }
-
-    private func estimatedFishCatchSheetHeight(rowCount: Int) -> CGFloat {
-        guard rowCount > 0 else { return 0 }
-
-        let rowHeight: CGFloat = 80
-        let rowSpacing = CGFloat(max(0, rowCount - 1)) * PicoSpacing.iconTextGap
-        let rowsHeight = CGFloat(rowCount) * rowHeight + rowSpacing
-
-        return PicoSpacing.section
-            + 25
-            + PicoSpacing.standard
-            + rowsHeight
-            + PicoSpacing.standard
-            + 56
-            + PicoSpacing.compact
-            + PicoSpacing.standard
     }
 
     private var gridResidents: [VillageResident] {
@@ -668,14 +636,14 @@ private struct HomePage: View {
     }
 }
 
-private struct FishCatchSuccessSheet: View {
+private struct FishCatchRevealView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selectedPage = 0
 
     let catches: [FishCatch]
     let catalog: [FishCatalogItem]
     let isLoading: Bool
     let notice: String?
-    @Binding var measuredHeight: CGFloat
     let onRetry: () -> Void
     let onDone: () -> Void
 
@@ -690,95 +658,297 @@ private struct FishCatchSuccessSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: PicoSpacing.standard) {
-            Text("Fish caught")
-                .font(PicoTypography.cardTitle)
-                .foregroundStyle(PicoColors.textPrimary)
-                .multilineTextAlignment(.center)
+        ZStack {
+            revealBackground
 
-            ZStack {
-                FocusCompleteConfettiView(reduceMotion: reduceMotion)
-                    .frame(width: 280, height: 112)
-                    .allowsHitTesting(false)
-
-                if isLoading {
-                    ProgressView()
-                        .tint(PicoColors.primary)
-                } else if rows.isEmpty {
-                    VStack(spacing: PicoSpacing.compact) {
-                        Text(notice ?? "No fish found for this session yet.")
-                            .font(PicoTypography.body)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(3)
-
-                        Button("Retry") {
-                            onRetry()
-                        }
-                        .buttonStyle(PicoSecondaryButtonStyle())
-                    }
-                    .padding(.horizontal, PicoSpacing.cardPadding)
-                } else {
-                    VStack(spacing: PicoSpacing.iconTextGap) {
-                        ForEach(rows) { row in
-                            HStack(spacing: PicoSpacing.standard) {
-                                FishCatchIcon(
-                                    row: row,
-                                    size: 68,
-                                    imagePadding: 0,
-                                    showsChrome: false
-                                )
-
-                                Text(row.label)
-                                    .font(PicoTypography.fishName)
-                                    .foregroundStyle(PicoColors.textPrimary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.82)
-
-                                Spacer(minLength: 0)
-
-                                Text(row.rarityLabel)
-                                    .font(PicoTypography.largePill)
-                                    .foregroundStyle(row.rarityStyle.pillTextColor)
-                                    .padding(.horizontal, PicoSpacing.compact)
-                                    .padding(.vertical, 4)
-                                    .background(row.rarityStyle.pillBackgroundColor)
-                                    .clipShape(Capsule(style: .continuous))
-                            }
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 6)
-                            .background(row.rarityStyle.rowBackgroundColor)
-                            .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                                    .stroke(row.rarityStyle.rowBorderColor, lineWidth: 1)
-                            )
-                        }
-                    }
-                }
+            if isLoading {
+                loadingState
+            } else if rows.isEmpty {
+                emptyState
+            } else {
+                loadedReveal
             }
-            .frame(minHeight: 132)
+        }
+        .picoScreenBackground()
+        .onChange(of: rows.count) {
+            clampSelectedPage(for: rows.count)
+        }
+    }
+
+    private var revealBackground: some View {
+        ZStack {
+            PicoColors.appBackground
+            activeRarityStyle.rowBackgroundColor.opacity(rows.isEmpty ? 0 : 0.62)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var activeRarityStyle: PicoFishRarityStyle {
+        guard !rows.isEmpty else { return FishRarity.common.picoStyle }
+        return rows[min(selectedPage, rows.count - 1)].rarityStyle
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            ProgressView()
+                .tint(PicoColors.primary)
+                .scaleEffect(1.12)
+
+            Text("Getting your catch ready")
+                .font(PicoTypography.primaryLabelSemibold)
+                .foregroundStyle(PicoColors.textSecondary)
+        }
+        .padding(.horizontal, PicoSpacing.cardPadding)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            Spacer(minLength: 0)
+
+            Text(notice ?? "No fish found for this session yet.")
+                .font(PicoTypography.body)
+                .foregroundStyle(PicoColors.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+
+            Button("Retry") {
+                onRetry()
+            }
+            .buttonStyle(PicoSecondaryButtonStyle())
+
+            Spacer(minLength: 0)
 
             Button("Done") {
                 onDone()
             }
             .buttonStyle(PicoPrimaryButtonStyle())
-            .padding(.top, PicoSpacing.compact)
         }
         .padding(.horizontal, PicoSpacing.cardPadding)
-        .padding(.top, PicoSpacing.section)
-        .padding(.bottom, PicoSpacing.standard)
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: SheetHeightPreferenceKey.self, value: proxy.size.height)
+        .padding(.vertical, PicoSpacing.section)
+    }
+
+    private var loadedReveal: some View {
+        ZStack(alignment: .trailing) {
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer(minLength: 0)
+
+                    if selectedPage < rows.count {
+                        Button("Skip") {
+                            withAnimation(.snappy(duration: 0.24)) {
+                                selectedPage = rows.count
+                            }
+                        }
+                        .font(PicoTypography.smallAction)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(height: 32)
+                .padding(.top, PicoSpacing.standard)
+                .padding(.horizontal, PicoSpacing.cardPadding)
+
+                TabView(selection: $selectedPage) {
+                    ForEach(rows.indices, id: \.self) { index in
+                        FishCatchRevealPage(
+                            row: rows[index],
+                            reduceMotion: reduceMotion
+                        )
+                        .tag(index)
+                    }
+
+                    FishCatchSummaryPage(rows: rows)
+                        .tag(rows.count)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+
+                if selectedPage >= rows.count {
+                    Button("Done") {
+                        onDone()
+                    }
+                    .buttonStyle(PicoPrimaryButtonStyle())
+                    .padding(.horizontal, PicoSpacing.cardPadding)
+                    .padding(.bottom, PicoSpacing.standard)
+                } else {
+                    Color.clear
+                        .frame(height: 52)
+                        .padding(.bottom, PicoSpacing.standard)
+                }
             }
-        )
-        .onPreferenceChange(SheetHeightPreferenceKey.self) { height in
-            guard height > 0 else { return }
-            let roundedHeight = ceil(height)
-            guard abs(measuredHeight - roundedHeight) > 0.5 else { return }
-            measuredHeight = roundedHeight
+
+            if selectedPage < rows.count {
+                Button {
+                    advanceRevealPage()
+                } label: {
+                    PicoIcon(.chevronRightRegular, size: 21)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .frame(width: 48, height: 48)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, PicoSpacing.standard)
+                .accessibilityLabel(Text(selectedPage == rows.count - 1 ? "View catch summary" : "Next catch"))
+            }
         }
+    }
+
+    private func clampSelectedPage(for rowCount: Int) {
+        guard rowCount > 0 else {
+            selectedPage = 0
+            return
+        }
+
+        selectedPage = min(selectedPage, rowCount)
+    }
+
+    private func advanceRevealPage() {
+        withAnimation(.snappy(duration: 0.24)) {
+            selectedPage = min(selectedPage + 1, rows.count)
+        }
+    }
+}
+
+private struct FishCatchRevealPage: View {
+    let row: CaughtFishRow
+    let reduceMotion: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let heroSize = min(min(proxy.size.width * 0.66, proxy.size.height * 0.34), 260)
+
+            ZStack {
+                FocusCompleteConfettiView(reduceMotion: reduceMotion)
+                    .frame(width: min(proxy.size.width * 0.86, 360), height: min(proxy.size.height * 0.42, 280))
+                    .offset(y: -heroSize * 0.04)
+                    .allowsHitTesting(false)
+
+                VStack(spacing: PicoSpacing.standard) {
+                    Spacer(minLength: 0)
+
+                    VStack(spacing: PicoSpacing.iconTextGap) {
+                        Text("You caught")
+                            .font(PicoTypography.primaryLabelSemibold)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .multilineTextAlignment(.center)
+
+                        Text(row.label)
+                            .font(PicoTypography.screenTitle)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                            .minimumScaleFactor(0.58)
+                            .allowsTightening(true)
+
+                        FishCatchRarityBadge(row: row)
+                    }
+
+                    FishCatchHeroIcon(
+                        row: row,
+                        size: heroSize
+                    )
+                    .padding(.top, PicoSpacing.standard)
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, PicoSpacing.cardPadding)
+                .padding(.bottom, PicoSpacing.standard)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+private struct FishCatchHeroIcon: View {
+    let row: CaughtFishRow
+    let size: CGFloat
+
+    var body: some View {
+        FishCatchIcon(
+            row: row,
+            size: size,
+            imagePadding: 0,
+            showsChrome: false
+        )
+        .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(row.label))
+    }
+}
+
+private struct FishCatchRarityBadge: View {
+    let row: CaughtFishRow
+
+    var body: some View {
+        Text(row.rarityLabel)
+            .font(PicoTypography.largePill)
+            .foregroundStyle(row.rarityStyle.pillTextColor)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .padding(.horizontal, PicoSpacing.iconTextGap)
+            .padding(.vertical, 6)
+            .background(row.rarityStyle.pillBackgroundColor)
+            .clipShape(Capsule(style: .continuous))
+    }
+}
+
+private struct FishCatchSummaryPage: View {
+    let rows: [CaughtFishRow]
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            Spacer(minLength: 0)
+
+            Text("Catch summary")
+                .font(PicoTypography.sectionTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .multilineTextAlignment(.center)
+
+            VStack(spacing: PicoSpacing.iconTextGap) {
+                ForEach(rows) { row in
+                    FishCatchSummaryRow(row: row)
+                }
+            }
+            .padding(.top, PicoSpacing.compact)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, PicoSpacing.cardPadding)
+        .padding(.bottom, PicoSpacing.standard)
+    }
+}
+
+private struct FishCatchSummaryRow: View {
+    let row: CaughtFishRow
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.standard) {
+            FishCatchIcon(
+                row: row,
+                size: 58,
+                imagePadding: 0,
+                showsChrome: false
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(row.label)
+                    .font(PicoTypography.compactTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .allowsTightening(true)
+
+                FishCatchRarityBadge(row: row)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, PicoSpacing.standard)
+        .padding(.vertical, PicoSpacing.compact)
+        .background(row.rarityStyle.rowBackgroundColor)
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                .stroke(row.rarityStyle.rowBorderColor, lineWidth: 1)
+        )
     }
 }
 
@@ -1822,10 +1992,15 @@ private struct StartFocusCTA: View {
         case viewFish
     }
 
+    @State private var isReeling = false
+    @State private var reelProgress: CGFloat = 0
+
     let mode: Mode
     let incomingInviteCount: Int
     let isLoading: Bool
     let action: () -> Void
+
+    private let reelFillDuration: TimeInterval = 0.8
 
     private var title: String {
         switch mode {
@@ -1837,44 +2012,94 @@ private struct StartFocusCTA: View {
     }
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 2) {
-                HStack(spacing: PicoSpacing.compact) {
-                    Text(title)
-                        .font(PicoTypography.actionTitle)
-
-                    if mode == .startFocus || mode == .viewFish {
-                        FishingPoleCTAIcon()
-                            .frame(width: 25, height: 25)
-                            .accessibilityHidden(true)
-                    }
-
-                    if isLoading {
-                        ProgressView()
-                            .tint(foregroundColor)
-                    }
+        if mode == .viewFish {
+            ctaLabel
+                .contentShape(Capsule(style: .continuous))
+                .onLongPressGesture(
+                    minimumDuration: reelFillDuration,
+                    maximumDistance: 48,
+                    pressing: updateReelingState,
+                    perform: completeReel
+                )
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    action()
                 }
-                .frame(maxWidth: .infinity)
-                .multilineTextAlignment(.center)
-
-                if mode == .startFocus, incomingInviteCount > 0 {
-                    Text("\(incomingInviteCount) invite\(incomingInviteCount == 1 ? "" : "s") waiting")
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textOnPrimary.opacity(0.86))
-                        .frame(maxWidth: .infinity)
-                        .multilineTextAlignment(.center)
-                    }
+        } else {
+            Button(action: action) {
+                ctaLabel
             }
-            .foregroundStyle(foregroundColor)
-            .padding(.horizontal, PicoSpacing.section)
-            .frame(maxWidth: .infinity)
-            .frame(height: 64)
-            .background(background)
-            .overlay(border)
-            .clipShape(Capsule(style: .continuous))
-            .shadow(color: shadowColor, radius: 16, x: 0, y: 8)
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+    }
+
+    private var ctaLabel: some View {
+        VStack(spacing: 2) {
+            if mode == .viewFish {
+                Text("Hold down to pull")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(foregroundColor.opacity(0.86))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: PicoSpacing.compact) {
+                Text(displayTitle)
+                    .font(PicoTypography.actionTitle)
+
+                if mode == .startFocus || mode == .viewFish {
+                    FishingPoleCTAIcon()
+                        .frame(width: 25, height: 25)
+                        .accessibilityHidden(true)
+                }
+
+                if isLoading {
+                    ProgressView()
+                        .tint(foregroundColor)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(.center)
+
+            if mode == .startFocus, incomingInviteCount > 0 {
+                Text("\(incomingInviteCount) invite\(incomingInviteCount == 1 ? "" : "s") waiting")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textOnPrimary.opacity(0.86))
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .foregroundStyle(foregroundColor)
+        .padding(.horizontal, PicoSpacing.section)
+        .frame(maxWidth: .infinity)
+        .frame(height: 64)
+        .background(background)
+        .overlay(border)
+        .clipShape(Capsule(style: .continuous))
+        .shadow(color: shadowColor, radius: 16, x: 0, y: 8)
+    }
+
+    private var displayTitle: String {
+        mode == .viewFish && isReeling ? "Reeling..." : title
+    }
+
+    private func updateReelingState(_ isPressing: Bool) {
+        isReeling = isPressing
+
+        withAnimation(isPressing ? .linear(duration: reelFillDuration) : .easeOut(duration: 0.22)) {
+            reelProgress = isPressing ? 1 : 0
+        }
+    }
+
+    private func completeReel() {
+        action()
+
+        withAnimation(.easeOut(duration: 0.18)) {
+            reelProgress = 0
+            isReeling = false
+        }
     }
 
     private var foregroundColor: Color {
@@ -1887,12 +2112,24 @@ private struct StartFocusCTA: View {
     }
 
     private var background: some View {
-        Capsule(style: .continuous)
-            .fill(
-                mode == .viewFish
-                    ? Color(hex: 0x54B8FF)
-                    : PicoColors.primary
-            )
+        Group {
+            if mode == .viewFish {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule(style: .continuous)
+                            .fill(reelBaseColor)
+
+                        Rectangle()
+                            .fill(reelFillColor)
+                            .frame(width: proxy.size.width * reelProgress)
+                    }
+                    .clipShape(Capsule(style: .continuous))
+                }
+            } else {
+                Capsule(style: .continuous)
+                    .fill(PicoColors.primary)
+            }
+        }
     }
 
     private var border: some View {
@@ -1910,8 +2147,16 @@ private struct StartFocusCTA: View {
         case .startFocus:
             PicoColors.primary.opacity(0.24)
         case .viewFish:
-            Color(hex: 0x54B8FF).opacity(0.22)
+            reelBaseColor.opacity(0.22)
         }
+    }
+
+    private var reelBaseColor: Color {
+        Color(hex: 0x54B8FF)
+    }
+
+    private var reelFillColor: Color {
+        Color(hex: 0x2F9FEA)
     }
 }
 
@@ -4030,84 +4275,61 @@ private struct FishingCollectionHeader: View {
     let discoveryText: String
 
     var body: some View {
-        HStack(alignment: .center, spacing: PicoSpacing.standard) {
-            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
-                HStack(spacing: PicoSpacing.compact) {
-                    FishingCountIcon(name: "DarkWood_Chest")
-                        .frame(width: 24, height: 24)
-
-                    Text("Collection")
-                        .font(PicoTypography.cardTitle)
-                        .foregroundStyle(PicoColors.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-                }
-
-                Text(discoveryText)
-                    .font(PicoTypography.caption)
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .lineLimit(2)
-            }
-            .padding(.leading, PicoSpacing.compact)
-            .accessibilityElement(children: .combine)
-
-            Spacer(minLength: PicoSpacing.compact)
-
+        HStack(alignment: .center, spacing: PicoSpacing.compact) {
             Menu {
                 ForEach(PicoIsland.allCases) { island in
                     Button {
                         selectedIsland = island
                     } label: {
                         Label {
-                            Text(island.displayName)
+                            Text(island.collectionDisplayName)
                         } icon: {
-                            FishingCollectionIslandMenuIcon(
-                                island: island,
-                                isSelected: selectedIsland == island
-                            )
+                            FishingCollectionIslandMenuIcon(island: island)
                         }
                     }
                 }
             } label: {
-                FishingIslandSelectorIcon(island: selectedIsland)
-                    .frame(width: 30, height: 30)
-                    .padding(.horizontal, PicoSpacing.standard)
-                    .padding(.vertical, PicoSpacing.compact)
-                    .background(PicoColors.softSurface.opacity(0.76))
-                    .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                            .stroke(PicoColors.border.opacity(0.84), lineWidth: 1)
-                    )
+                HStack(spacing: PicoSpacing.compact) {
+                    FishingIslandSelectorIcon(island: selectedIsland)
+                        .frame(width: 24, height: 24)
+
+                    Text(selectedIsland.collectionDisplayName)
+                        .font(PicoTypography.cardTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+
+                    Image(systemName: "chevron.down")
+                        .font(PicoTypography.symbol(size: 11, weight: .bold))
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, PicoSpacing.compact)
+                .padding(.vertical, 2)
+                .contentShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text("Collection island, \(selectedIsland.displayName)"))
+            .accessibilityLabel(Text("Collection island, \(selectedIsland.collectionDisplayName)"))
+
+            Spacer(minLength: PicoSpacing.compact)
+
+            Text(discoveryText)
+                .font(PicoTypography.caption)
+                .foregroundStyle(PicoColors.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
+        .padding(.leading, PicoSpacing.compact)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct FishingCollectionIslandMenuIcon: View {
     let island: PicoIsland
-    let isSelected: Bool
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            FishingIslandSelectorIcon(island: island)
-                .frame(width: 22, height: 22)
-
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(PicoTypography.symbol(size: 10, weight: .bold))
-                    .foregroundStyle(PicoColors.primary)
-                    .background(
-                        Circle()
-                            .fill(PicoColors.surface)
-                            .frame(width: 8, height: 8)
-                    )
-                    .offset(x: 2, y: 2)
-            }
-        }
+        FishingIslandSelectorIcon(island: island)
+            .frame(width: 22, height: 22)
         .frame(width: 24, height: 24)
     }
 }
@@ -4373,14 +4595,23 @@ private struct FishingIslandSelectorIcon: View {
 }
 
 private extension PicoIsland {
+    var collectionDisplayName: String {
+        switch self {
+        case .original:
+            "Forest Island"
+        case .sand:
+            "Sand Island"
+        }
+    }
+
     var selectorImageCandidates: [String] {
         switch self {
         case .original:
             [
-                "Icons/IslandSelector_Default",
-                "Icons/IslandSelector_Default.png",
-                "IslandSelector_Default",
-                "IslandSelector_Default.png"
+                "Icons/Mushroom_Poisones3",
+                "Icons/Mushroom_Poisones3.png",
+                "Mushroom_Poisones3",
+                "Mushroom_Poisones3.png"
             ]
         case .sand:
             [

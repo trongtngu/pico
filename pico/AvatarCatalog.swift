@@ -89,13 +89,13 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
         case .none:
             0
         case .bambooHat:
-            3
+            5
         case .beanie:
-            10
-        case .bow:
             20
+        case .bow:
+            40
         case .helmet:
-            30
+            75
         }
     }
 
