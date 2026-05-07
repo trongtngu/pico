@@ -32,6 +32,7 @@ struct AppShellView: View {
     @StateObject private var berryStore = BerryStore()
     @StateObject private var fishStore = FishStore()
     @StateObject private var islandStore = IslandStore()
+    @StateObject private var dailySnapshotStore = DailySnapshotStore()
 
     var body: some View {
         ZStack {
@@ -80,6 +81,7 @@ struct AppShellView: View {
         .environmentObject(berryStore)
         .environmentObject(fishStore)
         .environmentObject(islandStore)
+        .environmentObject(dailySnapshotStore)
         .task(id: sessionStore.session?.user?.id) {
             await sessionStore.refreshSessionIfNeeded()
             islandStore.configure(for: sessionStore.session?.user?.id)
@@ -89,9 +91,11 @@ struct AppShellView: View {
                 villageStore.clear()
                 berryStore.clear()
                 fishStore.clear()
+                dailySnapshotStore.clear()
                 focusStore.updateKnownVillageResidentIDs(nil)
             } else {
                 await villageStore.loadResidents(for: sessionStore.session)
+                await dailySnapshotStore.loadToday(for: sessionStore.session)
                 focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
                 await berryStore.loadBalance(for: sessionStore.session)
             }
@@ -116,6 +120,9 @@ struct AppShellView: View {
             guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return }
             Task {
                 await villageStore.loadResidents(for: sessionStore.session)
+                if !focusStore.hasPendingResultSync {
+                    await dailySnapshotStore.loadToday(for: sessionStore.session)
+                }
                 await berryStore.loadBalance(for: sessionStore.session)
                 if fishStore.fishCatalog.isEmpty || fishStore.fishCatalogIslandID != islandStore.selectedIslandID {
                     await fishStore.loadFishCatalog(
@@ -135,6 +142,7 @@ struct AppShellView: View {
                   let resultSession = focusStore.resultSession,
                   resultSession.status == .completed else { return }
             Task {
+                await dailySnapshotStore.loadToday(for: sessionStore.session)
                 if fishStore.fishCatalog.isEmpty || fishStore.fishCatalogIslandID != islandStore.selectedIslandID {
                     await fishStore.loadFishCatalog(
                         for: sessionStore.session,
@@ -400,6 +408,7 @@ private struct HomePage: View {
     @EnvironmentObject private var berryStore: BerryStore
     @EnvironmentObject private var fishStore: FishStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var dailySnapshotStore: DailySnapshotStore
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var islandStore: IslandStore
     let showsMenuButton: Bool
@@ -409,6 +418,8 @@ private struct HomePage: View {
     @State private var startFocusSheetHeight: CGFloat = 360
     @State private var isFishCatchSheetPresented = false
     @State private var isFocusResultOverlayDismissed = false
+    @State private var isSnapshotDatePickerPresented = false
+    @State private var snapshotPickerDate = Date()
 
     var body: some View {
         ZStack {
@@ -416,16 +427,36 @@ private struct HomePage: View {
                 ScrollView {
                     GeometryReader { viewport in
                         VStack(spacing: PicoSpacing.compact) {
-                            VillageHeroSection(
-                                residents: gridResidents,
-                                currentUserProfile: sessionStore.profile,
-                                participants: islandParticipants,
-                                isLoading: villageStore.isLoadingResidents,
-                                notice: villageStore.notice,
-                                isFishingMode: focusStore.activeSession != nil,
-                                mapStyle: islandStore.selectedIsland.mapStyle,
-                                height: villageHeight(for: viewport.size.height)
-                            )
+                            ZStack(alignment: .topTrailing) {
+                                VillageHeroSection(
+                                    residents: [],
+                                    currentUserProfile: heroCurrentUserProfile,
+                                    participants: heroParticipants,
+                                    isLoading: heroIsLoading,
+                                    notice: heroNotice,
+                                    isFishingMode: focusStore.activeSession?.isLive == true,
+                                    mapStyle: heroMapStyle,
+                                    height: villageHeight(for: viewport.size.height)
+                                )
+
+                                if !isLiveFocusActive {
+                                    DailySnapshotDayNavigationOverlay(
+                                        selectedDayLabel: selectedDayLabel,
+                                        showsNoSnapshotStatus: showsNoSnapshotStatus,
+                                        showsTodayAction: !isSelectedDayToday,
+                                        isPreviousDisabled: dailySnapshotStore.isLoadingSnapshot,
+                                        isNextDisabled: isNextSnapshotDayDisabled,
+                                        previousAction: goToPreviousSnapshotDay,
+                                        nextAction: goToNextSnapshotDay,
+                                        chooseDateAction: presentSnapshotDatePicker,
+                                        todayAction: returnToToday
+                                    )
+                                    .padding(PicoSpacing.standard)
+                                }
+                            }
+                            .id(dailySnapshotStore.selectedDay)
+                            .transition(.opacity)
+                            .simultaneousGesture(snapshotDaySwipeGesture)
 
                         }
                         .padding(.horizontal, PicoSpacing.standard)
@@ -472,6 +503,7 @@ private struct HomePage: View {
             }
         }
         .animation(.snappy(duration: 0.22), value: focusStore.resultSession?.id)
+        .animation(.snappy(duration: 0.18), value: dailySnapshotStore.selectedDay)
         .picoScreenBackground()
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isStartFocusSheetPresented) {
@@ -482,6 +514,23 @@ private struct HomePage: View {
                 usesContentSizedLayout: usesContentSizedStartFocusSheet
             )
             .presentationDetents(startFocusSheetDetents)
+            .presentationDragIndicator(.visible)
+            .presentationBackground(PicoColors.appBackground)
+            .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
+        }
+        .sheet(isPresented: $isSnapshotDatePickerPresented) {
+            DailySnapshotDatePickerSheet(
+                selectedDate: $snapshotPickerDate,
+                maximumDate: snapshotPickerMaximumDate,
+                availableDays: Set(dailySnapshotStore.availableDays),
+                isLoadingAvailability: dailySnapshotStore.isLoadingRange,
+                hasLoadedAvailability: dailySnapshotStore.rangeLoadState == .loaded,
+                chooseAction: chooseSnapshotDate,
+                todayAction: {
+                    snapshotPickerDate = snapshotPickerMaximumDate
+                }
+            )
+            .presentationDetents([.height(560)])
             .presentationDragIndicator(.visible)
             .presentationBackground(PicoColors.appBackground)
             .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
@@ -500,6 +549,7 @@ private struct HomePage: View {
         }
         .task {
             await villageStore.loadResidents(for: sessionStore.session)
+            await dailySnapshotStore.loadToday(for: sessionStore.session)
             await berryStore.loadBalance(for: sessionStore.session)
         }
         .onChange(of: focusStore.resultSession) {
@@ -535,11 +585,102 @@ private struct HomePage: View {
         return [.height(height)]
     }
 
-    private var gridResidents: [VillageResident] {
-        Array(villageStore.residents.prefix(36))
+    private var heroCurrentUserProfile: UserProfile? {
+        if isLiveFocusActive {
+            return sessionStore.profile
+        }
+
+        return dailySnapshotStore.currentSnapshot?.owner ?? sessionStore.profile
     }
 
-    private var islandParticipants: [IslandParticipant]? {
+    private var heroParticipants: [IslandParticipant]? {
+        if isLiveFocusActive {
+            return activeIslandParticipants
+        }
+
+        if let snapshot = dailySnapshotStore.currentSnapshot {
+            return snapshot.islandParticipants
+        }
+
+        guard let currentUserProfile = sessionStore.profile else { return [] }
+        return [IslandParticipant(profile: currentUserProfile, bondLevel: 0)]
+    }
+
+    private var heroMapStyle: VillageMapStyle {
+        if isLiveFocusActive {
+            return islandStore.selectedIsland.mapStyle
+        }
+
+        return dailySnapshotStore.currentSnapshot?.mapStyle ?? islandStore.selectedIsland.mapStyle
+    }
+
+    private var heroIsLoading: Bool {
+        if isLiveFocusActive {
+            return villageStore.isLoadingResidents
+        }
+
+        return dailySnapshotStore.isLoadingSnapshot
+    }
+
+    private var heroNotice: String? {
+        if isLiveFocusActive {
+            return villageStore.notice
+        }
+
+        return dailySnapshotStore.notice
+    }
+
+    private var isLiveFocusActive: Bool {
+        focusStore.activeSession?.isLive == true
+    }
+
+    private var todaySnapshotDay: DailySnapshotDay {
+        DailySnapshotDay(date: Date(), calendar: .current)
+    }
+
+    private var isSelectedDayToday: Bool {
+        dailySnapshotStore.selectedDay == todaySnapshotDay
+    }
+
+    private var isNextSnapshotDayDisabled: Bool {
+        dailySnapshotStore.isLoadingSnapshot || dailySnapshotStore.selectedDay >= todaySnapshotDay
+    }
+
+    private var showsNoSnapshotStatus: Bool {
+        !dailySnapshotStore.isLoadingSnapshot
+            && dailySnapshotStore.loadState == .loaded
+            && dailySnapshotStore.currentSnapshot == nil
+    }
+
+    private var selectedDayLabel: String {
+        if isSelectedDayToday {
+            return "Today"
+        }
+
+        guard let date = dailySnapshotStore.selectedDay.date(calendar: .current) else {
+            return dailySnapshotStore.selectedDay.rawValue
+        }
+
+        return date.formatted(
+            .dateTime
+                .weekday(.abbreviated)
+                .month(.abbreviated)
+                .day()
+        )
+    }
+
+    private var snapshotPickerMaximumDate: Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+
+    private var snapshotDaySwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .local)
+            .onEnded { value in
+                handleSnapshotDaySwipe(value)
+            }
+    }
+
+    private var activeIslandParticipants: [IslandParticipant]? {
         guard let activeSession = focusStore.activeSession,
               activeSession.isLive else {
             return nil
@@ -617,8 +758,98 @@ private struct HomePage: View {
             focusStore: focusStore,
             villageStore: villageStore
         )
+        await dailySnapshotStore.loadSnapshot(
+            day: dailySnapshotStore.selectedDay,
+            for: sessionStore.session
+        )
         await friendStore.loadFriends(for: sessionStore.session)
         await berryStore.loadBalance(for: sessionStore.session)
+    }
+
+    private func goToPreviousSnapshotDay() {
+        loadSnapshotDay(offsetBy: -1)
+    }
+
+    private func goToNextSnapshotDay() {
+        guard !isNextSnapshotDayDisabled else { return }
+        loadSnapshotDay(offsetBy: 1)
+    }
+
+    private func returnToToday() {
+        Task {
+            await dailySnapshotStore.loadToday(for: sessionStore.session)
+        }
+    }
+
+    private func presentSnapshotDatePicker() {
+        guard !isLiveFocusActive else { return }
+
+        let calendar = Calendar.current
+        let selectedDate = dailySnapshotStore.selectedDay.date(calendar: calendar) ?? Date()
+        snapshotPickerDate = min(
+            calendar.startOfDay(for: selectedDate),
+            snapshotPickerMaximumDate
+        )
+        isSnapshotDatePickerPresented = true
+
+        Task {
+            await loadRecentSnapshotAvailability()
+        }
+    }
+
+    private func chooseSnapshotDate() {
+        let calendar = Calendar.current
+        let clampedDate = min(
+            calendar.startOfDay(for: snapshotPickerDate),
+            snapshotPickerMaximumDate
+        )
+        let day = DailySnapshotDay(date: clampedDate, calendar: calendar)
+
+        isSnapshotDatePickerPresented = false
+        Task {
+            await dailySnapshotStore.loadSnapshot(day: day, for: sessionStore.session)
+        }
+    }
+
+    private func loadRecentSnapshotAvailability() async {
+        let calendar = Calendar.current
+        let endDate = snapshotPickerMaximumDate
+        guard let startDate = calendar.date(byAdding: .day, value: -89, to: endDate) else { return }
+
+        await dailySnapshotStore.loadSnapshotRange(
+            startDay: DailySnapshotDay(date: startDate, calendar: calendar),
+            endDay: DailySnapshotDay(date: endDate, calendar: calendar),
+            for: sessionStore.session
+        )
+    }
+
+    private func loadSnapshotDay(offsetBy dayOffset: Int) {
+        let calendar = Calendar.current
+        let selectedDate = dailySnapshotStore.selectedDay.date(calendar: calendar) ?? Date()
+        guard let nextDate = calendar.date(byAdding: .day, value: dayOffset, to: selectedDate) else { return }
+        let nextDay = DailySnapshotDay(date: nextDate, calendar: calendar)
+
+        Task {
+            await dailySnapshotStore.loadSnapshot(day: nextDay, for: sessionStore.session)
+        }
+    }
+
+    private func handleSnapshotDaySwipe(_ value: DragGesture.Value) {
+        guard !isLiveFocusActive, !dailySnapshotStore.isLoadingSnapshot else { return }
+
+        let horizontalDistance = value.translation.width
+        let verticalDistance = value.translation.height
+        let horizontalThreshold: CGFloat = 56
+        guard abs(horizontalDistance) >= horizontalThreshold,
+              abs(horizontalDistance) > abs(verticalDistance) * 1.35 else {
+            return
+        }
+
+        if horizontalDistance < 0 {
+            goToNextSnapshotDay()
+        } else {
+            goToPreviousSnapshotDay()
+        }
     }
 
     private func villageHeight(for viewportHeight: CGFloat) -> CGFloat {
@@ -1980,6 +2211,239 @@ private struct VillageHeroSection: View {
                 Capsule(style: .continuous)
                     .stroke(PicoColors.border, lineWidth: 1)
             )
+        }
+    }
+}
+
+private struct DailySnapshotDayNavigationOverlay: View {
+    let selectedDayLabel: String
+    let showsNoSnapshotStatus: Bool
+    let showsTodayAction: Bool
+    let isPreviousDisabled: Bool
+    let isNextDisabled: Bool
+    let previousAction: () -> Void
+    let nextAction: () -> Void
+    let chooseDateAction: () -> Void
+    let todayAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            dayButton(
+                icon: .chevronLeftRegular,
+                accessibilityLabel: "Previous day",
+                isDisabled: isPreviousDisabled,
+                action: previousAction
+            )
+
+            Button(action: chooseDateAction) {
+                VStack(spacing: 1) {
+                    Text(selectedDayLabel)
+                        .font(PicoTypography.captionSemibold)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+
+                    if showsNoSnapshotStatus {
+                        Text("No snapshot")
+                            .font(PicoTypography.tinyCaptionBold)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .lineLimit(1)
+                    } else {
+                        Text(" ")
+                            .font(PicoTypography.tinyCaptionBold)
+                            .lineLimit(1)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .frame(minWidth: 74)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Choose snapshot date"))
+            .accessibilityValue(Text(selectedDayLabel))
+
+            dayButton(
+                icon: .chevronRightRegular,
+                accessibilityLabel: "Next day",
+                isDisabled: isNextDisabled,
+                action: nextAction
+            )
+
+            if showsTodayAction {
+                Button(action: todayAction) {
+                    Text("Today")
+                        .font(PicoTypography.tinyCaptionBold)
+                        .foregroundStyle(PicoColors.primary)
+                        .padding(.horizontal, PicoSpacing.compact)
+                        .frame(height: 30)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Return to today"))
+            }
+        }
+        .padding(.horizontal, PicoSpacing.compact)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(PicoColors.surface.opacity(0.95))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
+    }
+
+    private func dayButton(
+        icon: PicoIconAsset,
+        accessibilityLabel: String,
+        isDisabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            PicoIcon(icon, size: 16)
+                .foregroundStyle(isDisabled ? PicoColors.textMuted : PicoColors.textSecondary)
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.48 : 1)
+        .accessibilityLabel(Text(accessibilityLabel))
+    }
+}
+
+private struct DailySnapshotDatePickerSheet: View {
+    @Binding var selectedDate: Date
+    let maximumDate: Date
+    let availableDays: Set<DailySnapshotDay>
+    let isLoadingAvailability: Bool
+    let hasLoadedAvailability: Bool
+    let chooseAction: () -> Void
+    let todayAction: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private var calendar: Calendar {
+        .current
+    }
+
+    private var selectedSnapshotDay: DailySnapshotDay {
+        DailySnapshotDay(date: selectedDate, calendar: calendar)
+    }
+
+    private var isSelectedDateToday: Bool {
+        selectedSnapshotDay == DailySnapshotDay(date: maximumDate, calendar: calendar)
+    }
+
+    private var availabilityText: String {
+        if isLoadingAvailability {
+            return "Loading snapshot days"
+        }
+
+        if availableDays.isEmpty && !hasLoadedAvailability {
+            return "Snapshot availability will appear after choosing a day"
+        }
+
+        if availableDays.contains(selectedSnapshotDay) {
+            return "Snapshot available"
+        }
+
+        return "No snapshot"
+    }
+
+    private var availabilityIcon: PicoIconAsset {
+        availableDays.contains(selectedSnapshotDay) ? .sparklesRegular : .infoRegular
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+                VStack(alignment: .leading, spacing: PicoSpacing.iconTextGap) {
+                    Text("Snapshot Date")
+                        .font(PicoTypography.compactTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
+
+                    Text(
+                        selectedDate.formatted(
+                            .dateTime
+                                .weekday(.wide)
+                                .month(.wide)
+                                .day()
+                                .year()
+                        )
+                    )
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .accessibilityLabel(Text("Selected snapshot date"))
+                }
+
+                DatePicker(
+                    "Selected snapshot date",
+                    selection: $selectedDate,
+                    in: ...maximumDate,
+                    displayedComponents: [.date]
+                )
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .tint(PicoColors.primary)
+                .accessibilityLabel(Text("Selected snapshot date"))
+
+                HStack(spacing: PicoSpacing.iconTextGap) {
+                    if isLoadingAvailability {
+                        ProgressView()
+                            .tint(PicoColors.primary)
+                    } else {
+                        PicoIcon(availabilityIcon, size: 16)
+                            .foregroundStyle(
+                                availableDays.contains(selectedSnapshotDay)
+                                    ? PicoColors.primary
+                                    : PicoColors.textSecondary
+                            )
+                    }
+
+                    Text(availabilityText)
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, PicoSpacing.standard)
+                .padding(.vertical, PicoSpacing.compact)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(PicoColors.surface.opacity(0.92))
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(PicoColors.border, lineWidth: 1)
+                )
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: PicoSpacing.compact) {
+                    if !isSelectedDateToday {
+                        Button(action: todayAction) {
+                            Text("Today")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(PicoSecondaryButtonStyle())
+                        .accessibilityLabel(Text("Return to today"))
+                    }
+
+                    Button(action: chooseAction) {
+                        Text("Choose")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PicoPrimaryButtonStyle())
+                    .accessibilityLabel(Text("Choose snapshot date"))
+                }
+            }
+            .padding(PicoCreamCardStyle.contentPadding)
+            .background(PicoColors.appBackground)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }
