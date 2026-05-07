@@ -59,34 +59,44 @@ struct VillagePage: View {
 struct VillageView: View {
     let residents: [VillageResident]
     let currentUserProfile: UserProfile?
+    var participants: [IslandParticipant]? = nil
     var isFishingMode = false
     var mapStyle: VillageMapStyle = .originalIsland
     var maxTileWidth: CGFloat = 72
     var mapYOffset: CGFloat = 0
 
     private static let gridSize = 7
-    private var gridResidents: [VillageResident] {
-        guard let currentUserProfile else { return residents }
+    private var gridParticipants: [IslandParticipant] {
+        if let participants {
+            return Array(participants.prefix(Self.gridSize * Self.gridSize))
+        }
 
-        let currentUserResident = VillageResident(
+        guard let currentUserProfile else {
+            return residents.map(IslandParticipant.init(resident:))
+        }
+
+        let currentUserParticipant = IslandParticipant(
             profile: currentUserProfile,
-            bondLevel: 0,
-            completedPairSessions: 0,
-            unlockedAt: nil
+            bondLevel: 0
         )
-        return [currentUserResident] + residents.filter { $0.profile.userID != currentUserProfile.userID }
+        return [currentUserParticipant] + residents
+            .filter { $0.profile.userID != currentUserProfile.userID }
+            .map(IslandParticipant.init(resident:))
     }
 
     private var sceneID: String {
-        let residentID = gridResidents
-            .map { "\($0.id.uuidString)-\($0.profile.avatarConfig.selectedHat.rawValue)-\($0.bondLevel)" }
+        let participantID = gridParticipants
+            .map {
+                let avatarConfig = $0.profile.avatarConfig
+                return "\($0.id.uuidString)-\(avatarConfig.version)-\(avatarConfig.character)-\(avatarConfig.hat)-\($0.bondLevel)"
+            }
             .joined(separator: "|")
-        return "\(rewardSeed)-\(isFishingMode)-\(mapStyle.rawValue)-\(residentID)"
+        return "\(rewardSeed)-\(isFishingMode)-\(mapStyle.rawValue)-\(participantID)"
     }
 
     private var rewardSeed: String {
         currentUserProfile?.userID.uuidString
-            ?? gridResidents.map(\.id.uuidString).joined(separator: "|")
+            ?? gridParticipants.map(\.id.uuidString).joined(separator: "|")
     }
 
     var body: some View {
@@ -95,7 +105,7 @@ struct VillageView: View {
                 scene: VillageScene(
                     size: proxy.size,
                     gridSize: Self.gridSize,
-                    residents: gridResidents,
+                    participants: gridParticipants,
                     rewardSeed: rewardSeed,
                     isFishingMode: isFishingMode,
                     mapStyle: mapStyle,
@@ -253,7 +263,7 @@ private final class VillageScene: SKScene {
     ]
 
     private let gridSize: Int
-    private let residents: [VillageResident]
+    private let participants: [IslandParticipant]
     private let rewardSeed: String
     private let isFishingMode: Bool
     private let mapStyle: VillageMapStyle
@@ -266,7 +276,7 @@ private final class VillageScene: SKScene {
     init(
         size: CGSize,
         gridSize: Int,
-        residents: [VillageResident],
+        participants: [IslandParticipant],
         rewardSeed: String,
         isFishingMode: Bool,
         mapStyle: VillageMapStyle,
@@ -274,7 +284,7 @@ private final class VillageScene: SKScene {
         mapYOffset: CGFloat
     ) {
         self.gridSize = gridSize
-        self.residents = Array(residents.prefix(gridSize * gridSize))
+        self.participants = Array(participants.prefix(gridSize * gridSize))
         self.rewardSeed = rewardSeed
         self.isFishingMode = isFishingMode
         self.mapStyle = mapStyle
@@ -578,14 +588,14 @@ private final class VillageScene: SKScene {
         )
         let spots = fishingSpots
         let normalTiles = walkableTiles
-        let visibleResidents = residents.prefix(isFishingMode ? spots.count : normalTiles.count)
+        let visibleParticipants = participants.prefix(isFishingMode ? spots.count : normalTiles.count)
 
-        for (index, resident) in visibleResidents.enumerated() {
+        for (index, participant) in visibleParticipants.enumerated() {
             let fishingSpot = isFishingMode ? spots[index] : nil
             let tile = fishingSpot?.tile ?? startingTile(for: index, in: normalTiles)
             let startPosition = layout.characterPosition(for: tile)
-            let selectedHat = resident.profile.avatarConfig.selectedHat
-            let scarf = AvatarScarf(bondLevel: resident.bondLevel)
+            let selectedHat = participant.profile.avatarConfig.selectedHat
+            let scarf = AvatarScarf(bondLevel: participant.bondLevel)
             let idleFrames = AvatarIdleFrames(hat: selectedHat, scarf: scarf)
             let walkFrames = VillagerWalkFrames(hat: selectedHat, scarf: scarf)
             let fishingFrames = AvatarFishingFrames(hat: selectedHat, scarf: scarf, filteringMode: .linear)

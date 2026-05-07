@@ -366,11 +366,13 @@ final class FocusStore: ObservableObject {
         defer { isFinishing = false }
 
         do {
-            _ = try await focusService.leaveSession(session.id, for: authSession)
+            let syncedSession = try await focusService.leaveSession(session.id, for: authSession)
             lobbySession = nil
             activeSession = nil
             sessionDetail = nil
-            resultSession = nil
+            resultSession = session.isLive
+                ? (syncedSession.status == .interrupted ? syncedSession : session.interrupted())
+                : nil
             completionContext = nil
             hasPendingResultSync = false
             clearSavedState()

@@ -16,6 +16,22 @@ struct VillageResident: Identifiable, Equatable {
     let unlockedAt: Date?
 }
 
+struct IslandParticipant: Identifiable, Equatable {
+    var id: UUID { profile.userID }
+
+    let profile: UserProfile
+    let bondLevel: Int
+
+    nonisolated init(profile: UserProfile, bondLevel: Int) {
+        self.profile = profile
+        self.bondLevel = bondLevel
+    }
+
+    nonisolated init(resident: VillageResident) {
+        self.init(profile: resident.profile, bondLevel: resident.bondLevel)
+    }
+}
+
 enum VillageServiceError: LocalizedError {
     case missingConfiguration
     case invalidResponse

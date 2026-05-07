@@ -419,6 +419,7 @@ private struct HomePage: View {
                             VillageHeroSection(
                                 residents: gridResidents,
                                 currentUserProfile: sessionStore.profile,
+                                participants: islandParticipants,
                                 isLoading: villageStore.isLoadingResidents,
                                 notice: villageStore.notice,
                                 isFishingMode: focusStore.activeSession != nil,
@@ -536,6 +537,45 @@ private struct HomePage: View {
 
     private var gridResidents: [VillageResident] {
         Array(villageStore.residents.prefix(36))
+    }
+
+    private var islandParticipants: [IslandParticipant]? {
+        guard let activeSession = focusStore.activeSession,
+              activeSession.isLive else {
+            return nil
+        }
+
+        let bondLevelByUserID = Dictionary(
+            villageStore.residents.map { resident in
+                (resident.profile.userID, resident.bondLevel)
+            },
+            uniquingKeysWith: { current, _ in current }
+        )
+
+        guard activeSession.mode == .multiplayer else {
+            guard let currentUserProfile = sessionStore.profile else { return [] }
+            return [
+                IslandParticipant(
+                    profile: currentUserProfile,
+                    bondLevel: bondLevelByUserID[currentUserProfile.userID] ?? 0
+                )
+            ]
+        }
+
+        guard let detail = focusStore.sessionDetail,
+              detail.session.id == activeSession.id,
+              detail.session.isLive else {
+            return nil
+        }
+
+        return detail.members
+            .filter { $0.status == .joined }
+            .map { member in
+                IslandParticipant(
+                    profile: member.profile,
+                    bondLevel: bondLevelByUserID[member.userID] ?? 0
+                )
+            }
     }
 
     private var completedResultSession: FocusSession? {
@@ -1883,6 +1923,7 @@ private enum StartFocusSheetStep {
 private struct VillageHeroSection: View {
     let residents: [VillageResident]
     let currentUserProfile: UserProfile?
+    let participants: [IslandParticipant]?
     let isLoading: Bool
     let notice: String?
     let isFishingMode: Bool
@@ -1894,6 +1935,7 @@ private struct VillageHeroSection: View {
             VillageView(
                 residents: residents,
                 currentUserProfile: currentUserProfile,
+                participants: participants,
                 isFishingMode: isFishingMode,
                 mapStyle: mapStyle
             )
