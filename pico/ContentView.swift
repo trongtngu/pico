@@ -427,7 +427,7 @@ private struct HomePage: View {
                 ScrollView {
                     GeometryReader { viewport in
                         VStack(spacing: PicoSpacing.compact) {
-                            ZStack(alignment: .topTrailing) {
+                            ZStack(alignment: .top) {
                                 VillageHeroSection(
                                     residents: [],
                                     currentUserProfile: heroCurrentUserProfile,
@@ -439,19 +439,13 @@ private struct HomePage: View {
                                     height: villageHeight(for: viewport.size.height)
                                 )
 
-                                if !isLiveFocusActive {
-                                    DailySnapshotDayNavigationOverlay(
-                                        selectedDayLabel: selectedDayLabel,
-                                        showsNoSnapshotStatus: showsNoSnapshotStatus,
-                                        showsTodayAction: !isSelectedDayToday,
-                                        isPreviousDisabled: dailySnapshotStore.isLoadingSnapshot,
-                                        isNextDisabled: isNextSnapshotDayDisabled,
-                                        previousAction: goToPreviousSnapshotDay,
-                                        nextAction: goToNextSnapshotDay,
-                                        chooseDateAction: presentSnapshotDatePicker,
-                                        todayAction: returnToToday
+                                if !isLiveFocusActive, !isSelectedDayToday {
+                                    DailySnapshotDayContextHeader(
+                                        selectedDayText: selectedDayContextLabel,
+                                        summaryText: selectedDaySummaryText
                                     )
-                                    .padding(PicoSpacing.standard)
+                                    .padding(.top, PicoSpacing.compact)
+                                    .allowsHitTesting(false)
                                 }
                             }
                             .id(dailySnapshotStore.selectedDay)
@@ -487,7 +481,9 @@ private struct HomePage: View {
                         berryCount: berryStore.balance.berries,
                         completionStreak: berryStore.completionStreak,
                         showsMenuButton: showsMenuButton,
-                        openNavigation: openNavigation
+                        selectedDayLabel: selectedDayLabel,
+                        openNavigation: openNavigation,
+                        chooseDateAction: presentSnapshotDatePicker
                     )
                 }
             }
@@ -646,12 +642,6 @@ private struct HomePage: View {
         dailySnapshotStore.isLoadingSnapshot || dailySnapshotStore.selectedDay >= todaySnapshotDay
     }
 
-    private var showsNoSnapshotStatus: Bool {
-        !dailySnapshotStore.isLoadingSnapshot
-            && dailySnapshotStore.loadState == .loaded
-            && dailySnapshotStore.currentSnapshot == nil
-    }
-
     private var selectedDayLabel: String {
         if isSelectedDayToday {
             return "Today"
@@ -667,6 +657,53 @@ private struct HomePage: View {
                 .month(.abbreviated)
                 .day()
         )
+    }
+
+    private var selectedDayContextLabel: String {
+        let calendar = Calendar.current
+        guard let selectedDate = dailySnapshotStore.selectedDay.date(calendar: calendar) else {
+            return dailySnapshotStore.selectedDay.rawValue
+        }
+
+        if calendar.isDateInYesterday(selectedDate) {
+            return "Yesterday"
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.calendar = calendar
+        dateFormatter.locale = Locale.current
+        dateFormatter.dateFormat = "dd/MM/yyyy"
+
+        let weekdayFormatter = DateFormatter()
+        weekdayFormatter.calendar = calendar
+        weekdayFormatter.locale = Locale.current
+        weekdayFormatter.dateFormat = "EEEE"
+
+        return "\(weekdayFormatter.string(from: selectedDate)) \(dateFormatter.string(from: selectedDate))"
+    }
+
+    private var selectedDaySummaryText: String {
+        "\(selectedDayFocusSummaryText) · \(selectedDayCatchSummaryText)"
+    }
+
+    private var selectedDayFocusSummaryText: String {
+        let totalMinutes = max(0, (dailySnapshotStore.currentSnapshot?.totalFocusSeconds ?? 0) / 60)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        if totalMinutes < 60 {
+            return "\(minutes)m focused"
+        }
+
+        if minutes == 0 {
+            return "\(hours)h focused"
+        }
+
+        return "\(hours)h \(minutes)m focused"
+    }
+
+    private var selectedDayCatchSummaryText: String {
+        "\(dailySnapshotStore.currentSnapshot?.fishCaughtCount ?? 0) caught"
     }
 
     private var snapshotPickerMaximumDate: Date {
@@ -773,12 +810,6 @@ private struct HomePage: View {
     private func goToNextSnapshotDay() {
         guard !isNextSnapshotDayDisabled else { return }
         loadSnapshotDay(offsetBy: 1)
-    }
-
-    private func returnToToday() {
-        Task {
-            await dailySnapshotStore.loadToday(for: sessionStore.session)
-        }
     }
 
     private func presentSnapshotDatePicker() {
@@ -1318,59 +1349,88 @@ private struct HomeTopBar: View {
     let berryCount: Int
     let completionStreak: Int
     let showsMenuButton: Bool
+    let selectedDayLabel: String
     let openNavigation: () -> Void
+    let chooseDateAction: () -> Void
 
     var body: some View {
-        PicoScreenTopBar(
-            title: "",
-            leading: {
-                VStack(alignment: .leading, spacing: 2) {
-                    if showsMenuButton {
-                        PicoNavigationMenuButton(action: openNavigation)
-                    } else {
-                        Color.clear
-                            .frame(width: 44, height: 44)
-                    }
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 0) {
+                if showsMenuButton {
+                    PicoNavigationMenuButton(action: openNavigation)
+                } else {
+                    Color.clear
+                        .frame(width: 44, height: 44)
                 }
-            },
-            trailing: {
-                HomeTopBarStats(
-                    berryCount: berryCount,
-                    completionStreak: completionStreak
-                )
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text("\(formattedBerryCount(berryCount)), \(completionStreak) day streak"))
             }
-        )
+
+            Spacer(minLength: 0)
+
+            HomeTopBarCalendarStats(
+                berryCount: berryCount,
+                completionStreak: completionStreak,
+                selectedDayLabel: selectedDayLabel,
+                chooseDateAction: chooseDateAction
+            )
+        }
+        .padding(.horizontal, PicoSpacing.standard)
+        .frame(height: 68, alignment: .top)
+        .background(PicoColors.appBackground)
     }
 }
 
-private struct HomeTopBarStats: View {
+private struct HomeTopBarCalendarStats: View {
     let berryCount: Int
     let completionStreak: Int
+    let selectedDayLabel: String
+    let chooseDateAction: () -> Void
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            HStack(spacing: PicoSpacing.tiny) {
-                BerryBalanceIcon(size: 18)
+        VStack(alignment: .trailing, spacing: 2) {
+            HStack(spacing: PicoSpacing.compact) {
+                berryCountRow
+                    .frame(height: 44)
+                    .accessibilityLabel(Text(formattedBerryCount(berryCount)))
 
-                Text("\(berryCount)")
-                    .font(PicoTypography.body.weight(.bold))
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .monospacedDigit()
-            }
+                streakCount
+                    .frame(height: 44)
 
-            HStack(spacing: PicoSpacing.tiny) {
-                PicoIcon(.fireSolid, size: 12)
-                    .foregroundStyle(PicoColors.streakAccent)
-
-                Text("\(completionStreak)")
-                    .font(PicoTypography.caption.weight(.bold))
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .monospacedDigit()
+                Button(action: chooseDateAction) {
+                    Image(systemName: "calendar")
+                        .font(PicoTypography.symbol(size: 20, weight: .semibold))
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Open calendar picker"))
+                .accessibilityValue(Text(selectedDayLabel))
             }
         }
-        .frame(width: 76, height: 44, alignment: .topTrailing)
+        .frame(minWidth: 156, alignment: .topTrailing)
+    }
+
+    private var streakCount: some View {
+        HStack(spacing: PicoSpacing.tiny) {
+            PicoIcon(.fireSolid, size: 13)
+                .foregroundStyle(PicoColors.streakAccent)
+
+            Text("\(completionStreak)")
+                .font(PicoTypography.caption.weight(.bold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .monospacedDigit()
+        }
+        .accessibilityLabel(Text("\(completionStreak) day streak"))
+    }
+
+    private var berryCountRow: some View {
+        HStack(spacing: PicoSpacing.tiny) {
+            BerryBalanceIcon(size: 15)
+
+            Text("\(berryCount)")
+                .font(PicoTypography.compactCaption.weight(.bold))
+                .foregroundStyle(PicoColors.textPrimary)
+                .monospacedDigit()
+        }
     }
 }
 
@@ -2215,99 +2275,25 @@ private struct VillageHeroSection: View {
     }
 }
 
-private struct DailySnapshotDayNavigationOverlay: View {
-    let selectedDayLabel: String
-    let showsNoSnapshotStatus: Bool
-    let showsTodayAction: Bool
-    let isPreviousDisabled: Bool
-    let isNextDisabled: Bool
-    let previousAction: () -> Void
-    let nextAction: () -> Void
-    let chooseDateAction: () -> Void
-    let todayAction: () -> Void
+private struct DailySnapshotDayContextHeader: View {
+    let selectedDayText: String
+    let summaryText: String
 
     var body: some View {
-        HStack(spacing: PicoSpacing.compact) {
-            dayButton(
-                icon: .chevronLeftRegular,
-                accessibilityLabel: "Previous day",
-                isDisabled: isPreviousDisabled,
-                action: previousAction
-            )
+        VStack(spacing: PicoSpacing.tiny) {
+            Text(selectedDayText)
+                .font(PicoTypography.sectionTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .lineLimit(2)
 
-            Button(action: chooseDateAction) {
-                VStack(spacing: 1) {
-                    Text(selectedDayLabel)
-                        .font(PicoTypography.captionSemibold)
-                        .foregroundStyle(PicoColors.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-
-                    if showsNoSnapshotStatus {
-                        Text("No snapshot")
-                            .font(PicoTypography.tinyCaptionBold)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .lineLimit(1)
-                    } else {
-                        Text(" ")
-                            .font(PicoTypography.tinyCaptionBold)
-                            .lineLimit(1)
-                            .accessibilityHidden(true)
-                    }
-                }
-                .frame(minWidth: 74)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("Choose snapshot date"))
-            .accessibilityValue(Text(selectedDayLabel))
-
-            dayButton(
-                icon: .chevronRightRegular,
-                accessibilityLabel: "Next day",
-                isDisabled: isNextDisabled,
-                action: nextAction
-            )
-
-            if showsTodayAction {
-                Button(action: todayAction) {
-                    Text("Today")
-                        .font(PicoTypography.tinyCaptionBold)
-                        .foregroundStyle(PicoColors.primary)
-                        .padding(.horizontal, PicoSpacing.compact)
-                        .frame(height: 30)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("Return to today"))
-            }
+            Text(summaryText)
+                .font(PicoTypography.captionSemibold)
+                .foregroundStyle(PicoColors.textSecondary)
+                .lineLimit(1)
         }
-        .padding(.horizontal, PicoSpacing.compact)
-        .padding(.vertical, 6)
-        .background(
-            Capsule(style: .continuous)
-                .fill(PicoColors.surface.opacity(0.95))
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(PicoColors.border, lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
-    }
-
-    private func dayButton(
-        icon: PicoIconAsset,
-        accessibilityLabel: String,
-        isDisabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            PicoIcon(icon, size: 16)
-                .foregroundStyle(isDisabled ? PicoColors.textMuted : PicoColors.textSecondary)
-                .frame(width: 30, height: 30)
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .opacity(isDisabled ? 0.48 : 1)
-        .accessibilityLabel(Text(accessibilityLabel))
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, PicoSpacing.standard)
     }
 }
 

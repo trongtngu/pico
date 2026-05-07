@@ -69,6 +69,8 @@ struct DailyVillageSnapshot: Identifiable, Equatable {
     let ownerProfile: UserProfile
     let visitors: [DailyVillageSnapshotVisitor]
     let focusSessionIDs: [UUID]
+    let totalFocusSeconds: Int
+    let fishCaughtCount: Int
     let createdAt: Date?
     let updatedAt: Date?
     let notice: String?
@@ -135,7 +137,7 @@ final class DailySnapshotService {
         let response: [DailyVillageSnapshotResponse] = try await send(
             path: "/rest/v1/rpc/fetch_daily_village_snapshot",
             method: "POST",
-            body: FetchDailySnapshotRequest(snapshotDay: day),
+            body: FetchDailySnapshotRequest(requestedSnapshotDay: day),
             accessToken: authSession.accessToken
         )
 
@@ -220,7 +222,7 @@ final class DailySnapshotService {
 }
 
 private struct FetchDailySnapshotRequest: Encodable {
-    let snapshotDay: DailySnapshotDay
+    let requestedSnapshotDay: DailySnapshotDay
 }
 
 private struct ListDailySnapshotsRequest: Encodable {
@@ -237,6 +239,8 @@ private struct DailyVillageSnapshotResponse: Decodable {
     let visitors: [DailySnapshotVisitorResponse]
     let skippedVisitorCount: Int
     let focusSessionIds: [UUID]
+    let totalFocusSeconds: Int
+    let fishCaughtCount: Int
     let createdAt: String
     let updatedAt: String
 
@@ -248,6 +252,8 @@ private struct DailyVillageSnapshotResponse: Decodable {
         case ownerProfile
         case visitors
         case focusSessionIds
+        case totalFocusSeconds
+        case fishCaughtCount
         case createdAt
         case updatedAt
     }
@@ -261,6 +267,8 @@ private struct DailyVillageSnapshotResponse: Decodable {
         islandId = try container.decode(String.self, forKey: .islandId)
         ownerProfile = try container.decode(DailySnapshotProfileResponse.self, forKey: .ownerProfile)
         focusSessionIds = try container.decodeIfPresent([UUID].self, forKey: .focusSessionIds) ?? []
+        totalFocusSeconds = try container.decodeIfPresent(Int.self, forKey: .totalFocusSeconds) ?? 0
+        fishCaughtCount = try container.decodeIfPresent(Int.self, forKey: .fishCaughtCount) ?? 0
         createdAt = try container.decode(String.self, forKey: .createdAt)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
 
@@ -278,6 +286,8 @@ private struct DailyVillageSnapshotResponse: Decodable {
             ownerProfile: ownerProfile.userProfile,
             visitors: visitors.map(\.dailyVillageSnapshotVisitor),
             focusSessionIDs: focusSessionIds,
+            totalFocusSeconds: totalFocusSeconds,
+            fishCaughtCount: fishCaughtCount,
             createdAt: FocusDateFormatter.date(from: createdAt),
             updatedAt: FocusDateFormatter.date(from: updatedAt),
             notice: skippedVisitorCount > 0 ? skippedVisitorNotice : nil

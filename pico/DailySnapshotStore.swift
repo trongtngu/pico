@@ -160,6 +160,8 @@ final class DailySnapshotStore: ObservableObject {
             ownerProfile: owner,
             visitors: [visitor],
             focusSessionIDs: [],
+            totalFocusSeconds: 5400,
+            fishCaughtCount: 12,
             createdAt: Date(),
             updatedAt: Date(),
             notice: nil
