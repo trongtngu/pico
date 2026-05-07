@@ -71,7 +71,7 @@ private struct AuthEntryAvatarView: View {
             .background(Color.clear)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Happy Pico avatar holding a fishing pole"))
+        .accessibilityLabel(Text("Happy Pico avatar wearing a green scarf"))
     }
 }
 
@@ -108,11 +108,7 @@ private final class AuthEntryAvatarScene: SKScene {
         renderedSize = size
         removeAllChildren()
 
-        let frames = AvatarLayeredAtlas.happyIdleFishingPoleFrames(
-            hat: .none,
-            scarf: .green,
-            filteringMode: .nearest
-        )
+        let frames = AvatarHappyIdleFrames(hat: .none, scarf: .green).layeredFrames
         let sprite = AvatarLayeredSpriteNode(frames: frames)
         let spriteSide = min(size.width, size.height)
         sprite.spriteSize = CGSize(width: spriteSide, height: spriteSide)
@@ -174,7 +170,7 @@ struct OnboardingSequenceView: View {
                             FriendBondsOnboardingVisual()
                                 .frame(height: visualHeight)
                         } else if currentStep == .authHandoff {
-                            OnboardingFishingPoleVisual()
+                            OnboardingAccountAvatarVisual()
                                 .frame(height: visualHeight)
                         } else {
                             OnboardingPlaceholderVisual(
@@ -441,7 +437,7 @@ private struct FriendBondsOnboardingVisual: View {
     }
 }
 
-private struct OnboardingFishingPoleVisual: View {
+private struct OnboardingAccountAvatarVisual: View {
     var body: some View {
         GeometryReader { proxy in
             let avatarSize = min(proxy.size.width * 0.64, min(proxy.size.height * 0.64, 250))
@@ -451,7 +447,7 @@ private struct OnboardingFishingPoleVisual: View {
                 .position(x: proxy.size.width / 2, y: proxy.size.height * 0.52)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Smiling Pico avatar wearing a green scarf and holding a fishing rod"))
+        .accessibilityLabel(Text("Smiling Pico avatar wearing a green scarf"))
     }
 }
 

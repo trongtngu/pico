@@ -154,6 +154,19 @@ private struct FishingSpot {
     let tile: TileCoordinate
     let animationRow: Int
     let isFlipped: Bool
+    let rowOffset: CGFloat
+
+    init(
+        tile: TileCoordinate,
+        animationRow: Int,
+        isFlipped: Bool,
+        rowOffset: CGFloat = 0
+    ) {
+        self.tile = tile
+        self.animationRow = animationRow
+        self.isFlipped = isFlipped
+        self.rowOffset = rowOffset
+    }
 }
 
 private enum ForestDecoration {
@@ -224,23 +237,13 @@ private final class VillageScene: SKScene {
             .union(originalIslandBushTiles.keys)
             .union(originalIslandMushroomTiles.keys)
     }
-    private static let sandIslandWaterTiles: Set<TileCoordinate> = [
-        TileCoordinate(row: 0, column: 0),
-        TileCoordinate(row: 0, column: 1),
-        TileCoordinate(row: 0, column: 5),
-        TileCoordinate(row: 0, column: 6),
-        TileCoordinate(row: 1, column: 0),
-        TileCoordinate(row: 1, column: 6),
-        TileCoordinate(row: 4, column: 6),
-        TileCoordinate(row: 5, column: 0),
-        TileCoordinate(row: 5, column: 5),
-        TileCoordinate(row: 5, column: 6),
-        TileCoordinate(row: 6, column: 0),
-        TileCoordinate(row: 6, column: 1),
-        TileCoordinate(row: 6, column: 4),
-        TileCoordinate(row: 6, column: 5),
-        TileCoordinate(row: 6, column: 6)
-    ]
+    private static let sandIslandWaterTiles: Set<TileCoordinate> = Set(
+        (4...6).flatMap { row in
+            (0...6).map { column in
+                TileCoordinate(row: row, column: column)
+            }
+        }
+    )
     private static let originalMainFishingSpot = FishingSpot(
         tile: TileCoordinate(row: 1, column: 2),
         animationRow: 1,
@@ -252,14 +255,16 @@ private final class VillageScene: SKScene {
         FishingSpot(tile: TileCoordinate(row: 4, column: 5), animationRow: 3, isFlipped: true)
     ]
     private static let sandMainFishingSpot = FishingSpot(
-        tile: TileCoordinate(row: 1, column: 1),
+        tile: TileCoordinate(row: 3, column: 3),
         animationRow: 1,
-        isFlipped: false
+        isFlipped: false,
+        rowOffset: 0.18
     )
     private static let sandVillagerFishingSpots = [
-        FishingSpot(tile: TileCoordinate(row: 1, column: 5), animationRow: 1, isFlipped: true),
-        FishingSpot(tile: TileCoordinate(row: 5, column: 1), animationRow: 1, isFlipped: false),
-        FishingSpot(tile: TileCoordinate(row: 6, column: 3), animationRow: 1, isFlipped: true)
+        FishingSpot(tile: TileCoordinate(row: 3, column: 2), animationRow: 1, isFlipped: false, rowOffset: 0.18),
+        FishingSpot(tile: TileCoordinate(row: 3, column: 4), animationRow: 1, isFlipped: false, rowOffset: 0.18),
+        FishingSpot(tile: TileCoordinate(row: 3, column: 1), animationRow: 1, isFlipped: false, rowOffset: 0.18),
+        FishingSpot(tile: TileCoordinate(row: 3, column: 5), animationRow: 1, isFlipped: false, rowOffset: 0.18)
     ]
 
     private let gridSize: Int
@@ -593,7 +598,7 @@ private final class VillageScene: SKScene {
         for (index, participant) in visibleParticipants.enumerated() {
             let fishingSpot = isFishingMode ? spots[index] : nil
             let tile = fishingSpot?.tile ?? startingTile(for: index, in: normalTiles)
-            let startPosition = layout.characterPosition(for: tile)
+            let startPosition = layout.characterPosition(for: tile, rowOffset: fishingSpot?.rowOffset ?? 0)
             let selectedHat = participant.profile.avatarConfig.selectedHat
             let scarf = AvatarScarf(bondLevel: participant.bondLevel)
             let idleFrames = AvatarIdleFrames(hat: selectedHat, scarf: scarf)
@@ -917,8 +922,15 @@ private struct VillageSceneLayout {
         return CGPoint(x: x, y: y)
     }
 
-    func characterPosition(for tile: TileCoordinate) -> CGPoint {
-        characterPosition(row: CGFloat(tile.row), column: CGFloat(tile.column))
+    func characterPosition(
+        for tile: TileCoordinate,
+        rowOffset: CGFloat = 0,
+        columnOffset: CGFloat = 0
+    ) -> CGPoint {
+        characterPosition(
+            row: CGFloat(tile.row) + rowOffset,
+            column: CGFloat(tile.column) + columnOffset
+        )
     }
 
     func randomCharacterPosition() -> CGPoint {
