@@ -514,22 +514,15 @@ private struct HomePage: View {
             .presentationBackground(PicoColors.appBackground)
             .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
         }
-        .sheet(isPresented: $isSnapshotDatePickerPresented) {
-            DailySnapshotDatePickerSheet(
-                selectedDate: $snapshotPickerDate,
+        .fullScreenCover(isPresented: $isSnapshotDatePickerPresented) {
+            DailySnapshotCalendarScreen(
+                initialDate: snapshotPickerDate,
                 maximumDate: snapshotPickerMaximumDate,
-                availableDays: Set(dailySnapshotStore.availableDays),
-                isLoadingAvailability: dailySnapshotStore.isLoadingRange,
-                hasLoadedAvailability: dailySnapshotStore.rangeLoadState == .loaded,
-                chooseAction: chooseSnapshotDate,
-                todayAction: {
-                    snapshotPickerDate = snapshotPickerMaximumDate
-                }
+                initialSnapshot: calendarInitialSnapshot,
+                session: sessionStore.session,
+                selectDateAction: selectSnapshotDate,
+                fetchSnapshotAction: fetchCalendarSnapshot
             )
-            .presentationDetents([.height(560)])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(PicoColors.appBackground)
-            .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
         }
         .fullScreenCover(isPresented: $isFishCatchSheetPresented, onDismiss: finishFishCatchFlow) {
             FishCatchRevealView(
@@ -710,6 +703,12 @@ private struct HomePage: View {
         Calendar.current.startOfDay(for: Date())
     }
 
+    private var calendarInitialSnapshot: DailyVillageSnapshot? {
+        let today = DailySnapshotDay(date: snapshotPickerMaximumDate, calendar: .current)
+        guard dailySnapshotStore.currentSnapshot?.snapshotDay == today else { return nil }
+        return dailySnapshotStore.currentSnapshot
+    }
+
     private var snapshotDaySwipeGesture: some Gesture {
         DragGesture(minimumDistance: 24, coordinateSpace: .local)
             .onEnded { value in
@@ -815,43 +814,26 @@ private struct HomePage: View {
     private func presentSnapshotDatePicker() {
         guard !isLiveFocusActive else { return }
 
-        let calendar = Calendar.current
-        let selectedDate = dailySnapshotStore.selectedDay.date(calendar: calendar) ?? Date()
-        snapshotPickerDate = min(
-            calendar.startOfDay(for: selectedDate),
-            snapshotPickerMaximumDate
-        )
+        snapshotPickerDate = snapshotPickerMaximumDate
         isSnapshotDatePickerPresented = true
-
-        Task {
-            await loadRecentSnapshotAvailability()
-        }
     }
 
-    private func chooseSnapshotDate() {
+    private func selectSnapshotDate(_ date: Date) {
         let calendar = Calendar.current
         let clampedDate = min(
-            calendar.startOfDay(for: snapshotPickerDate),
+            calendar.startOfDay(for: date),
             snapshotPickerMaximumDate
         )
         let day = DailySnapshotDay(date: clampedDate, calendar: calendar)
 
-        isSnapshotDatePickerPresented = false
+        snapshotPickerDate = clampedDate
         Task {
             await dailySnapshotStore.loadSnapshot(day: day, for: sessionStore.session)
         }
     }
 
-    private func loadRecentSnapshotAvailability() async {
-        let calendar = Calendar.current
-        let endDate = snapshotPickerMaximumDate
-        guard let startDate = calendar.date(byAdding: .day, value: -89, to: endDate) else { return }
-
-        await dailySnapshotStore.loadSnapshotRange(
-            startDay: DailySnapshotDay(date: startDate, calendar: calendar),
-            endDay: DailySnapshotDay(date: endDate, calendar: calendar),
-            for: sessionStore.session
-        )
+    private func fetchCalendarSnapshot(day: DailySnapshotDay) async throws -> DailyVillageSnapshot? {
+        try await dailySnapshotStore.fetchSnapshot(day: day, for: sessionStore.session)
     }
 
     private func loadSnapshotDay(offsetBy dayOffset: Int) {
@@ -1126,12 +1108,17 @@ private struct FishCatchRevealPage: View {
                 VStack(spacing: PicoSpacing.standard) {
                     Spacer(minLength: 0)
 
-                    VStack(spacing: PicoSpacing.iconTextGap) {
-                        Text("You caught")
-                            .font(PicoTypography.primaryLabelSemibold)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .multilineTextAlignment(.center)
+                    Text("You caught")
+                        .font(PicoTypography.primaryLabelSemibold)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .multilineTextAlignment(.center)
 
+                    FishCatchHeroIcon(
+                        row: row,
+                        size: heroSize
+                    )
+
+                    VStack(spacing: PicoSpacing.iconTextGap) {
                         Text(row.label)
                             .font(PicoTypography.screenTitle)
                             .foregroundStyle(PicoColors.textPrimary)
@@ -1142,12 +1129,6 @@ private struct FishCatchRevealPage: View {
 
                         FishCatchRarityBadge(row: row)
                     }
-
-                    FishCatchHeroIcon(
-                        row: row,
-                        size: heroSize
-                    )
-                    .padding(.top, PicoSpacing.standard)
 
                     Spacer(minLength: 0)
                 }
@@ -1244,7 +1225,7 @@ private struct FishCatchSummaryRow: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, PicoSpacing.standard)
-        .padding(.vertical, PicoSpacing.compact)
+        .padding(.vertical, PicoSpacing.iconTextGap)
         .background(row.rarityStyle.rowBackgroundColor)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
         .overlay(
@@ -2297,15 +2278,45 @@ private struct DailySnapshotDayContextHeader: View {
     }
 }
 
-private struct DailySnapshotDatePickerSheet: View {
-    @Binding var selectedDate: Date
+private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
+    case fish
+    case bonds
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .bonds:
+            "Bonds"
+        case .fish:
+            "Catches"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .bonds:
+            "Scarf_Green"
+        case .fish:
+            "FishingPole_New"
+        }
+    }
+}
+
+private struct DailySnapshotCalendarScreen: View {
+    let initialDate: Date
     let maximumDate: Date
-    let availableDays: Set<DailySnapshotDay>
-    let isLoadingAvailability: Bool
-    let hasLoadedAvailability: Bool
-    let chooseAction: () -> Void
-    let todayAction: () -> Void
+    let initialSnapshot: DailyVillageSnapshot?
+    let session: AuthSession?
+    let selectDateAction: (Date) -> Void
+    let fetchSnapshotAction: (DailySnapshotDay) async throws -> DailyVillageSnapshot?
     @Environment(\.dismiss) private var dismiss
+    @State private var displayedMonth = Calendar.current.startOfDay(for: Date())
+    @State private var heroMode: DailySnapshotHeroMode = .fish
+    @State private var selectedDate = Date()
+    @State private var snapshotByDay: [DailySnapshotDay: DailyVillageSnapshot] = [:]
+    @State private var loadState: DailySnapshotLoadState = .idle
+    @State private var notice: String?
 
     private var calendar: Calendar {
         .current
@@ -2315,122 +2326,839 @@ private struct DailySnapshotDatePickerSheet: View {
         DailySnapshotDay(date: selectedDate, calendar: calendar)
     }
 
-    private var isSelectedDateToday: Bool {
-        selectedSnapshotDay == DailySnapshotDay(date: maximumDate, calendar: calendar)
+    private var snapshotsByDay: [DailySnapshotDay: DailyVillageSnapshot] {
+        snapshotByDay
     }
 
-    private var availabilityText: String {
-        if isLoadingAvailability {
-            return "Loading snapshot days"
-        }
-
-        if availableDays.isEmpty && !hasLoadedAvailability {
-            return "Snapshot availability will appear after choosing a day"
-        }
-
-        if availableDays.contains(selectedSnapshotDay) {
-            return "Snapshot available"
-        }
-
-        return "No snapshot"
+    private var selectedSnapshot: DailyVillageSnapshot? {
+        snapshotByDay[selectedSnapshotDay]
     }
 
-    private var availabilityIcon: PicoIconAsset {
-        availableDays.contains(selectedSnapshotDay) ? .sparklesRegular : .infoRegular
+    private var displayedMonthTitle: String {
+        displayedMonth.formatted(.dateTime.month(.wide).year())
+    }
+
+    private var canGoToNextMonth: Bool {
+        monthStart(for: displayedMonth) < monthStart(for: maximumDate)
+    }
+
+    private var monthDays: [DailySnapshotCalendarDay] {
+        makeMonthDays()
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-                VStack(alignment: .leading, spacing: PicoSpacing.iconTextGap) {
-                    Text("Snapshot Date")
-                        .font(PicoTypography.compactTitle)
-                        .foregroundStyle(PicoColors.textPrimary)
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: PicoSpacing.section) {
+                    header
 
-                    Text(
-                        selectedDate.formatted(
-                            .dateTime
-                                .weekday(.wide)
-                                .month(.wide)
-                                .day()
-                                .year()
-                        )
+                    DailySnapshotCalendarHero(
+                        selectedDate: selectedDate,
+                        snapshot: selectedSnapshot,
+                        mode: heroMode,
+                        isLoading: loadState == .loading,
+                        notice: notice
                     )
-                    .font(PicoTypography.caption)
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .accessibilityLabel(Text("Selected snapshot date"))
-                }
 
-                DatePicker(
-                    "Selected snapshot date",
-                    selection: $selectedDate,
-                    in: ...maximumDate,
-                    displayedComponents: [.date]
-                )
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-                .tint(PicoColors.primary)
-                .accessibilityLabel(Text("Selected snapshot date"))
+                    heroModePills
 
-                HStack(spacing: PicoSpacing.iconTextGap) {
-                    if isLoadingAvailability {
-                        ProgressView()
-                            .tint(PicoColors.primary)
-                    } else {
-                        PicoIcon(availabilityIcon, size: 16)
-                            .foregroundStyle(
-                                availableDays.contains(selectedSnapshotDay)
-                                    ? PicoColors.primary
-                                    : PicoColors.textSecondary
-                            )
-                    }
-
-                    Text(availabilityText)
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textSecondary)
-                        .lineLimit(1)
+                    calendarPanel
                 }
                 .padding(.horizontal, PicoSpacing.standard)
-                .padding(.vertical, PicoSpacing.compact)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(PicoColors.surface.opacity(0.92))
-                )
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(PicoColors.border, lineWidth: 1)
-                )
+                .padding(.top, 0)
+                .padding(.bottom, max(PicoSpacing.section, proxy.safeAreaInsets.bottom + PicoSpacing.section))
+            }
+            .scrollIndicators(.hidden)
+        }
+        .background(PicoCalendarStyle.background.ignoresSafeArea())
+        .onAppear {
+            selectedDate = initialDate
+            if let initialSnapshot {
+                snapshotByDay[initialSnapshot.snapshotDay] = initialSnapshot
+            }
+            let selectedMonth = monthStart(for: initialDate)
+            displayedMonth = selectedMonth
+            loadSelectedSnapshotIfNeeded(for: initialDate)
+        }
+        .onChange(of: selectedDate) {
+            let selectedMonth = monthStart(for: selectedDate)
+            if selectedMonth != displayedMonth {
+                displayedMonth = selectedMonth
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Spacer(minLength: 0)
+
+            Button {
+                dismiss()
+            } label: {
+                PicoIcon(.xMarkRegular, size: 19)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .frame(width: 44, height: 44)
+                    .background(PicoColors.softSurface)
+                    .clipShape(Circle())
+                    .overlay {
+                        Circle()
+                            .stroke(PicoColors.border, lineWidth: 1)
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Close calendar"))
+        }
+    }
+
+    private var heroModePills: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            ForEach(DailySnapshotHeroMode.allCases) { mode in
+                Button {
+                    withAnimation(.snappy(duration: 0.18)) {
+                        heroMode = mode
+                    }
+                } label: {
+                    HStack(spacing: PicoSpacing.compact) {
+                        DailySnapshotAssetIcon(name: mode.iconName, size: 20)
+
+                        Text(mode.label)
+                            .font(PicoTypography.largePill)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                    }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, PicoSpacing.iconTextGap)
+                        .background(PicoColors.surface)
+                        .clipShape(Capsule(style: .continuous))
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .stroke(heroMode == mode ? PicoColors.primary : PicoColors.border, lineWidth: heroMode == mode ? 1.5 : 1)
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var calendarPanel: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            HStack(spacing: PicoSpacing.compact) {
+                Button {
+                    moveDisplayedMonth(by: -1)
+                } label: {
+                    PicoIcon(.chevronLeftRegular, size: 18)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Previous month"))
 
                 Spacer(minLength: 0)
 
-                HStack(spacing: PicoSpacing.compact) {
-                    if !isSelectedDateToday {
-                        Button(action: todayAction) {
-                            Text("Today")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(PicoSecondaryButtonStyle())
-                        .accessibilityLabel(Text("Return to today"))
-                    }
+                VStack(spacing: PicoSpacing.tiny) {
+                    Text(displayedMonthTitle)
+                        .font(PicoTypography.compactTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                }
 
-                    Button(action: chooseAction) {
-                        Text("Choose")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(PicoPrimaryButtonStyle())
-                    .accessibilityLabel(Text("Choose snapshot date"))
+                Spacer(minLength: 0)
+
+                Button {
+                    moveDisplayedMonth(by: 1)
+                } label: {
+                    PicoIcon(.chevronRightRegular, size: 18)
+                        .foregroundStyle(canGoToNextMonth ? PicoColors.textPrimary : PicoColors.textMuted)
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canGoToNextMonth)
+                .accessibilityLabel(Text("Next month"))
+            }
+
+            HStack(spacing: 0) {
+                ForEach(Array(["S", "M", "T", "W", "T", "F", "S"].enumerated()), id: \.offset) { _, dayLabel in
+                    Text(dayLabel)
+                        .font(PicoTypography.captionSemibold)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .frame(maxWidth: .infinity)
                 }
             }
-            .padding(PicoCreamCardStyle.contentPadding)
-            .background(PicoColors.appBackground)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
+
+            LazyVGrid(columns: calendarColumns, spacing: PicoSpacing.compact) {
+                ForEach(monthDays) { day in
+                    DailySnapshotCalendarDayCell(day: day) {
+                        guard let date = day.date, !day.isFuture else { return }
+                        selectedDate = date
+                        selectDateAction(date)
+                        loadSelectedSnapshotIfNeeded(for: date)
                     }
                 }
             }
         }
+        .padding(PicoSpacing.standard)
+        .background(PicoCalendarStyle.panelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
+    }
+
+    private var calendarColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: PicoSpacing.compact), count: 7)
+    }
+
+    private func makeMonthDays() -> [DailySnapshotCalendarDay] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: displayedMonth),
+              let dayRange = calendar.range(of: .day, in: .month, for: displayedMonth) else {
+            return []
+        }
+
+        let firstWeekday = calendar.component(.weekday, from: monthInterval.start)
+        let leadingEmptyDays = max(0, firstWeekday - 1)
+        let monthDayCount = dayRange.count
+        let occupiedCells = leadingEmptyDays + monthDayCount
+        let trailingEmptyDays = (7 - occupiedCells % 7) % 7
+        let totalCells = max(35, occupiedCells + trailingEmptyDays)
+
+        return (0..<totalCells).map { index in
+            let dayNumber = index - leadingEmptyDays + 1
+            guard dayNumber >= 1, dayNumber <= monthDayCount,
+                  let date = calendar.date(byAdding: .day, value: dayNumber - 1, to: monthInterval.start) else {
+                return DailySnapshotCalendarDay.placeholder(index: index, month: monthInterval.start)
+            }
+
+            let snapshotDay = DailySnapshotDay(date: date, calendar: calendar)
+            return DailySnapshotCalendarDay(
+                id: snapshotDay.rawValue,
+                date: date,
+                dayNumber: dayNumber,
+                snapshot: snapshotsByDay[snapshotDay],
+                isSelected: snapshotDay == selectedSnapshotDay,
+                isFuture: calendar.startOfDay(for: date) > maximumDate,
+                isPastNoCatches: calendar.startOfDay(for: date) < maximumDate
+                    && (snapshotsByDay[snapshotDay]?.fishCaughtCount ?? 0) == 0
+            )
+        }
+    }
+
+    private func monthStart(for date: Date) -> Date {
+        calendar.dateInterval(of: .month, for: date)?.start ?? calendar.startOfDay(for: date)
+    }
+
+    private func moveDisplayedMonth(by offset: Int) {
+        guard let nextMonth = calendar.date(byAdding: .month, value: offset, to: displayedMonth) else { return }
+        let month = min(monthStart(for: nextMonth), monthStart(for: maximumDate))
+        displayedMonth = month
+    }
+
+    private func loadSelectedSnapshotIfNeeded(for date: Date) {
+        let day = DailySnapshotDay(date: date, calendar: calendar)
+        guard snapshotByDay[day] == nil else {
+            loadState = .loaded
+            notice = nil
+            return
+        }
+
+        Task {
+            await loadSelectedSnapshot(day: day)
+        }
+    }
+
+    private func loadSelectedSnapshot(day: DailySnapshotDay) async {
+        loadState = .loading
+        notice = nil
+
+        do {
+            let snapshot = try await fetchSnapshotAction(day)
+            guard day == selectedSnapshotDay else { return }
+
+            if let snapshot {
+                snapshotByDay[snapshot.snapshotDay] = snapshot
+            }
+            loadState = .loaded
+        } catch {
+            guard day == selectedSnapshotDay else { return }
+            loadState = .failed
+            notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}
+
+private struct DailySnapshotCalendarDay: Identifiable {
+    let id: String
+    let date: Date?
+    let dayNumber: Int?
+    let snapshot: DailyVillageSnapshot?
+    let isSelected: Bool
+    let isFuture: Bool
+    let isPastNoCatches: Bool
+
+    var hasFocus: Bool {
+        (snapshot?.totalFocusSeconds ?? 0) > 0
+    }
+
+    static func placeholder(index: Int, month: Date) -> DailySnapshotCalendarDay {
+        DailySnapshotCalendarDay(
+            id: "placeholder-\(month.timeIntervalSince1970)-\(index)",
+            date: nil,
+            dayNumber: nil,
+            snapshot: nil,
+            isSelected: false,
+            isFuture: false,
+            isPastNoCatches: false
+        )
+    }
+}
+
+private struct DailySnapshotCalendarDayCell: View {
+    let day: DailySnapshotCalendarDay
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                if let dayNumber = day.dayNumber {
+                    Text("\(dayNumber)")
+                        .font(PicoTypography.captionSemibold)
+                        .foregroundStyle(dayTextColor)
+                        .monospacedDigit()
+
+                    DailySnapshotBucketImage(isFilled: day.hasFocus)
+                        .frame(height: PicoCalendarStyle.dayBucketHeight)
+                        .opacity(bucketOpacity)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 64)
+            .background(cellBackground)
+            .clipShape(RoundedRectangle(cornerRadius: PicoCalendarStyle.dayCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: PicoCalendarStyle.dayCornerRadius, style: .continuous)
+                    .stroke(cellBorder, lineWidth: day.isSelected ? 1.5 : 1)
+                    .opacity(day.dayNumber == nil ? 0 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(day.dayNumber == nil || day.isFuture)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var dayTextColor: Color {
+        if day.isFuture || day.isPastNoCatches {
+            return PicoColors.textMuted
+        }
+
+        return PicoColors.textPrimary
+    }
+
+    private var bucketOpacity: Double {
+        if day.isFuture {
+            return PicoCalendarStyle.inactiveDayOpacity
+        }
+
+        return day.hasFocus ? 1 : PicoCalendarStyle.emptyDayOpacity
+    }
+
+    private var cellBackground: Color {
+        day.isSelected ? PicoCalendarStyle.selectedDayBackground : Color.clear
+    }
+
+    private var cellBorder: Color {
+        day.isSelected ? PicoCalendarStyle.selectedDayBorder : Color.clear
+    }
+
+    private var accessibilityLabel: Text {
+        guard let date = day.date else { return Text("Empty calendar cell") }
+        let status = day.hasFocus ? "focus logged" : "no focus"
+        return Text("\(date.formatted(.dateTime.month().day().year())), \(status)")
+    }
+}
+
+private struct DailySnapshotBucketImage: View {
+    let isFilled: Bool
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+            } else {
+                Image(systemName: "shippingbox")
+                    .font(PicoTypography.symbol(size: 20, weight: .semibold))
+                    .foregroundStyle(PicoColors.textSecondary)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var image: UIImage? {
+        let assetName = isFilled ? "Bucket" : "Empty_Bucket"
+        return [
+            "Icons/\(assetName)",
+            "Icons/\(assetName).png",
+            assetName,
+            "\(assetName).png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
+    }
+}
+
+private struct DailySnapshotAssetIcon: View {
+    let name: String
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+            } else {
+                Image(systemName: "sparkles")
+                    .font(PicoTypography.symbol(size: size * 0.64, weight: .semibold))
+                    .foregroundStyle(PicoColors.textSecondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private var image: UIImage? {
+        [
+            "Icons/\(name)",
+            "Icons/\(name).png",
+            name,
+            "\(name).png"
+        ]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
+    }
+}
+
+private struct DailySnapshotCalendarHero: View {
+    let selectedDate: Date
+    let snapshot: DailyVillageSnapshot?
+    let mode: DailySnapshotHeroMode
+    let isLoading: Bool
+    let notice: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: PicoSpacing.tiny) {
+                Text(selectedDate.formatted(.dateTime.month(.abbreviated).day()))
+                    .font(PicoTypography.captionSemibold)
+                    .foregroundStyle(PicoColors.textSecondary)
+
+                Text("\(focusedTimeText) focused")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textPrimary)
+            }
+
+            ZStack {
+                switch mode {
+                case .bonds:
+                    DailySnapshotBondsHeroContent(snapshot: snapshot)
+                case .fish:
+                    DailySnapshotFishHeroContent(snapshot: snapshot)
+                }
+
+                if isLoading {
+                    loadingOverlay
+                }
+            }
+            .padding(.top, PicoSpacing.iconTextGap)
+
+            if let notice, !isLoading {
+                Label {
+                    Text(notice)
+                        .font(PicoTypography.caption)
+                        .lineLimit(2)
+                } icon: {
+                    PicoIcon(.infoRegular, size: 15)
+                }
+                .foregroundStyle(PicoColors.textSecondary)
+                .padding(.top, PicoSpacing.standard)
+            }
+        }
+        .padding(.horizontal, PicoSpacing.cardPadding)
+        .padding(.vertical, PicoSpacing.standard)
+        .frame(maxWidth: PicoCalendarStyle.heroCardMaxWidth)
+        .frame(minHeight: PicoCalendarStyle.heroCardMinHeight)
+        .background(PicoCalendarStyle.heroBackground)
+        .clipShape(RoundedRectangle(cornerRadius: PicoCalendarStyle.cardCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: PicoCalendarStyle.cardCornerRadius, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
+    }
+
+    private var focusedTimeText: String {
+        let totalMinutes = max(0, (snapshot?.totalFocusSeconds ?? 0) / 60)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        }
+
+        return "\(minutes)m"
+    }
+
+    private var loadingOverlay: some View {
+        VStack(spacing: PicoSpacing.compact) {
+            ProgressView()
+                .tint(PicoColors.primary)
+
+            Text("Loading day")
+                .font(PicoTypography.captionSemibold)
+                .foregroundStyle(PicoColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PicoCalendarStyle.heroBackground.opacity(0.88))
+    }
+}
+
+private struct DailySnapshotBondsHeroContent: View {
+    let snapshot: DailyVillageSnapshot?
+    @State private var selectedBondIndex = 0
+
+    private var visitors: [DailyVillageSnapshotVisitor] {
+        (snapshot?.visitors ?? []).sorted {
+            if $0.bondLevel != $1.bondLevel {
+                return $0.bondLevel > $1.bondLevel
+            }
+
+            return $0.profile.displayName.localizedCaseInsensitiveCompare($1.profile.displayName) == .orderedAscending
+        }
+    }
+
+    var body: some View {
+        if visitors.isEmpty {
+            DailySnapshotHeroEmptyState(
+                title: "No bonds",
+                message: showsBondEmptyStateMessage ? "No villagers bonded on this day." : nil,
+                image: DailySnapshotAssetIcon(name: "Scarf_Green", size: 72)
+            )
+        } else {
+            ZStack(alignment: .bottom) {
+                TabView(selection: $selectedBondIndex) {
+                    ForEach(visitors.indices, id: \.self) { index in
+                        DailySnapshotBondHeroItem(visitor: visitors[index])
+                            .tag(index)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+
+                DailySnapshotCarouselIndicator(
+                    count: visitors.count,
+                    selectedIndex: selectedBondIndex
+                )
+            }
+            .frame(height: PicoCalendarStyle.heroContentHeight)
+            .onChange(of: visitors.count) {
+                selectedBondIndex = min(selectedBondIndex, max(0, visitors.count - 1))
+            }
+        }
+    }
+
+    private var showsBondEmptyStateMessage: Bool {
+        guard let snapshot else { return false }
+        return snapshot.totalFocusSeconds <= 0 || snapshot.fishCaughtCount <= 0
+    }
+}
+
+private struct DailySnapshotBondHeroItem: View {
+    let visitor: DailyVillageSnapshotVisitor
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.compact) {
+            DailySnapshotHappyAvatarView(
+                config: visitor.profile.avatarConfig,
+                scarf: AvatarScarf(bondLevel: visitor.bondLevel)
+            )
+            .frame(width: 156, height: 172)
+
+            Text(visitor.profile.displayName)
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(visitor.profile.displayName))
+    }
+}
+
+private struct DailySnapshotFishHeroContent: View {
+    let snapshot: DailyVillageSnapshot?
+    @State private var selectedFishIndex = 0
+
+    private var fishCounts: [FishCount] {
+        (snapshot?.fishCounts ?? []).sorted {
+            if $0.rarity.rarestFirstSortRank != $1.rarity.rarestFirstSortRank {
+                return $0.rarity.rarestFirstSortRank < $1.rarity.rarestFirstSortRank
+            }
+
+            if $0.sortOrder != $1.sortOrder {
+                return $0.sortOrder < $1.sortOrder
+            }
+
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    var body: some View {
+        if fishCounts.isEmpty {
+            DailySnapshotHeroEmptyState(
+                title: "No fish",
+                message: snapshot == nil ? nil : "No fish caught on this day.",
+                image: DailySnapshotAssetIcon(name: "FishingPole_New", size: 78)
+            )
+        } else {
+            ZStack(alignment: .bottom) {
+                TabView(selection: $selectedFishIndex) {
+                    ForEach(fishCounts.indices, id: \.self) { index in
+                        DailySnapshotFishHeroCard(fishCount: fishCounts[index])
+                            .tag(index)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+
+                DailySnapshotCarouselIndicator(
+                    count: fishCounts.count,
+                    selectedIndex: selectedFishIndex
+                )
+            }
+            .frame(height: PicoCalendarStyle.heroContentHeight)
+            .onChange(of: fishCounts.count) {
+                selectedFishIndex = min(selectedFishIndex, max(0, fishCounts.count - 1))
+            }
+        }
+    }
+}
+
+private struct DailySnapshotFishHeroCard: View {
+    let fishCount: FishCount
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.compact) {
+            DailySnapshotFishIcon(fishCount: fishCount, size: PicoCalendarStyle.heroIconSize)
+                .frame(height: PicoCalendarStyle.heroIconSize)
+
+            Text(fishCount.displayName)
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+
+            HStack(spacing: PicoSpacing.tiny) {
+                DailySnapshotFishRarityBadge(fishCount: fishCount)
+                DailySnapshotFishCountBadge(fishCount: fishCount)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("\(fishCount.displayName), \(fishCount.count) caught"))
+    }
+}
+
+private struct DailySnapshotFishRarityBadge: View {
+    let fishCount: FishCount
+
+    private var style: PicoFishRarityStyle {
+        fishCount.rarity.picoStyle
+    }
+
+    var body: some View {
+        Text(fishCount.rarity.label)
+            .font(PicoTypography.captionSemibold)
+            .foregroundStyle(style.pillTextColor)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .padding(.horizontal, PicoSpacing.iconTextGap)
+            .padding(.vertical, 5)
+            .background(style.pillBackgroundColor)
+            .clipShape(Capsule(style: .continuous))
+    }
+}
+
+private struct DailySnapshotFishCountBadge: View {
+    let fishCount: FishCount
+
+    var body: some View {
+        Text("×\(fishCount.count)")
+            .font(PicoTypography.captionSemibold)
+            .foregroundStyle(PicoColors.textSecondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .monospacedDigit()
+            .padding(.horizontal, PicoSpacing.iconTextGap)
+            .padding(.vertical, 5)
+            .background(PicoCalendarStyle.heroBackground)
+            .clipShape(Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(PicoColors.border, lineWidth: 1)
+            }
+    }
+}
+
+private struct DailySnapshotCarouselIndicator: View {
+    let count: Int
+    let selectedIndex: Int
+
+    var body: some View {
+        if count > 1 {
+            HStack(spacing: 6) {
+                ForEach(0..<count, id: \.self) { index in
+                    Circle()
+                        .fill(index == selectedIndex ? PicoColors.primary : PicoColors.textMuted.opacity(0.34))
+                        .frame(width: index == selectedIndex ? 7 : 5, height: index == selectedIndex ? 7 : 5)
+                }
+            }
+            .frame(height: 12)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
+private struct DailySnapshotHappyAvatarView: View {
+    let config: AvatarConfig
+    let scarf: AvatarScarf?
+
+    var body: some View {
+        GeometryReader { proxy in
+            SpriteView(
+                scene: DailySnapshotHappyAvatarScene(
+                    size: proxy.size,
+                    hat: config.selectedHat,
+                    scarf: scarf
+                ),
+                options: [.allowsTransparency]
+            )
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .background(Color.clear)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private final class DailySnapshotHappyAvatarScene: SKScene {
+    private static let idleActionKey = "daily-snapshot-happy-idle"
+
+    private let hat: AvatarHat
+    private let scarf: AvatarScarf?
+    private var renderedSize: CGSize = .zero
+
+    init(size: CGSize, hat: AvatarHat, scarf: AvatarScarf?) {
+        self.hat = hat
+        self.scarf = scarf
+        super.init(size: size)
+        scaleMode = .resizeFill
+        backgroundColor = .clear
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        nil
+    }
+
+    override func didMove(to view: SKView) {
+        view.allowsTransparency = true
+        view.isOpaque = false
+        view.backgroundColor = .clear
+        redrawIfNeeded()
+    }
+
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        redrawIfNeeded()
+    }
+
+    private func redrawIfNeeded() {
+        guard size.width > 0, size.height > 0, size != renderedSize else { return }
+
+        renderedSize = size
+        removeAllChildren()
+
+        let frames = AvatarHappyIdleFrames(hat: hat, scarf: scarf).layeredFrames
+        let sprite = AvatarLayeredSpriteNode(frames: frames)
+        let spriteSide = min(size.width, size.height)
+        sprite.spriteSize = CGSize(width: spriteSide, height: spriteSide)
+        sprite.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        sprite.runAnimation(
+            with: frames,
+            row: 0,
+            timePerFrame: 0.10,
+            key: Self.idleActionKey
+        )
+        addChild(sprite)
+    }
+}
+
+private struct DailySnapshotFishIcon: View {
+    let fishCount: FishCount
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let fishImage {
+                Image(uiImage: fishImage)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "fish")
+                    .font(PicoTypography.symbol(size: size * 0.58, weight: .semibold))
+                    .foregroundStyle(fishCount.rarity.picoStyle.iconFallbackColor)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private var fishImage: UIImage? {
+        fishImageResourceCandidates(named: fishCount.assetName)
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
+    }
+}
+
+private struct DailySnapshotHeroEmptyState<ImageContent: View>: View {
+    let title: String
+    let message: String?
+    let image: ImageContent
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.compact) {
+            image
+                .frame(width: 68, height: 84)
+                .opacity(PicoCalendarStyle.emptyDayOpacity)
+
+            Text(title)
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+
+            if let message {
+                Text(message)
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: PicoCalendarStyle.heroContentHeight)
     }
 }
 
@@ -5166,6 +5894,19 @@ private enum FishingTier: String, CaseIterable, Identifiable {
     }
 }
 
+private extension FishRarity {
+    var rarestFirstSortRank: Int {
+        switch self {
+        case .ultraRare:
+            0
+        case .rare:
+            1
+        case .common:
+            2
+        }
+    }
+}
+
 private func fishImageResourceCandidates(named assetName: String) -> [String] {
     [
         "Icons/fish/\(assetName)",
@@ -5292,12 +6033,28 @@ private struct FishingCollectionTile: View {
     let fish: FishingCatalogFish
     let count: Int
 
+    private enum Layout {
+        static let tileHeight: CGFloat = 256
+        static let nameHeight: CGFloat = 44
+        static let nameFontSize: CGFloat = 18
+    }
+
     private var isUnlocked: Bool {
         count > 0
     }
 
+    private var displayNameText: String {
+        guard isUnlocked else { return "???" }
+        return fish.displayName.fishingCollectionTileName
+    }
+
     var body: some View {
         VStack(spacing: PicoSpacing.iconTextGap) {
+            HStack {
+                Spacer(minLength: 0)
+                countBadge
+            }
+
             FishingCatalogIcon(
                 fish: fish,
                 isUnlocked: isUnlocked,
@@ -5306,36 +6063,26 @@ private struct FishingCollectionTile: View {
             .frame(height: 94)
 
             VStack(spacing: 6) {
-                Text(isUnlocked ? fish.displayName : "???")
-                    .font(PicoTypography.compactTitle)
+                Text(displayNameText)
+                    .font(PicoTypography.primary(size: Layout.nameFontSize, weight: .bold))
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .minimumScaleFactor(0.68)
+                    .minimumScaleFactor(0.86)
+                    .allowsTightening(true)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Layout.nameHeight)
 
                 FishingRarityBadge(
                     rarityName: fish.tier.title.lowercased(),
                     style: fish.tier.rarityStyle
                 )
-
-                if isUnlocked {
-                    Text("x\(count)")
-                        .font(PicoTypography.compactValue)
-                        .foregroundStyle(PicoColors.textPrimary)
-                        .monospacedDigit()
-                } else {
-                    Label("Locked", systemImage: "lock.fill")
-                        .font(PicoTypography.pill)
-                        .foregroundStyle(PicoColors.textSecondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                }
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(minHeight: 214)
         .padding(.horizontal, PicoSpacing.compact)
         .padding(.vertical, PicoSpacing.standard)
+        .frame(height: Layout.tileHeight)
         .background(tileBackground)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
         .overlay(
@@ -5358,6 +6105,65 @@ private struct FishingCollectionTile: View {
         }
 
         return PicoCreamCardStyle.border
+    }
+
+    private var countBadge: some View {
+        Group {
+            if isUnlocked {
+                Text("x\(count)")
+                    .font(PicoTypography.caption)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            } else {
+                Image(systemName: "lock.fill")
+                    .font(PicoTypography.symbol(size: 13, weight: .bold))
+                    .frame(width: 18, height: 18)
+            }
+        }
+        .foregroundStyle(countBadgeForeground)
+        .padding(.horizontal, PicoSpacing.compact)
+        .padding(.vertical, 5)
+        .frame(minWidth: 38)
+        .background(countBadgeBackground)
+        .clipShape(Capsule(style: .continuous))
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(countBadgeBorder, lineWidth: 1)
+        )
+        .accessibilityLabel(Text(isUnlocked ? "\(count) caught" : "Locked"))
+    }
+
+    private var countBadgeForeground: Color {
+        PicoColors.textSecondary
+    }
+
+    private var countBadgeBackground: Color {
+        tileBackground
+    }
+
+    private var countBadgeBorder: Color {
+        PicoColors.border.opacity(0.84)
+    }
+}
+
+private extension String {
+    var fishingCollectionTileName: String {
+        guard !contains(" ") else { return self }
+        return fishingCollectionSoftHyphenated
+    }
+
+    private var fishingCollectionSoftHyphenated: String {
+        let softHyphen = "\u{00AD}"
+        let lowercaseSelf = lowercased()
+        let suffixes = ["fish", "head", "shark"]
+
+        for suffix in suffixes where lowercaseSelf.hasSuffix(suffix) {
+            let splitIndex = index(endIndex, offsetBy: -suffix.count)
+            guard distance(from: startIndex, to: splitIndex) >= 4 else { continue }
+            return "\(self[..<splitIndex])\(softHyphen)\(self[splitIndex...])"
+        }
+
+        return self
     }
 }
 

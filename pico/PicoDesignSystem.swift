@@ -292,6 +292,25 @@ enum PicoCreamCardStyle {
     static let sheetCardPadding = PicoSpacing.standard
 }
 
+enum PicoCalendarStyle {
+    static let background = PicoColors.appBackground
+    static let panelBackground = PicoColors.surface
+    static let heroBackground = panelBackground
+    static let selectedDayBackground = PicoColors.primary.opacity(0.18)
+    static let selectedDayBorder = PicoColors.primary.opacity(0.5)
+    static let availableDayBorder = PicoColors.border
+    static let emptyDayOpacity: Double = 0.56
+    static let inactiveDayOpacity: Double = 0.32
+    static let cardCornerRadius = PicoRadius.large
+    static let panelCornerRadius = PicoRadius.extraLarge
+    static let dayCornerRadius = PicoRadius.medium
+    static let heroCardMaxWidth: CGFloat = 300
+    static let heroCardMinHeight: CGFloat = 368
+    static let heroContentHeight: CGFloat = 312
+    static let heroIconSize: CGFloat = 138
+    static let dayBucketHeight: CGFloat = 27
+}
+
 #if canImport(UIKit)
 enum PicoUIColors {
     static let appBackground = UIColor(red: 0xFA / 255, green: 0xF8 / 255, blue: 0xF2 / 255, alpha: 1)

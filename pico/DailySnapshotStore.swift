@@ -86,13 +86,17 @@ final class DailySnapshotStore: ObservableObject {
         }
     }
 
+    func fetchSnapshot(day: DailySnapshotDay, for session: AuthSession?) async throws -> DailyVillageSnapshot? {
+        guard let session else { return nil }
+        return try await dailySnapshotService.fetchSnapshot(day: day, for: session)
+    }
+
     func loadSnapshotRange(
         startDay: DailySnapshotDay,
         endDay: DailySnapshotDay,
         for session: AuthSession?
     ) async {
         guard let session else { return }
-        guard !isLoadingRange else { return }
 
         rangeLoadGeneration += 1
         let generation = rangeLoadGeneration
@@ -162,6 +166,26 @@ final class DailySnapshotStore: ObservableObject {
             focusSessionIDs: [],
             totalFocusSeconds: 5400,
             fishCaughtCount: 12,
+            fishCounts: [
+                FishCount(
+                    seaCritterID: FishID(rawValue: "salmon"),
+                    displayName: "Salmon",
+                    rarity: .common,
+                    sellValue: 1,
+                    assetName: "Fish_Salmon",
+                    sortOrder: 2,
+                    count: 3
+                ),
+                FishCount(
+                    seaCritterID: FishID(rawValue: "pufferfish"),
+                    displayName: "Pufferfish",
+                    rarity: .rare,
+                    sellValue: 2,
+                    assetName: "Fish_PufferFish",
+                    sortOrder: 8,
+                    count: 1
+                )
+            ],
             createdAt: Date(),
             updatedAt: Date(),
             notice: nil

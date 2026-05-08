@@ -71,6 +71,7 @@ struct DailyVillageSnapshot: Identifiable, Equatable {
     let focusSessionIDs: [UUID]
     let totalFocusSeconds: Int
     let fishCaughtCount: Int
+    let fishCounts: [FishCount]
     let createdAt: Date?
     let updatedAt: Date?
     let notice: String?
@@ -241,6 +242,7 @@ private struct DailyVillageSnapshotResponse: Decodable {
     let focusSessionIds: [UUID]
     let totalFocusSeconds: Int
     let fishCaughtCount: Int
+    let fishCounts: [DailySnapshotFishCountResponse]
     let createdAt: String
     let updatedAt: String
 
@@ -254,6 +256,7 @@ private struct DailyVillageSnapshotResponse: Decodable {
         case focusSessionIds
         case totalFocusSeconds
         case fishCaughtCount
+        case fishCounts
         case createdAt
         case updatedAt
     }
@@ -269,6 +272,7 @@ private struct DailyVillageSnapshotResponse: Decodable {
         focusSessionIds = try container.decodeIfPresent([UUID].self, forKey: .focusSessionIds) ?? []
         totalFocusSeconds = try container.decodeIfPresent(Int.self, forKey: .totalFocusSeconds) ?? 0
         fishCaughtCount = try container.decodeIfPresent(Int.self, forKey: .fishCaughtCount) ?? 0
+        fishCounts = try container.decodeIfPresent([DailySnapshotFishCountResponse].self, forKey: .fishCounts) ?? []
         createdAt = try container.decode(String.self, forKey: .createdAt)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
 
@@ -288,6 +292,7 @@ private struct DailyVillageSnapshotResponse: Decodable {
             focusSessionIDs: focusSessionIds,
             totalFocusSeconds: totalFocusSeconds,
             fishCaughtCount: fishCaughtCount,
+            fishCounts: fishCounts.map(\.fishCount),
             createdAt: FocusDateFormatter.date(from: createdAt),
             updatedAt: FocusDateFormatter.date(from: updatedAt),
             notice: skippedVisitorCount > 0 ? skippedVisitorNotice : nil
@@ -365,6 +370,28 @@ private struct DailySnapshotVisitorResponse: Decodable {
             ),
             bondLevel: bondLevel,
             completedPairSessions: completedPairSessions
+        )
+    }
+}
+
+private struct DailySnapshotFishCountResponse: Decodable {
+    let seaCritterId: FishID
+    let displayName: String
+    let rarity: FishRarity
+    let sellValue: Int
+    let assetName: String
+    let sortOrder: Int
+    let count: Int
+
+    var fishCount: FishCount {
+        FishCount(
+            seaCritterID: seaCritterId,
+            displayName: displayName,
+            rarity: rarity,
+            sellValue: sellValue,
+            assetName: assetName,
+            sortOrder: sortOrder,
+            count: count
         )
     }
 }
