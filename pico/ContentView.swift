@@ -450,7 +450,6 @@ private struct HomePage: View {
                             }
                             .id(dailySnapshotStore.selectedDay)
                             .transition(.opacity)
-                            .simultaneousGesture(snapshotDaySwipeGesture)
 
                         }
                         .padding(.horizontal, PicoSpacing.standard)
@@ -631,10 +630,6 @@ private struct HomePage: View {
         dailySnapshotStore.selectedDay == todaySnapshotDay
     }
 
-    private var isNextSnapshotDayDisabled: Bool {
-        dailySnapshotStore.isLoadingSnapshot || dailySnapshotStore.selectedDay >= todaySnapshotDay
-    }
-
     private var selectedDayLabel: String {
         if isSelectedDayToday {
             return "Today"
@@ -707,13 +702,6 @@ private struct HomePage: View {
         let today = DailySnapshotDay(date: snapshotPickerMaximumDate, calendar: .current)
         guard dailySnapshotStore.currentSnapshot?.snapshotDay == today else { return nil }
         return dailySnapshotStore.currentSnapshot
-    }
-
-    private var snapshotDaySwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 24, coordinateSpace: .local)
-            .onEnded { value in
-                handleSnapshotDaySwipe(value)
-            }
     }
 
     private var activeIslandParticipants: [IslandParticipant]? {
@@ -802,15 +790,6 @@ private struct HomePage: View {
         await berryStore.loadBalance(for: sessionStore.session)
     }
 
-    private func goToPreviousSnapshotDay() {
-        loadSnapshotDay(offsetBy: -1)
-    }
-
-    private func goToNextSnapshotDay() {
-        guard !isNextSnapshotDayDisabled else { return }
-        loadSnapshotDay(offsetBy: 1)
-    }
-
     private func presentSnapshotDatePicker() {
         guard !isLiveFocusActive else { return }
 
@@ -834,35 +813,6 @@ private struct HomePage: View {
 
     private func fetchCalendarSnapshot(day: DailySnapshotDay) async throws -> DailyVillageSnapshot? {
         try await dailySnapshotStore.fetchSnapshot(day: day, for: sessionStore.session)
-    }
-
-    private func loadSnapshotDay(offsetBy dayOffset: Int) {
-        let calendar = Calendar.current
-        let selectedDate = dailySnapshotStore.selectedDay.date(calendar: calendar) ?? Date()
-        guard let nextDate = calendar.date(byAdding: .day, value: dayOffset, to: selectedDate) else { return }
-        let nextDay = DailySnapshotDay(date: nextDate, calendar: calendar)
-
-        Task {
-            await dailySnapshotStore.loadSnapshot(day: nextDay, for: sessionStore.session)
-        }
-    }
-
-    private func handleSnapshotDaySwipe(_ value: DragGesture.Value) {
-        guard !isLiveFocusActive, !dailySnapshotStore.isLoadingSnapshot else { return }
-
-        let horizontalDistance = value.translation.width
-        let verticalDistance = value.translation.height
-        let horizontalThreshold: CGFloat = 56
-        guard abs(horizontalDistance) >= horizontalThreshold,
-              abs(horizontalDistance) > abs(verticalDistance) * 1.35 else {
-            return
-        }
-
-        if horizontalDistance < 0 {
-            goToNextSnapshotDay()
-        } else {
-            goToPreviousSnapshotDay()
-        }
     }
 
     private func villageHeight(for viewportHeight: CGFloat) -> CGFloat {
@@ -5377,16 +5327,19 @@ private struct FishingPage: View {
 
                 switch selectedMode {
                 case .collection:
-                    FishingCollectionHeader(
-                        selectedIsland: $selectedCollectionIsland,
-                        discoveryText: collectionDiscoveryText
-                    )
+                    VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+                        FishingCollectionHeader(
+                            selectedIsland: $selectedCollectionIsland,
+                            discoveryText: collectionDiscoveryText
+                        )
 
-                    FishingCollectionSections(
-                        catalogFish: catalogFish,
-                        counts: collectionCounts,
-                        isLoading: isLoadingCollectionData
-                    )
+                        FishingCollectionSections(
+                            catalogFish: catalogFish,
+                            counts: collectionCounts,
+                            isLoading: isLoadingCollectionData
+                        )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 case .inventory:
                     FishingInventorySection(
                         groups: inventoryGroups,
@@ -5514,7 +5467,7 @@ private struct FishingCollectionHeader: View {
                         .frame(width: 24, height: 24)
 
                     Text(selectedIsland.collectionDisplayName)
-                        .font(PicoTypography.cardTitle)
+                        .font(PicoTypography.bodySemibold)
                         .foregroundStyle(PicoColors.textPrimary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
@@ -5969,7 +5922,7 @@ private struct FishingCollectionSections: View {
     private let tiers = FishingTier.allCases
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.section) {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
             ForEach(tiers) { tier in
                 FishingTierSection(
                     tier: tier,
@@ -5989,8 +5942,26 @@ private struct FishingTierSection: View {
     let counts: [FishType: Int]
     let isLoading: Bool
 
+    private let columns = [
+        GridItem(.flexible(), spacing: PicoSpacing.iconTextGap),
+        GridItem(.flexible(), spacing: PicoSpacing.iconTextGap)
+    ]
+
     private var unlockedCount: Int {
         fish.filter { counts[$0.seaCritterID, default: 0] > 0 }.count
+    }
+
+    private var displayFish: [FishingCatalogFish] {
+        fish.sorted { lhs, rhs in
+            let lhsIsUnlocked = count(for: lhs) > 0
+            let rhsIsUnlocked = count(for: rhs) > 0
+
+            if lhsIsUnlocked != rhsIsUnlocked {
+                return !lhsIsUnlocked && rhsIsUnlocked
+            }
+
+            return lhs.sortOrder < rhs.sortOrder
+        }
     }
 
     var body: some View {
@@ -6006,10 +5977,10 @@ private struct FishingTierSection: View {
             )
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 94), spacing: PicoSpacing.iconTextGap)],
+                columns: columns,
                 spacing: PicoSpacing.iconTextGap
             ) {
-                ForEach(fish) { catalogFish in
+                ForEach(displayFish) { catalogFish in
                     FishingCollectionTile(
                         fish: catalogFish,
                         count: count(for: catalogFish)
@@ -6017,11 +5988,9 @@ private struct FishingTierSection: View {
                 }
             }
         }
-        .picoCreamCard(
-            cornerRadius: PicoRadius.large,
-            showsShadow: false,
-            padding: PicoCreamCardStyle.contentPadding
-        )
+        .padding(.horizontal, PicoCreamCardStyle.contentPadding)
+        .padding(.top, PicoSpacing.iconTextGap)
+        .padding(.bottom, PicoSpacing.iconTextGap)
     }
 
     private func count(for catalogFish: FishingCatalogFish) -> Int {
@@ -6034,9 +6003,11 @@ private struct FishingCollectionTile: View {
     let count: Int
 
     private enum Layout {
-        static let tileHeight: CGFloat = 256
-        static let nameHeight: CGFloat = 44
-        static let nameFontSize: CGFloat = 18
+        static let tileHeight: CGFloat = 172
+        static let iconSize: CGFloat = 72
+        static let iconFrameHeight: CGFloat = 72
+        static let nameHeight: CGFloat = 34
+        static let nameFontSize: CGFloat = 16
     }
 
     private var isUnlocked: Bool {
@@ -6049,7 +6020,7 @@ private struct FishingCollectionTile: View {
     }
 
     var body: some View {
-        VStack(spacing: PicoSpacing.iconTextGap) {
+        VStack(spacing: PicoSpacing.tiny) {
             HStack {
                 Spacer(minLength: 0)
                 countBadge
@@ -6058,11 +6029,11 @@ private struct FishingCollectionTile: View {
             FishingCatalogIcon(
                 fish: fish,
                 isUnlocked: isUnlocked,
-                size: 90
+                size: Layout.iconSize
             )
-            .frame(height: 94)
+            .frame(height: Layout.iconFrameHeight)
 
-            VStack(spacing: 6) {
+            VStack(spacing: PicoSpacing.tiny) {
                 Text(displayNameText)
                     .font(PicoTypography.primary(size: Layout.nameFontSize, weight: .bold))
                     .foregroundStyle(PicoColors.textPrimary)
@@ -6081,7 +6052,7 @@ private struct FishingCollectionTile: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, PicoSpacing.compact)
-        .padding(.vertical, PicoSpacing.standard)
+        .padding(.vertical, 6)
         .frame(height: Layout.tileHeight)
         .background(tileBackground)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
@@ -6111,38 +6082,30 @@ private struct FishingCollectionTile: View {
         Group {
             if isUnlocked {
                 Text("x\(count)")
-                    .font(PicoTypography.caption)
+                    .font(FishingRarityBadge.badgeFont)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
             } else {
                 Image(systemName: "lock.fill")
-                    .font(PicoTypography.symbol(size: 13, weight: .bold))
-                    .frame(width: 18, height: 18)
+                    .font(PicoTypography.symbol(size: 12, weight: .bold))
+                    .frame(width: 16, height: 16)
             }
         }
         .foregroundStyle(countBadgeForeground)
-        .padding(.horizontal, PicoSpacing.compact)
-        .padding(.vertical, 5)
-        .frame(minWidth: 38)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .frame(minWidth: 30)
         .background(countBadgeBackground)
         .clipShape(Capsule(style: .continuous))
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(countBadgeBorder, lineWidth: 1)
-        )
         .accessibilityLabel(Text(isUnlocked ? "\(count) caught" : "Locked"))
     }
 
     private var countBadgeForeground: Color {
-        PicoColors.textSecondary
+        FishRarity.common.picoStyle.pillTextColor
     }
 
     private var countBadgeBackground: Color {
-        tileBackground
-    }
-
-    private var countBadgeBorder: Color {
-        PicoColors.border.opacity(0.84)
+        FishRarity.common.picoStyle.pillBackgroundColor
     }
 }
 
@@ -6185,7 +6148,7 @@ private struct FishingSectionHeader: View {
                 }
 
                 Text(title)
-                    .font(PicoTypography.sectionTitle)
+                    .font(PicoTypography.cardTitle)
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
@@ -6198,7 +6161,7 @@ private struct FishingSectionHeader: View {
                     .tint(PicoColors.primary)
                     .frame(height: 36)
             } else {
-                HStack(spacing: 6) {
+                HStack(spacing: PicoSpacing.tiny) {
                     if let countIconName {
                         FishingCountIcon(name: countIconName, fallbackColor: countForegroundColor)
                             .frame(width: 17, height: 17)
@@ -6209,28 +6172,13 @@ private struct FishingSectionHeader: View {
                         .foregroundStyle(countForegroundColor)
                         .monospacedDigit()
                 }
-                .padding(.horizontal, PicoSpacing.iconTextGap)
-                .padding(.vertical, 8)
-                .background(countBackgroundColor)
-                .clipShape(Capsule(style: .continuous))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(countBorderColor, lineWidth: 1)
-                )
+                .frame(minHeight: 36, alignment: .center)
             }
         }
     }
 
     private var countForegroundColor: Color {
         isComplete ? accentColor : PicoColors.textSecondary
-    }
-
-    private var countBackgroundColor: Color {
-        isComplete ? accentColor.opacity(0.14) : PicoColors.softSurface.opacity(0.76)
-    }
-
-    private var countBorderColor: Color {
-        isComplete ? accentColor.opacity(0.34) : PicoColors.border.opacity(0.84)
     }
 }
 
@@ -6305,16 +6253,21 @@ private struct FishingRarityBadge: View {
     let rarityName: String
     let style: PicoFishRarityStyle
 
+    static let badgeFont = PicoTypography.pill
+    static let badgeHeight: CGFloat = 25
+
     var body: some View {
         Text(rarityName)
-            .font(PicoTypography.pill)
+            .font(Self.badgeFont)
             .foregroundStyle(style.pillTextColor)
             .lineLimit(1)
-            .minimumScaleFactor(0.72)
             .padding(.horizontal, PicoSpacing.compact)
             .padding(.vertical, 5)
+            .frame(height: Self.badgeHeight)
             .background(style.pillBackgroundColor)
             .clipShape(Capsule(style: .continuous))
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
     }
 }
 
