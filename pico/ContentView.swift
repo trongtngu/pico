@@ -6709,6 +6709,7 @@ private struct ProfilePage: View {
     @State private var displayName = ""
     @State private var draftDisplayName = ""
     @State private var avatarConfig = AvatarCatalog.defaultConfig
+    @State private var avatarDirection: AvatarPreviewDirection = .front
     @State private var isNameEditorPresented = false
 
     var body: some View {
@@ -6720,6 +6721,7 @@ private struct ProfilePage: View {
                     if sessionStore.profile != nil {
                         ProfileAvatarOutfitCard(
                             selection: $avatarConfig,
+                            direction: $avatarDirection,
                             ownedHats: sessionStore.ownedHats,
                             canCycleHats: availableHats.count >= 2,
                             showsSaveButton: hasProfileChanges,
@@ -6806,7 +6808,7 @@ private struct ProfilePage: View {
     }
 
     private var canSave: Bool {
-        guard let profile = sessionStore.profile else { return false }
+        guard sessionStore.profile != nil else { return false }
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasValidDisplayName = (1...40).contains(normalizedDisplayName.count)
         let hasOwnedHat = avatarConfig.selectedHat.isOwned(in: sessionStore.ownedHats)
@@ -6866,41 +6868,84 @@ private struct UserAvatar: View {
     var maxSpriteSide: CGFloat = 150
     var usesHappyIdle = false
     var scarf: AvatarScarf? = nil
+    var animationRow = 0
+    var isFlipped = false
 
     var body: some View {
-        GeometryReader { proxy in
-            SpriteView(
-                scene: UserAvatarScene(
-                    size: proxy.size,
-                    hat: config.selectedHat,
-                    maxSpriteSide: maxSpriteSide,
-                    usesHappyIdle: usesHappyIdle,
-                    scarf: scarf
-                ),
-                options: [.allowsTransparency]
-            )
-            .id("\(config.selectedHat.id)-\(usesHappyIdle)-\(scarf?.rawValue ?? 0)")
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .background(Color.clear)
-        }
+        TransparentUserAvatarView(
+            hat: config.selectedHat,
+            maxSpriteSide: maxSpriteSide,
+            usesHappyIdle: usesHappyIdle,
+            scarf: scarf,
+            animationRow: animationRow,
+            isFlipped: isFlipped
+        )
         .accessibilityLabel(Text("User character"))
+    }
+}
+
+private struct TransparentUserAvatarView: UIViewRepresentable {
+    let hat: AvatarHat
+    let maxSpriteSide: CGFloat
+    let usesHappyIdle: Bool
+    let scarf: AvatarScarf?
+    let animationRow: Int
+    let isFlipped: Bool
+
+    func makeUIView(context: Context) -> SKView {
+        let view = SKView()
+        view.allowsTransparency = true
+        view.isOpaque = false
+        view.backgroundColor = .clear
+
+        let scene = UserAvatarScene(size: .zero)
+        scene.scaleMode = .resizeFill
+        scene.backgroundColor = .clear
+        view.presentScene(scene)
+        return view
+    }
+
+    func updateUIView(_ view: SKView, context: Context) {
+        view.allowsTransparency = true
+        view.isOpaque = false
+        view.backgroundColor = .clear
+
+        let scene: UserAvatarScene
+        if let existingScene = view.scene as? UserAvatarScene {
+            scene = existingScene
+        } else {
+            let newScene = UserAvatarScene(size: view.bounds.size)
+            newScene.scaleMode = .resizeFill
+            newScene.backgroundColor = .clear
+            view.presentScene(newScene)
+            scene = newScene
+        }
+
+        scene.size = view.bounds.size
+        scene.configure(
+            hat: hat,
+            maxSpriteSide: maxSpriteSide,
+            usesHappyIdle: usesHappyIdle,
+            scarf: scarf,
+            animationRow: animationRow,
+            isFlipped: isFlipped
+        )
     }
 }
 
 private final class UserAvatarScene: SKScene {
     private static let idleActionKey = "idle"
 
-    private let hat: AvatarHat
-    private let maxSpriteSide: CGFloat
-    private let usesHappyIdle: Bool
-    private let scarf: AvatarScarf?
-    private var renderedSize: CGSize = .zero
+    private var hat: AvatarHat = .none
+    private var maxSpriteSide: CGFloat = 150
+    private var usesHappyIdle = false
+    private var scarf: AvatarScarf?
+    private var animationRow = 0
+    private var isFlipped = false
+    private var renderedConfig: RenderConfig?
+    private var sprite: AvatarLayeredSpriteNode?
 
-    init(size: CGSize, hat: AvatarHat, maxSpriteSide: CGFloat, usesHappyIdle: Bool, scarf: AvatarScarf?) {
-        self.hat = hat
-        self.maxSpriteSide = maxSpriteSide
-        self.usesHappyIdle = usesHappyIdle
-        self.scarf = scarf
+    override init(size: CGSize) {
         super.init(size: size)
         scaleMode = .resizeFill
         backgroundColor = .clear
@@ -6917,16 +6962,42 @@ private final class UserAvatarScene: SKScene {
         redrawIfNeeded()
     }
 
+    func configure(
+        hat: AvatarHat,
+        maxSpriteSide: CGFloat,
+        usesHappyIdle: Bool,
+        scarf: AvatarScarf?,
+        animationRow: Int,
+        isFlipped: Bool
+    ) {
+        self.hat = hat
+        self.maxSpriteSide = maxSpriteSide
+        self.usesHappyIdle = usesHappyIdle
+        self.scarf = scarf
+        self.animationRow = animationRow
+        self.isFlipped = isFlipped
+        redrawIfNeeded()
+    }
+
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
         redrawIfNeeded()
     }
 
     private func redrawIfNeeded() {
-        guard size.width > 0, size.height > 0, size != renderedSize else { return }
+        guard size.width > 0, size.height > 0 else { return }
 
-        renderedSize = size
-        removeAllChildren()
+        let nextConfig = RenderConfig(
+            size: size,
+            hat: hat,
+            maxSpriteSide: maxSpriteSide,
+            usesHappyIdle: usesHappyIdle,
+            scarf: scarf,
+            animationRow: animationRow,
+            isFlipped: isFlipped
+        )
+        guard nextConfig != renderedConfig else { return }
+        renderedConfig = nextConfig
 
         let frames: AvatarLayeredFrames
         if usesHappyIdle {
@@ -6935,17 +7006,32 @@ private final class UserAvatarScene: SKScene {
             frames = AvatarIdleFrames(hat: hat, scarf: scarf).layeredFrames
         }
 
-        let sprite = AvatarLayeredSpriteNode(frames: frames)
+        let sprite = sprite ?? AvatarLayeredSpriteNode(frames: frames)
+        if self.sprite == nil {
+            self.sprite = sprite
+            addChild(sprite)
+        }
         let spriteSide = min(size.width * 0.72, size.height * 0.90, maxSpriteSide)
         sprite.spriteSize = CGSize(width: spriteSide, height: spriteSide)
+        sprite.xScale = isFlipped ? -abs(sprite.xScale) : abs(sprite.xScale)
         sprite.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        sprite.removeAnimation(forKey: Self.idleActionKey)
         sprite.runAnimation(
             with: frames,
-            row: 0,
+            row: animationRow,
             timePerFrame: 0.10,
             key: Self.idleActionKey
         )
-        addChild(sprite)
+    }
+
+    private struct RenderConfig: Equatable {
+        let size: CGSize
+        let hat: AvatarHat
+        let maxSpriteSide: CGFloat
+        let usesHappyIdle: Bool
+        let scarf: AvatarScarf?
+        let animationRow: Int
+        let isFlipped: Bool
     }
 }
 
@@ -6982,8 +7068,104 @@ private struct ProfileCardView: View {
     }
 }
 
+private enum AvatarPreviewDirection: Int, CaseIterable, Identifiable {
+    case front
+    case frontRight
+    case right
+    case backRight
+    case back
+    case backLeft
+    case left
+    case frontLeft
+
+    var id: Int { rawValue }
+
+    var animationRow: Int {
+        switch self {
+        case .front:
+            0
+        case .frontRight, .frontLeft:
+            1
+        case .right, .left:
+            2
+        case .backRight, .backLeft:
+            3
+        case .back:
+            4
+        }
+    }
+
+    var isFlipped: Bool {
+        switch self {
+        case .frontRight, .right, .backRight:
+            true
+        case .front, .back, .backLeft, .left, .frontLeft:
+            false
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .front:
+            "arrow.down"
+        case .frontRight:
+            "arrow.down.right"
+        case .right:
+            "arrow.right"
+        case .backRight:
+            "arrow.up.right"
+        case .back:
+            "arrow.up"
+        case .backLeft:
+            "arrow.up.left"
+        case .left:
+            "arrow.left"
+        case .frontLeft:
+            "arrow.down.left"
+        }
+    }
+
+    var accessibilityName: String {
+        switch self {
+        case .front:
+            "Front"
+        case .frontRight:
+            "Front right"
+        case .right:
+            "Right"
+        case .backRight:
+            "Back right"
+        case .back:
+            "Back"
+        case .backLeft:
+            "Back left"
+        case .left:
+            "Left"
+        case .frontLeft:
+            "Front left"
+        }
+    }
+
+    func rotated(by steps: Int) -> Self {
+        let count = Self.allCases.count
+        let nextIndex = (rawValue + steps % count + count) % count
+        return Self.allCases[nextIndex]
+    }
+
+    mutating func rotateClockwise() {
+        self = rotated(by: 1)
+    }
+
+    mutating func rotateCounterclockwise() {
+        self = rotated(by: -1)
+    }
+}
+
 private struct ProfileAvatarOutfitCard: View {
+    private static let scrubPointsPerStep: CGFloat = 30
+
     @Binding var selection: AvatarConfig
+    @Binding var direction: AvatarPreviewDirection
     let ownedHats: Set<AvatarHat>
     let canCycleHats: Bool
     let showsSaveButton: Bool
@@ -6993,6 +7175,7 @@ private struct ProfileAvatarOutfitCard: View {
     let nextHat: () -> Void
     let buyInStore: () -> Void
     let save: () -> Void
+    @State private var scrubStartDirection: AvatarPreviewDirection?
 
     private var selectedHatIsOwned: Bool {
         selection.selectedHat.isOwned(in: ownedHats)
@@ -7001,7 +7184,11 @@ private struct ProfileAvatarOutfitCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
             ZStack(alignment: .topTrailing) {
-                UserAvatar(config: selection)
+                UserAvatar(
+                    config: selection,
+                    animationRow: direction.animationRow,
+                    isFlipped: direction.isFlipped
+                )
                     .frame(maxWidth: .infinity)
                     .frame(height: 190)
 
@@ -7020,8 +7207,14 @@ private struct ProfileAvatarOutfitCard: View {
                         .accessibilityLabel(Text("Hat locked"))
                 }
             }
+            .contentShape(Rectangle())
+            .gesture(avatarScrubGesture)
             .padding(.top, PicoSpacing.compact)
             .padding(.horizontal, PicoSpacing.compact)
+
+            AvatarDirectionScrubRail(direction: $direction)
+                .frame(maxWidth: 188)
+                .frame(maxWidth: .infinity, alignment: .center)
 
             Divider()
                 .overlay(PicoColors.border)
@@ -7098,6 +7291,19 @@ private struct ProfileAvatarOutfitCard: View {
         .disabled(!canCycleHats)
     }
 
+    private var avatarScrubGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let startDirection = scrubStartDirection ?? direction
+                scrubStartDirection = startDirection
+                let steps = Int((value.translation.width / Self.scrubPointsPerStep).rounded())
+                direction = startDirection.rotated(by: steps)
+            }
+            .onEnded { _ in
+                scrubStartDirection = nil
+            }
+    }
+
     private func hatCollectionItem(_ hat: AvatarHat) -> some View {
         let isSelected = selection.selectedHat == hat
         let isOwned = hat.isOwned(in: ownedHats)
@@ -7146,6 +7352,86 @@ private struct ProfileAvatarOutfitCard: View {
         .buttonStyle(.plain)
         .accessibilityLabel(Text(isOwned ? "\(hat.name) hat" : "\(hat.name) hat, not owned"))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct AvatarDirectionScrubRail: View {
+    @Binding var direction: AvatarPreviewDirection
+
+    private let thumbSize: CGFloat = 18
+    private let trackHeight: CGFloat = 4
+    private let hitHeight: CGFloat = 38
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(1, proxy.size.width)
+            let centerY = hitHeight / 2
+            let activeX = xPosition(for: direction.rawValue, width: width)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(PicoColors.softSurface.opacity(0.86))
+                    .frame(height: trackHeight)
+                    .position(x: width / 2, y: centerY)
+
+                ForEach(AvatarPreviewDirection.allCases) { railDirection in
+                    let isActive = railDirection == direction
+
+                    Circle()
+                        .fill(isActive ? PicoColors.primary.opacity(0.18) : PicoColors.border)
+                        .frame(width: isActive ? 10 : 6, height: isActive ? 10 : 6)
+                        .position(
+                            x: xPosition(for: railDirection.rawValue, width: width),
+                            y: centerY
+                        )
+                }
+
+                Circle()
+                    .fill(PicoColors.primary)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .shadow(color: PicoColors.primary.opacity(0.22), radius: 6, x: 0, y: 3)
+                    .position(x: activeX, y: centerY)
+            }
+            .frame(width: width, height: hitHeight)
+            .contentShape(Rectangle())
+            .gesture(scrubGesture(width: width))
+            .accessibilityElement()
+            .accessibilityLabel(Text("Rotate character"))
+            .accessibilityValue(Text(direction.accessibilityName))
+            .accessibilityAdjustableAction { adjustmentDirection in
+                switch adjustmentDirection {
+                case .increment:
+                    direction.rotateClockwise()
+                case .decrement:
+                    direction.rotateCounterclockwise()
+                @unknown default:
+                    break
+                }
+            }
+        }
+        .frame(height: hitHeight)
+    }
+
+    private func scrubGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                direction = direction(at: value.location.x, width: width)
+            }
+    }
+
+    private func xPosition(for index: Int, width: CGFloat) -> CGFloat {
+        let count = CGFloat(max(AvatarPreviewDirection.allCases.count - 1, 1))
+        let inset = thumbSize / 2
+        return inset + (width - thumbSize) * CGFloat(index) / count
+    }
+
+    private func direction(at x: CGFloat, width: CGFloat) -> AvatarPreviewDirection {
+        let count = AvatarPreviewDirection.allCases.count
+        let inset = thumbSize / 2
+        let usableWidth = max(1, width - thumbSize)
+        let progress = min(max((x - inset) / usableWidth, 0), 1)
+        let index = Int((progress * CGFloat(count - 1)).rounded())
+        return AvatarPreviewDirection.allCases[index]
     }
 }
 
