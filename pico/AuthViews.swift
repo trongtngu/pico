@@ -57,6 +57,7 @@ private struct AuthRootView: View {
                             route = .entry
                         },
                         onSignup: {
+                            AnalyticsService.track(.signupStarted(method: "email", entryPoint: "onboarding"))
                             signupReturnRoute = .onboarding
                             route = .signup
                         },
@@ -68,6 +69,7 @@ private struct AuthRootView: View {
                     .navigationBarHidden(true)
                 case .login:
                     LoginView {
+                        AnalyticsService.track(.signupStarted(method: "email", entryPoint: "login"))
                         signupReturnRoute = .login
                         route = .signup
                     }
@@ -93,7 +95,9 @@ private struct AuthRootView: View {
                         onLogin: {
                             loginReturnRoute = .signup
                             route = .login
-                        }
+                        },
+                        entryPoint: signupReturnRoute.analyticsEntryPoint,
+                        completesOnboarding: signupReturnRoute == .onboarding
                     )
                     .navigationBarHidden(true)
                 }
@@ -109,6 +113,19 @@ private enum AuthRoute {
     case onboarding
     case login
     case signup
+
+    var analyticsEntryPoint: String {
+        switch self {
+        case .onboarding:
+            "onboarding"
+        case .login:
+            "login"
+        case .entry:
+            "entry"
+        case .signup:
+            "signup"
+        }
+    }
 }
 
 struct LoginView: View {
@@ -254,10 +271,14 @@ struct SignupFlowView: View {
 
     let onBackToStart: () -> Void
     let onLogin: () -> Void
+    let entryPoint: String
+    let completesOnboarding: Bool
 
     @State private var currentStep: SignupStep = .email
     @State private var draft = SignupDraft()
     @State private var showsDuplicateEmailLoginPrompt = false
+    @State private var hasTrackedSignupCompletion = false
+    @State private var hasTrackedOnboardingCompletion = false
 
     private var currentIndex: Int {
         SignupStep.ordered.firstIndex(of: currentStep) ?? 0
@@ -536,10 +557,29 @@ struct SignupFlowView: View {
             avatarConfig: AvatarCatalog.defaultConfig
         )
 
+        let didCreateAccount = sessionStore.session != nil
+            || sessionStore.notice?.hasPrefix("Account created.") == true
+        if didCreateAccount {
+            trackSignupCompletionIfNeeded()
+            trackOnboardingCompletionIfNeeded()
+        }
+
         if sessionStore.session == nil,
            sessionStore.notice?.hasPrefix("Account created.") == true {
             await sessionStore.signIn(email: normalizedEmail, password: draft.password)
         }
+    }
+
+    private func trackSignupCompletionIfNeeded() {
+        guard !hasTrackedSignupCompletion else { return }
+        hasTrackedSignupCompletion = true
+        AnalyticsService.track(.signupCompleted(method: "email", entryPoint: entryPoint))
+    }
+
+    private func trackOnboardingCompletionIfNeeded() {
+        guard completesOnboarding, !hasTrackedOnboardingCompletion else { return }
+        hasTrackedOnboardingCompletion = true
+        AnalyticsService.track(.onboardingCompleted())
     }
 }
 

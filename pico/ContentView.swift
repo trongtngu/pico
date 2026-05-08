@@ -428,6 +428,7 @@ private struct HomePage: View {
     @State private var isFocusResultOverlayDismissed = false
     @State private var isSnapshotDatePickerPresented = false
     @State private var snapshotPickerDate = Date()
+    @State private var hasTrackedHomeView = false
 
     var body: some View {
         ZStack {
@@ -516,6 +517,7 @@ private struct HomePage: View {
         }
         .fullScreenCover(isPresented: $isFishCatchSheetPresented, onDismiss: finishFishCatchFlow) {
             FishCatchRevealView(
+                session: focusStore.resultSession,
                 catches: fishStore.currentSessionCatches,
                 catalog: fishStore.fishCatalog,
                 isLoading: fishStore.isLoadingSessionCatches,
@@ -530,6 +532,9 @@ private struct HomePage: View {
             await sessionStore.loadProfileIfNeeded()
             await villageStore.loadResidents(for: sessionStore.session)
             await berryStore.loadBalance(for: sessionStore.session)
+        }
+        .onAppear {
+            trackHomeViewIfNeeded()
         }
         .onChange(of: focusStore.resultSession) {
             guard focusStore.resultSession != nil else {
@@ -660,6 +665,7 @@ private struct HomePage: View {
 
     private func presentStartFocusSheet() {
         guard focusStore.activeSession == nil else { return }
+        guard !isStartFocusSheetPresented else { return }
 
         if let lobbySession = focusStore.lobbySession {
             startFocusStep = lobbySession.mode == .solo ? .soloConfig : .multiplayerLobby
@@ -667,6 +673,7 @@ private struct HomePage: View {
             startFocusStep = .modePicker
         }
 
+        AnalyticsService.track(.focusSetupViewed())
         isStartFocusSheetPresented = true
     }
 
@@ -766,12 +773,20 @@ private struct HomePage: View {
             focusStore.resetResult()
         }
     }
+
+    private func trackHomeViewIfNeeded() {
+        guard !hasTrackedHomeView else { return }
+        hasTrackedHomeView = true
+        AnalyticsService.track(.homeViewed())
+    }
 }
 
 private struct FishCatchRevealView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedPage = 0
+    @State private var hasTrackedReveal = false
 
+    let session: FocusSession?
     let catches: [FishCatch]
     let catalog: [FishCatalogItem]
     let isLoading: Bool
@@ -802,8 +817,15 @@ private struct FishCatchRevealView: View {
             }
         }
         .picoScreenBackground()
+        .onAppear {
+            trackRevealIfReady()
+        }
+        .onChange(of: isLoading) {
+            trackRevealIfReady()
+        }
         .onChange(of: rows.count) {
             clampSelectedPage(for: rows.count)
+            trackRevealIfReady()
         }
     }
 
@@ -936,6 +958,16 @@ private struct FishCatchRevealView: View {
         withAnimation(.snappy(duration: 0.24)) {
             selectedPage = min(selectedPage + 1, rows.count)
         }
+    }
+
+    private func trackRevealIfReady() {
+        guard !hasTrackedReveal, !isLoading else { return }
+        hasTrackedReveal = true
+        AnalyticsService.track(.catchRevealViewed(
+            catchCount: catches.count,
+            bestRarity: bestRarityAnalyticsValue(in: catches),
+            sessionType: session?.mode.rawValue ?? "unknown"
+        ))
     }
 }
 
@@ -5863,6 +5895,14 @@ private extension FishRarity {
     }
 }
 
+private func bestRarityAnalyticsValue(in catches: [FishCatch]) -> String {
+    catches
+        .map(\.rarity)
+        .sorted { $0.rarestFirstSortRank < $1.rarestFirstSortRank }
+        .first?
+        .rawValue ?? "none"
+}
+
 private func fishImageResourceCandidates(named assetName: String) -> [String] {
     [
         "Icons/fish/\(assetName)",
@@ -6412,6 +6452,11 @@ private struct StorePage: View {
         let catchIDs = catches.map(\.id)
         Task {
             guard let result = await fishStore.sellFish(catchIDs: catchIDs, for: sessionStore.session) else { return }
+            AnalyticsService.track(.fishSold(
+                fishCount: result.soldFishCount,
+                berriesEarned: result.soldBerryAmount,
+                bestRarity: bestRarityAnalyticsValue(in: catches)
+            ))
             berryStore.applyBalance(result.balance)
             await fishStore.loadInventoryCounts(for: sessionStore.session)
             await fishStore.loadInventory(for: sessionStore.session)

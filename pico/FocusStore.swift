@@ -288,6 +288,13 @@ final class FocusStore: ObservableObject {
             let session = try await focusService.startSession(lobbySession.id, for: authSession)
             applyOpenSession(session, authSession: authSession)
             await refreshDetailIfNeeded(for: session, authSession: authSession)
+            if session.isLive {
+                AnalyticsService.track(.focusSessionStarted(
+                    sessionType: session.analyticsSessionType,
+                    durationMinutes: session.analyticsDurationMinutes,
+                    entryPoint: "home"
+                ))
+            }
         } catch {
             notice = displayMessage(for: error)
         }
@@ -340,13 +347,17 @@ final class FocusStore: ObservableObject {
         )
     }
 
-    func interruptCurrentSession(for authSession: AuthSession?) async {
+    func interruptCurrentSession(
+        for authSession: AuthSession?,
+        reason: String = "user_cancelled"
+    ) async {
         guard let authSession, let session = activeSession ?? liveSavedSession() else { return }
         await finish(
             session,
             pendingResult: .interrupt,
             authSession: authSession,
-            preCompletionVillageResidentIDs: nil
+            preCompletionVillageResidentIDs: nil,
+            interruptionReason: reason
         )
     }
 
@@ -373,6 +384,13 @@ final class FocusStore: ObservableObject {
             resultSession = session.isLive
                 ? (syncedSession.status == .interrupted ? syncedSession : session.interrupted())
                 : nil
+            if session.isLive {
+                AnalyticsService.track(.focusSessionInterrupted(
+                    sessionType: session.analyticsSessionType,
+                    durationMinutes: session.analyticsDurationMinutes,
+                    interruptionReason: "left_multiplayer"
+                ))
+            }
             completionContext = nil
             hasPendingResultSync = false
             clearSavedState()
@@ -471,7 +489,7 @@ final class FocusStore: ObservableObject {
         pendingBackgroundInterruptionTask?.cancel()
         pendingBackgroundInterruptionTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            await self?.interruptCurrentSession(for: authSession)
+            await self?.interruptCurrentSession(for: authSession, reason: "app_background")
         }
     }
 
@@ -671,7 +689,8 @@ final class FocusStore: ObservableObject {
         _ session: FocusSession,
         pendingResult: PendingFocusResult,
         authSession: AuthSession,
-        preCompletionVillageResidentIDs: Set<UUID>?
+        preCompletionVillageResidentIDs: Set<UUID>?,
+        interruptionReason: String = "user_cancelled"
     ) async {
         guard !isFinishing else { return }
 
@@ -696,6 +715,11 @@ final class FocusStore: ObservableObject {
             session: session,
             pendingResult: pendingResult
         ))
+        trackFocusSessionFinished(
+            session,
+            pendingResult: pendingResult,
+            interruptionReason: interruptionReason
+        )
 
         do {
             let syncResult = try await sync(
@@ -918,6 +942,37 @@ final class FocusStore: ObservableObject {
     private func displayMessage(for error: Error) -> String? {
         guard !error.isCancellation else { return nil }
         return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    private func trackFocusSessionFinished(
+        _ session: FocusSession,
+        pendingResult: PendingFocusResult,
+        interruptionReason: String
+    ) {
+        switch pendingResult {
+        case .complete:
+            AnalyticsService.track(.focusSessionCompleted(
+                sessionType: session.analyticsSessionType,
+                durationMinutes: session.analyticsDurationMinutes,
+                completedSuccessfully: true
+            ))
+        case .interrupt:
+            AnalyticsService.track(.focusSessionInterrupted(
+                sessionType: session.analyticsSessionType,
+                durationMinutes: session.analyticsDurationMinutes,
+                interruptionReason: interruptionReason
+            ))
+        }
+    }
+}
+
+private extension FocusSession {
+    var analyticsSessionType: String {
+        mode.rawValue
+    }
+
+    var analyticsDurationMinutes: Int {
+        max(1, Int(ceil(Double(durationSeconds) / 60.0)))
     }
 }
 

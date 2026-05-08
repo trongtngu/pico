@@ -129,6 +129,10 @@ struct OnboardingSequenceView: View {
     let onLogin: () -> Void
 
     @State private var currentStep: OnboardingStep = OnboardingStep.ordered.first ?? .startFishing
+    @State private var hasTrackedOnboardingStart = false
+    @State private var lastTrackedScreenStep: OnboardingStep?
+
+    private let onboardingVariant = "default"
 
     private var currentIndex: Int {
         OnboardingStep.ordered.firstIndex(of: currentStep) ?? 0
@@ -219,7 +223,7 @@ struct OnboardingSequenceView: View {
 
                         if currentStep == .authHandoff {
                             VStack(spacing: PicoSpacing.iconTextGap) {
-                                Button("Continue with email", action: onSignup)
+                                Button("Continue with email", action: handleSignupAction)
                                     .buttonStyle(PicoPrimaryButtonStyle())
 
                                 Button("Already have an account? Log in", action: onLogin)
@@ -241,10 +245,31 @@ struct OnboardingSequenceView: View {
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
         .preferredColorScheme(.light)
+        .onAppear {
+            trackOnboardingStartIfNeeded()
+            trackCurrentScreenIfNeeded()
+        }
+        .onChange(of: currentStep) {
+            trackCurrentScreenIfNeeded()
+        }
     }
 
     private func handlePrimaryAction() {
+        AnalyticsService.track(.onboardingActionTapped(
+            screenName: currentStep.analyticsName,
+            actionName: currentStep == .startFishing ? "start_fishing" : "next",
+            onboardingVariant: onboardingVariant
+        ))
         goForward()
+    }
+
+    private func handleSignupAction() {
+        AnalyticsService.track(.onboardingActionTapped(
+            screenName: currentStep.analyticsName,
+            actionName: "create_account",
+            onboardingVariant: onboardingVariant
+        ))
+        onSignup()
     }
 
     private func goForward() {
@@ -258,12 +283,34 @@ struct OnboardingSequenceView: View {
     }
 
     private func goBack() {
+        AnalyticsService.track(.onboardingActionTapped(
+            screenName: currentStep.analyticsName,
+            actionName: "back",
+            onboardingVariant: onboardingVariant
+        ))
+
         guard currentIndex > 0 else {
             onBackToEntry()
             return
         }
 
         currentStep = OnboardingStep.ordered[currentIndex - 1]
+    }
+
+    private func trackOnboardingStartIfNeeded() {
+        guard !hasTrackedOnboardingStart else { return }
+        hasTrackedOnboardingStart = true
+        AnalyticsService.track(.onboardingStarted())
+    }
+
+    private func trackCurrentScreenIfNeeded() {
+        guard lastTrackedScreenStep != currentStep else { return }
+        lastTrackedScreenStep = currentStep
+        AnalyticsService.track(.onboardingScreenViewed(
+            screenIndex: currentIndex + 1,
+            screenName: currentStep.analyticsName,
+            onboardingVariant: onboardingVariant
+        ))
     }
 }
 
@@ -334,6 +381,23 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "5"
         case .authHandoff:
             "6"
+        }
+    }
+
+    var analyticsName: String {
+        switch self {
+        case .startFishing:
+            "start_fishing"
+        case .stayFocused:
+            "stay_focused"
+        case .brokenLine:
+            "broken_line"
+        case .rareFish:
+            "rare_fish"
+        case .friendBonds:
+            "friend_bonds"
+        case .authHandoff:
+            "auth_handoff"
         }
     }
 }
