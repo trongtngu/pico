@@ -77,6 +77,7 @@ enum AuthServiceError: LocalizedError {
     case missingConfiguration
     case invalidResponse
     case missingProfile
+    case emailUnavailable
     case usernameUnavailable
     case requestFailed(String)
 
@@ -88,8 +89,10 @@ enum AuthServiceError: LocalizedError {
             "Supabase returned a response the app could not read."
         case .missingProfile:
             "No public profile was found for this account."
+        case .emailUnavailable:
+            "Looks like you already have an account."
         case .usernameUnavailable:
-            "That username is already taken."
+            "That username has been taken."
         case .requestFailed(let message):
             message
         }
@@ -133,6 +136,11 @@ final class AuthService {
         displayName: String,
         avatarConfig: AvatarConfig
     ) async throws -> AuthResult {
+        let normalizedEmail = email.normalizedEmail
+        guard try await isEmailAvailable(normalizedEmail) else {
+            throw AuthServiceError.emailUnavailable
+        }
+
         let normalizedUsername = username.normalizedUsername
         guard try await isUsernameAvailable(normalizedUsername) else {
             throw AuthServiceError.usernameUnavailable
@@ -144,7 +152,7 @@ final class AuthService {
 
         do {
             let response = try await client.auth.signUp(
-                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                email: normalizedEmail,
                 password: password,
                 data: [
                     "username": .string(normalizedUsername),
@@ -306,6 +314,14 @@ final class AuthService {
         return response.isEmpty
     }
 
+    func isEmailAvailable(_ email: String) async throws -> Bool {
+        try await send(
+            path: "/rest/v1/rpc/is_email_available",
+            method: "POST",
+            body: EmailAvailabilityRequest(targetEmail: email.normalizedEmail)
+        )
+    }
+
     func syncUserTimezone(for authSession: AuthSession) async throws {
         let _: String = try await send(
             path: "/rest/v1/rpc/set_user_timezone",
@@ -414,6 +430,15 @@ final class AuthService {
 
     private func friendlyMessage(from message: String) -> String {
         let lowercasedMessage = message.lowercased()
+        if lowercasedMessage.contains("user already registered")
+            || (lowercasedMessage.contains("email")
+                && (lowercasedMessage.contains("already")
+                    || lowercasedMessage.contains("duplicate")
+                    || lowercasedMessage.contains("exists")
+                    || lowercasedMessage.contains("registered"))) {
+            return AuthServiceError.emailUnavailable.errorDescription ?? message
+        }
+
         if lowercasedMessage.contains("username") && lowercasedMessage.contains("duplicate") {
             return AuthServiceError.usernameUnavailable.errorDescription ?? message
         }
@@ -489,6 +514,10 @@ private final class LegacyAuthSessionStorage {
 }
 
 private extension String {
+    var normalizedEmail: String {
+        trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     var normalizedUsername: String {
         trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
@@ -525,6 +554,10 @@ private struct UserHatInventoryResponse: Decodable {
 
 private struct UserTimezoneUpdate: Encodable {
     let timeZone: String
+}
+
+private struct EmailAvailabilityRequest: Encodable {
+    let targetEmail: String
 }
 
 private struct UsernameAvailabilityResponse: Decodable {

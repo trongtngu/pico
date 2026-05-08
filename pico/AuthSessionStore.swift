@@ -58,6 +58,46 @@ final class AuthSessionStore: ObservableObject {
         }
     }
 
+    func validateEmailAvailability(_ email: String) async -> Bool {
+        guard !isLoading else { return false }
+
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        isLoading = true
+        notice = nil
+        defer { isLoading = false }
+
+        do {
+            let isAvailable = try await authService.isEmailAvailable(normalizedEmail)
+            if !isAvailable {
+                notice = AuthServiceError.emailUnavailable.errorDescription
+            }
+            return isAvailable
+        } catch {
+            notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return false
+        }
+    }
+
+    func validateUsernameAvailability(_ username: String) async -> Bool {
+        guard !isLoading else { return false }
+
+        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        isLoading = true
+        notice = nil
+        defer { isLoading = false }
+
+        do {
+            let isAvailable = try await authService.isUsernameAvailable(normalizedUsername)
+            if !isAvailable {
+                notice = AuthServiceError.usernameUnavailable.errorDescription
+            }
+            return isAvailable
+        } catch {
+            notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return false
+        }
+    }
+
     func signOut() {
         session = nil
         notice = nil

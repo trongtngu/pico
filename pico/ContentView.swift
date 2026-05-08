@@ -510,6 +510,7 @@ private struct HomePage: View {
             DailySnapshotCalendarScreen(
                 initialDate: snapshotPickerDate,
                 maximumDate: snapshotPickerMaximumDate,
+                fetchFocusActivityAction: fetchCalendarFocusActivity,
                 fetchSnapshotAction: fetchCalendarSnapshot
             )
         }
@@ -698,6 +699,18 @@ private struct HomePage: View {
     private func fetchCalendarSnapshot(day: DailySnapshotDay) async throws -> DailyVillageSnapshot? {
         guard let session = sessionStore.session else { return nil }
         return try await dailySnapshotService.fetchSnapshot(day: day, for: session)
+    }
+
+    private func fetchCalendarFocusActivity(
+        startDay: DailySnapshotDay,
+        endDay: DailySnapshotDay
+    ) async throws -> [DailySnapshotFocusActivity] {
+        guard let session = sessionStore.session else { return [] }
+        return try await dailySnapshotService.listFocusActivity(
+            startDay: startDay,
+            endDay: endDay,
+            for: session
+        )
     }
 
     private func villageHeight(for viewportHeight: CGFloat) -> CGFloat {
@@ -2111,12 +2124,16 @@ private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
 private struct DailySnapshotCalendarScreen: View {
     let initialDate: Date
     let maximumDate: Date
+    let fetchFocusActivityAction: (DailySnapshotDay, DailySnapshotDay) async throws -> [DailySnapshotFocusActivity]
     let fetchSnapshotAction: (DailySnapshotDay) async throws -> DailyVillageSnapshot?
     @Environment(\.dismiss) private var dismiss
     @State private var displayedMonth = Calendar.current.startOfDay(for: Date())
     @State private var heroMode: DailySnapshotHeroMode = .fish
     @State private var selectedDate = Date()
     @State private var snapshotByDay: [DailySnapshotDay: DailyVillageSnapshot] = [:]
+    @State private var focusActivityByDay: [DailySnapshotDay: Bool] = [:]
+    @State private var loadedFocusActivityMonths: Set<DailySnapshotDay> = []
+    @State private var loadingFocusActivityMonths: Set<DailySnapshotDay> = []
     @State private var loadState: DailySnapshotLoadState = .idle
     @State private var notice: String?
 
@@ -2177,13 +2194,16 @@ private struct DailySnapshotCalendarScreen: View {
             selectedDate = initialDate
             let selectedMonth = monthStart(for: initialDate)
             displayedMonth = selectedMonth
-            loadSelectedSnapshotIfNeeded(for: initialDate)
+            loadDisplayedMonthActivityIfNeeded(for: selectedMonth)
         }
         .onChange(of: selectedDate) {
             let selectedMonth = monthStart(for: selectedDate)
             if selectedMonth != displayedMonth {
                 displayedMonth = selectedMonth
             }
+        }
+        .onChange(of: displayedMonth) {
+            loadDisplayedMonthActivityIfNeeded(for: displayedMonth)
         }
     }
 
@@ -2330,15 +2350,18 @@ private struct DailySnapshotCalendarScreen: View {
             }
 
             let snapshotDay = DailySnapshotDay(date: date, calendar: calendar)
+            let hasFocus = (focusActivityByDay[snapshotDay] ?? false)
+                || ((snapshotsByDay[snapshotDay]?.totalFocusSeconds ?? 0) > 0)
             return DailySnapshotCalendarDay(
                 id: snapshotDay.rawValue,
                 date: date,
                 dayNumber: dayNumber,
                 snapshot: snapshotsByDay[snapshotDay],
+                hasFocus: hasFocus,
                 isSelected: snapshotDay == selectedSnapshotDay,
                 isFuture: calendar.startOfDay(for: date) > maximumDate,
                 isPastNoCatches: calendar.startOfDay(for: date) < maximumDate
-                    && (snapshotsByDay[snapshotDay]?.fishCaughtCount ?? 0) == 0
+                    && !hasFocus
             )
         }
     }
@@ -2351,6 +2374,51 @@ private struct DailySnapshotCalendarScreen: View {
         guard let nextMonth = calendar.date(byAdding: .month, value: offset, to: displayedMonth) else { return }
         let month = min(monthStart(for: nextMonth), monthStart(for: maximumDate))
         displayedMonth = month
+    }
+
+    private func loadDisplayedMonthActivityIfNeeded(for month: Date) {
+        let monthKey = DailySnapshotDay(date: monthStart(for: month), calendar: calendar)
+        guard !loadedFocusActivityMonths.contains(monthKey),
+              !loadingFocusActivityMonths.contains(monthKey),
+              let range = snapshotDayRange(for: month) else {
+            return
+        }
+
+        loadingFocusActivityMonths.insert(monthKey)
+
+        Task {
+            await loadDisplayedMonthActivity(monthKey: monthKey, startDay: range.startDay, endDay: range.endDay)
+        }
+    }
+
+    private func snapshotDayRange(for month: Date) -> (startDay: DailySnapshotDay, endDay: DailySnapshotDay)? {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: month),
+              let lastDay = calendar.date(byAdding: DateComponents(day: -1), to: monthInterval.end) else {
+            return nil
+        }
+
+        return (
+            DailySnapshotDay(date: monthInterval.start, calendar: calendar),
+            DailySnapshotDay(date: min(lastDay, maximumDate), calendar: calendar)
+        )
+    }
+
+    private func loadDisplayedMonthActivity(
+        monthKey: DailySnapshotDay,
+        startDay: DailySnapshotDay,
+        endDay: DailySnapshotDay
+    ) async {
+        do {
+            let activity = try await fetchFocusActivityAction(startDay, endDay)
+
+            for dayActivity in activity {
+                focusActivityByDay[dayActivity.snapshotDay] = dayActivity.hasFocus
+            }
+            loadedFocusActivityMonths.insert(monthKey)
+            loadingFocusActivityMonths.remove(monthKey)
+        } catch {
+            loadingFocusActivityMonths.remove(monthKey)
+        }
     }
 
     private func loadSelectedSnapshotIfNeeded(for date: Date) {
@@ -2376,6 +2444,9 @@ private struct DailySnapshotCalendarScreen: View {
 
             if let snapshot {
                 snapshotByDay[snapshot.snapshotDay] = snapshot
+                focusActivityByDay[snapshot.snapshotDay] = snapshot.totalFocusSeconds > 0
+            } else {
+                focusActivityByDay[day] = false
             }
             loadState = .loaded
         } catch {
@@ -2391,13 +2462,10 @@ private struct DailySnapshotCalendarDay: Identifiable {
     let date: Date?
     let dayNumber: Int?
     let snapshot: DailyVillageSnapshot?
+    let hasFocus: Bool
     let isSelected: Bool
     let isFuture: Bool
     let isPastNoCatches: Bool
-
-    var hasFocus: Bool {
-        (snapshot?.totalFocusSeconds ?? 0) > 0
-    }
 
     static func placeholder(index: Int, month: Date) -> DailySnapshotCalendarDay {
         DailySnapshotCalendarDay(
@@ -2405,6 +2473,7 @@ private struct DailySnapshotCalendarDay: Identifiable {
             date: nil,
             dayNumber: nil,
             snapshot: nil,
+            hasFocus: false,
             isSelected: false,
             isFuture: false,
             isPastNoCatches: false

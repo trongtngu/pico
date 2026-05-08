@@ -86,9 +86,15 @@ private struct AuthRootView: View {
                     }
                     .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
                 case .signup:
-                    SignupFlowView {
-                        route = signupReturnRoute
-                    }
+                    SignupFlowView(
+                        onBackToStart: {
+                            route = signupReturnRoute
+                        },
+                        onLogin: {
+                            loginReturnRoute = .signup
+                            route = .login
+                        }
+                    )
                     .navigationBarHidden(true)
                 }
             }
@@ -247,9 +253,11 @@ struct SignupFlowView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
 
     let onBackToStart: () -> Void
+    let onLogin: () -> Void
 
     @State private var currentStep: SignupStep = .email
     @State private var draft = SignupDraft()
+    @State private var showsDuplicateEmailLoginPrompt = false
 
     private var currentIndex: Int {
         SignupStep.ordered.firstIndex(of: currentStep) ?? 0
@@ -306,8 +314,6 @@ struct SignupFlowView: View {
                 )
 
                 VStack(spacing: PicoSpacing.section) {
-                    Spacer(minLength: PicoSpacing.largeSection)
-
                     VStack(spacing: PicoSpacing.compact) {
                         Text(currentStep.title)
                             .font(PicoTypography.sectionTitle)
@@ -325,16 +331,8 @@ struct SignupFlowView: View {
 
                     signupField
 
-                    if let notice = sessionStore.notice {
-                        Text(notice)
-                            .font(PicoTypography.caption)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(PicoSpacing.standard)
-                            .background(
-                                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                                    .fill(PicoColors.softSurface)
-                            )
+                    if sessionStore.notice != nil {
+                        signupNotice
                     }
 
                     Button {
@@ -365,8 +363,9 @@ struct SignupFlowView: View {
                 }
                 .frame(maxWidth: 520)
                 .padding(.horizontal, PicoSpacing.standard)
+                .padding(.top, PicoSpacing.section)
                 .padding(.bottom, max(PicoSpacing.section, proxy.safeAreaInsets.bottom + PicoSpacing.standard))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
@@ -395,6 +394,7 @@ struct SignupFlowView: View {
             .foregroundStyle(PicoColors.textPrimary)
             .authFieldStyle()
             .onChange(of: draft.email) {
+                showsDuplicateEmailLoginPrompt = false
                 sessionStore.notice = nil
             }
         case .firstName:
@@ -452,12 +452,71 @@ struct SignupFlowView: View {
     private func handlePrimaryAction() async {
         guard canContinue else { return }
 
+        if currentStep == .email {
+            let email = normalizedEmail
+            let isEmailAvailable = await sessionStore.validateEmailAvailability(email)
+            guard email == normalizedEmail else {
+                return
+            }
+
+            guard isEmailAvailable else {
+                showsDuplicateEmailLoginPrompt = sessionStore.notice == AuthServiceError.emailUnavailable.errorDescription
+                return
+            }
+
+            showsDuplicateEmailLoginPrompt = false
+        }
+
+        if currentStep == .username {
+            let username = normalizedUsername
+            guard await sessionStore.validateUsernameAvailability(username),
+                  username == normalizedUsername
+            else {
+                return
+            }
+        }
+
         guard currentIndex < SignupStep.ordered.index(before: SignupStep.ordered.endIndex) else {
             await submit()
             return
         }
 
         currentStep = SignupStep.ordered[currentIndex + 1]
+    }
+
+    @ViewBuilder
+    private var signupNotice: some View {
+        if showsDuplicateEmailLoginPrompt, currentStep == .email {
+            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                Text("Looks like you already have an account.")
+                    .foregroundStyle(PicoColors.textSecondary)
+
+                Button("Log in instead.") {
+                    sessionStore.notice = nil
+                    onLogin()
+                }
+                .font(PicoTypography.caption.weight(.semibold))
+                .foregroundStyle(PicoColors.primary)
+                .buttonStyle(.plain)
+            }
+            .font(PicoTypography.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(PicoSpacing.standard)
+            .background(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .fill(PicoColors.softSurface)
+            )
+        } else if let notice = sessionStore.notice {
+            Text(notice)
+                .font(PicoTypography.caption)
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(PicoSpacing.standard)
+                .background(
+                    RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                        .fill(PicoColors.softSurface)
+                )
+        }
     }
 
     private func submit() async {

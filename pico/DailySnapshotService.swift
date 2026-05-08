@@ -80,6 +80,13 @@ struct DailyVillageSnapshot: Identifiable, Equatable {
     let notice: String?
 }
 
+struct DailySnapshotFocusActivity: Identifiable, Equatable {
+    var id: String { snapshotDay.rawValue }
+
+    let snapshotDay: DailySnapshotDay
+    let hasFocus: Bool
+}
+
 enum DailySnapshotServiceError: LocalizedError {
     case missingConfiguration
     case invalidResponse(String? = nil)
@@ -126,6 +133,21 @@ final class DailySnapshotService {
         )
 
         return response.first?.dailyVillageSnapshot
+    }
+
+    func listFocusActivity(
+        startDay: DailySnapshotDay,
+        endDay: DailySnapshotDay,
+        for authSession: AuthSession
+    ) async throws -> [DailySnapshotFocusActivity] {
+        let response: [DailySnapshotFocusActivityResponse] = try await send(
+            path: "/rest/v1/rpc/list_daily_focus_activity",
+            method: "POST",
+            body: ListDailyFocusActivityRequest(startDay: startDay, endDay: endDay),
+            accessToken: authSession.accessToken
+        )
+
+        return response.map(\.dailySnapshotFocusActivity)
     }
 
     private func send<RequestBody: Encodable, ResponseBody: Decodable>(
@@ -192,6 +214,23 @@ final class DailySnapshotService {
 
 private struct FetchDailySnapshotRequest: Encodable {
     let requestedSnapshotDay: DailySnapshotDay
+}
+
+private struct ListDailyFocusActivityRequest: Encodable {
+    let startDay: DailySnapshotDay
+    let endDay: DailySnapshotDay
+}
+
+private struct DailySnapshotFocusActivityResponse: Decodable {
+    let snapshotDay: DailySnapshotDay
+    let hasFocus: Bool
+
+    var dailySnapshotFocusActivity: DailySnapshotFocusActivity {
+        DailySnapshotFocusActivity(
+            snapshotDay: snapshotDay,
+            hasFocus: hasFocus
+        )
+    }
 }
 
 private struct DailyVillageSnapshotResponse: Decodable {
