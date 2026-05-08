@@ -3038,23 +3038,6 @@ private struct HomeFocusBottomBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.compact) {
-            if isLoadingBalance || balanceNotice != nil {
-                HStack(spacing: PicoSpacing.compact) {
-                    if isLoadingBalance {
-                        ProgressView()
-                            .tint(PicoColors.primary)
-                    }
-
-                    if let balanceNotice {
-                        Text(balanceNotice)
-                            .font(PicoTypography.caption)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .lineLimit(2)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
             StartFocusCTA(
                 mode: mode,
                 incomingInviteCount: incomingInviteCount,
@@ -3069,6 +3052,43 @@ private struct HomeFocusBottomBar: View {
             PicoColors.appBackground
                 .opacity(0.96)
                 .ignoresSafeArea(edges: .bottom)
+        )
+        .overlay(alignment: .topLeading) {
+            if showsStatus {
+                statusOverlay
+                    .padding(.horizontal, 44)
+                    .offset(y: -34)
+            }
+        }
+    }
+
+    private var showsStatus: Bool {
+        isLoadingBalance || balanceNotice != nil
+    }
+
+    private var statusOverlay: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            if isLoadingBalance {
+                ProgressView()
+                    .tint(PicoColors.primary)
+            }
+
+            if let balanceNotice {
+                Text(balanceNotice)
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.horizontal, PicoSpacing.iconTextGap)
+        .padding(.vertical, PicoSpacing.compact)
+        .background(
+            Capsule(style: .continuous)
+                .fill(PicoColors.surface.opacity(0.94))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
         )
     }
 }

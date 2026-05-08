@@ -84,16 +84,6 @@ struct VillageView: View {
             .map(IslandParticipant.init(resident:))
     }
 
-    private var sceneID: String {
-        let participantID = gridParticipants
-            .map {
-                let avatarConfig = $0.profile.avatarConfig
-                return "\($0.id.uuidString)-\(avatarConfig.version)-\(avatarConfig.character)-\(avatarConfig.hat)-\($0.bondLevel)"
-            }
-            .joined(separator: "|")
-        return "\(rewardSeed)-\(isFishingMode)-\(mapStyle.rawValue)-\(participantID)"
-    }
-
     private var rewardSeed: String {
         currentUserProfile?.userID.uuidString
             ?? gridParticipants.map(\.id.uuidString).joined(separator: "|")
@@ -101,24 +91,67 @@ struct VillageView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            SpriteView(
-                scene: VillageScene(
-                    size: proxy.size,
-                    gridSize: Self.gridSize,
-                    participants: gridParticipants,
-                    rewardSeed: rewardSeed,
-                    isFishingMode: isFishingMode,
-                    mapStyle: mapStyle,
-                    maxTileWidth: maxTileWidth,
-                    mapYOffset: mapYOffset
-                ),
-                options: [.allowsTransparency]
+            VillageSpriteView(
+                size: proxy.size,
+                gridSize: Self.gridSize,
+                participants: gridParticipants,
+                rewardSeed: rewardSeed,
+                isFishingMode: isFishingMode,
+                mapStyle: mapStyle,
+                maxTileWidth: maxTileWidth,
+                mapYOffset: mapYOffset
             )
-            .id(sceneID)
             .frame(width: proxy.size.width, height: proxy.size.height)
-            .background(Color.clear)
+            .background(PicoColors.appBackground)
             .accessibilityLabel(Text("Village grid"))
         }
+    }
+}
+
+private struct VillageSpriteView: UIViewRepresentable {
+    let size: CGSize
+    let gridSize: Int
+    let participants: [IslandParticipant]
+    let rewardSeed: String
+    let isFishingMode: Bool
+    let mapStyle: VillageMapStyle
+    let maxTileWidth: CGFloat
+    let mapYOffset: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> SKView {
+        let view = SKView()
+        configure(view)
+        view.presentScene(context.coordinator.scene)
+        return view
+    }
+
+    func updateUIView(_ view: SKView, context: Context) {
+        configure(view)
+        context.coordinator.scene.configure(
+            size: size,
+            gridSize: gridSize,
+            participants: participants,
+            rewardSeed: rewardSeed,
+            isFishingMode: isFishingMode,
+            mapStyle: mapStyle,
+            maxTileWidth: maxTileWidth,
+            mapYOffset: mapYOffset
+        )
+    }
+
+    private func configure(_ view: SKView) {
+        view.allowsTransparency = false
+        view.ignoresSiblingOrder = false
+        view.isOpaque = true
+        view.backgroundColor = PicoUIColors.appBackground
+    }
+
+    final class Coordinator {
+        let scene = VillageScene(size: .zero)
     }
 }
 
@@ -200,6 +233,21 @@ private enum ForestDecoration {
     }
 }
 
+private struct GridRenderConfig: Equatable {
+    let size: CGSize
+    let gridSize: Int
+    let mapStyle: VillageMapStyle
+    let maxTileWidth: CGFloat
+    let mapYOffset: CGFloat
+}
+
+private struct VillagerRenderConfig: Equatable {
+    let gridConfig: GridRenderConfig
+    let participantKey: String
+    let isFishingMode: Bool
+    let rewardSeed: String
+}
+
 private final class VillageScene: SKScene {
     private static let tileAnchorPoint = CGPoint(x: 0.5, y: 0.71)
     private static let waterStartColumnByRow = [
@@ -267,18 +315,41 @@ private final class VillageScene: SKScene {
         FishingSpot(tile: TileCoordinate(row: 3, column: 5), animationRow: 1, isFlipped: false, rowOffset: 0.18)
     ]
 
-    private let gridSize: Int
-    private let participants: [IslandParticipant]
-    private let rewardSeed: String
-    private let isFishingMode: Bool
-    private let mapStyle: VillageMapStyle
-    private let maxTileWidth: CGFloat
-    private let mapYOffset: CGFloat
-    private var renderedSize: CGSize = .zero
+    private var gridSize = 7
+    private var participants: [IslandParticipant] = []
+    private var rewardSeed = ""
+    private var isFishingMode = false
+    private var mapStyle: VillageMapStyle = .originalIsland
+    private var maxTileWidth: CGFloat = 72
+    private var mapYOffset: CGFloat = 0
+    private var renderedGridConfig: GridRenderConfig?
+    private var renderedVillagerConfig: VillagerRenderConfig?
+    private var gridNodes: [SKNode] = []
     private var villagers: [VillagerNode] = []
     private var lastUpdateTime: TimeInterval?
 
-    init(
+    override init(size: CGSize) {
+        super.init(size: size)
+        scaleMode = .resizeFill
+        backgroundColor = PicoUIColors.appBackground
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        nil
+    }
+
+    override func didMove(to view: SKView) {
+        view.allowsTransparency = false
+        view.isOpaque = true
+        view.backgroundColor = PicoUIColors.appBackground
+    }
+
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        renderIfNeeded(forceGrid: true, forceVillagers: true)
+    }
+
+    func configure(
         size: CGSize,
         gridSize: Int,
         participants: [IslandParticipant],
@@ -295,39 +366,54 @@ private final class VillageScene: SKScene {
         self.mapStyle = mapStyle
         self.maxTileWidth = maxTileWidth
         self.mapYOffset = mapYOffset
-        super.init(size: size)
-        scaleMode = .resizeFill
-        backgroundColor = .clear
+        if self.size != size {
+            self.size = size
+        }
+        renderIfNeeded()
     }
 
-    required init?(coder aDecoder: NSCoder) {
-        nil
+    private func renderIfNeeded(forceGrid: Bool = false, forceVillagers: Bool = false) {
+        guard size.width > 0, size.height > 0 else { return }
+
+        let nextGridConfig = GridRenderConfig(
+            size: size,
+            gridSize: gridSize,
+            mapStyle: mapStyle,
+            maxTileWidth: maxTileWidth,
+            mapYOffset: mapYOffset
+        )
+        let shouldRenderGrid = forceGrid || nextGridConfig != renderedGridConfig
+
+        if shouldRenderGrid {
+            renderedGridConfig = nextGridConfig
+            drawGrid()
+        }
+
+        let nextVillagerConfig = VillagerRenderConfig(
+            gridConfig: nextGridConfig,
+            participantKey: Self.participantKey(for: participants),
+            isFishingMode: isFishingMode,
+            rewardSeed: rewardSeed
+        )
+        if forceVillagers || shouldRenderGrid || nextVillagerConfig != renderedVillagerConfig {
+            renderedVillagerConfig = nextVillagerConfig
+            drawVillagers()
+        }
     }
 
-    override func didMove(to view: SKView) {
-        view.allowsTransparency = true
-        view.isOpaque = false
-        view.backgroundColor = .clear
-        redrawIfNeeded()
-    }
-
-    override func didChangeSize(_ oldSize: CGSize) {
-        super.didChangeSize(oldSize)
-        redrawIfNeeded()
-    }
-
-    private func redrawIfNeeded() {
-        guard size.width > 0, size.height > 0, size != renderedSize else { return }
-
-        renderedSize = size
-        removeAllChildren()
-        villagers.removeAll()
-        lastUpdateTime = nil
-        drawGrid()
-        drawVillagers()
+    private static func participantKey(for participants: [IslandParticipant]) -> String {
+        participants
+            .map {
+                let avatarConfig = $0.profile.avatarConfig
+                return "\($0.id.uuidString)-\(avatarConfig.version)-\(avatarConfig.character)-\(avatarConfig.hat)-\($0.bondLevel)"
+            }
+            .joined(separator: "|")
     }
 
     private func drawGrid() {
+        gridNodes.forEach { $0.removeFromParent() }
+        gridNodes.removeAll(keepingCapacity: true)
+
         let layout = VillageSceneLayout(
             size: size,
             gridSize: gridSize,
@@ -543,7 +629,7 @@ private final class VillageScene: SKScene {
         sprite.size = CGSize(width: layout.tileWidth, height: layout.tileWidth)
         sprite.position = center
         sprite.zPosition = -center.y - 1_000
-        addChild(sprite)
+        addGridNode(sprite)
     }
 
     private func addTreeSprite(
@@ -559,7 +645,7 @@ private final class VillageScene: SKScene {
         sprite.size = CGSize(width: layout.tileWidth * widthScale, height: layout.tileWidth * widthScale * aspectRatio)
         sprite.position = basePosition
         sprite.zPosition = -basePosition.y
-        addChild(sprite)
+        addGridNode(sprite)
     }
 
     private func addDecorationSprite(
@@ -580,10 +666,19 @@ private final class VillageScene: SKScene {
         )
         sprite.position = position
         sprite.zPosition = -position.y
-        addChild(sprite)
+        addGridNode(sprite)
+    }
+
+    private func addGridNode(_ node: SKNode) {
+        addChild(node)
+        gridNodes.append(node)
     }
 
     private func drawVillagers() {
+        villagers.forEach { $0.removeFromParent() }
+        villagers.removeAll(keepingCapacity: true)
+        lastUpdateTime = nil
+
         let layout = VillageSceneLayout(
             size: size,
             gridSize: gridSize,
