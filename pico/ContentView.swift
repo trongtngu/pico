@@ -3563,7 +3563,7 @@ private struct FocusModePickerSheetContent: View {
             }
 
             FocusModeRow(
-                imageName: "Scroll",
+                imageName: "Scarf_Green",
                 title: "With friends",
                 titleFont: PicoTypography.body
             ) {
@@ -3757,8 +3757,8 @@ private struct FocusModeRow: View {
     let titleFont: Font
     var isHighlighted = false
     let action: () -> Void
-    private let iconSize: CGFloat = 28
-    private let iconFrameSize: CGFloat = 36
+    private let iconSize: CGFloat = 24
+    private let iconFrameSize: CGFloat = 30
     private let chevronSize: CGFloat = 17
 
     init(
@@ -4249,8 +4249,8 @@ private struct MultiplayerInviteFriendsSheetContent: View {
             } label: {
                 FocusSheetActionLabel(
                     title: buttonTitle,
-                    imageName: "Bottle_Message",
-                    imageFrameSize: CGSize(width: 16, height: 24),
+                    imageName: "Envolope",
+                    imageFrameSize: CGSize(width: 27, height: 18),
                     placement: .trailing,
                     showsProgress: isBusy,
                     progressTint: PicoColors.textPrimary
@@ -4392,8 +4392,8 @@ private struct MultiplayerLobbySheetContent: View {
                         } label: {
                             HStack(spacing: PicoSpacing.compact) {
                                 SheetActionImageIcon(
-                                    imageName: "Bottle_Message",
-                                    frameSize: CGSize(width: 13, height: 19)
+                                    imageName: "Envolope",
+                                    frameSize: CGSize(width: 19, height: 12)
                                 )
                                 Text("Invite")
                             }
