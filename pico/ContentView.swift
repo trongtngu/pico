@@ -1411,12 +1411,12 @@ private struct HomeTopBarCalendarStats: View {
 
     private var streakCount: some View {
         HStack(spacing: PicoSpacing.tiny) {
-            PicoIcon(.fireSolid, size: 13)
+            PicoIcon(.fireSolid, size: 20)
                 .foregroundStyle(PicoColors.streakAccent)
 
             Text("\(completionStreak)")
-                .font(PicoTypography.caption.weight(.bold))
-                .foregroundStyle(PicoColors.textSecondary)
+                .font(PicoTypography.countValue)
+                .foregroundStyle(PicoColors.textPrimary)
                 .monospacedDigit()
         }
         .accessibilityLabel(Text("\(completionStreak) day streak"))
@@ -1424,10 +1424,10 @@ private struct HomeTopBarCalendarStats: View {
 
     private var berryCountRow: some View {
         HStack(spacing: PicoSpacing.tiny) {
-            BerryBalanceIcon(size: 15)
+            BerryBalanceIcon(size: 22)
 
             Text("\(berryCount)")
-                .font(PicoTypography.compactCaption.weight(.bold))
+                .font(PicoTypography.countValue)
                 .foregroundStyle(PicoColors.textPrimary)
                 .monospacedDigit()
         }
