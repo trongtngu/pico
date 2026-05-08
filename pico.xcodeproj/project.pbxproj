@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		65D53AE92FAEA13800997E66 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 65D53AE82FAEA13800997E66 /* FirebaseAnalytics */; };
 		C0D000000000000000000001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = C0D000000000000000000002 /* Supabase */; };
 /* End PBXBuildFile section */
 
@@ -27,6 +28,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				65D53AE92FAEA13800997E66 /* FirebaseAnalytics in Frameworks */,
 				C0D000000000000000000001 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -38,6 +40,7 @@
 			isa = PBXGroup;
 			children = (
 				65403AEF2F9C237800C650A9 /* pico */,
+				65D53AE72FAEA13800997E66 /* Frameworks */,
 				65403AEE2F9C237800C650A9 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -48,6 +51,13 @@
 				65403AED2F9C237800C650A9 /* Pico: Focus Together.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		65D53AE72FAEA13800997E66 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -71,6 +81,7 @@
 			name = pico;
 			packageProductDependencies = (
 				C0D000000000000000000002 /* Supabase */,
+				65D53AE82FAEA13800997E66 /* FirebaseAnalytics */,
 			);
 			productName = pico;
 			productReference = 65403AED2F9C237800C650A9 /* Pico: Focus Together.app */;
@@ -377,6 +388,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		65D53AE82FAEA13800997E66 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 65D53AE62FAE9EB000997E66 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
 		C0D000000000000000000002 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C0D000000000000000000003 /* XCRemoteSwiftPackageReference "supabase-swift" */;
