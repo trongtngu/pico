@@ -570,7 +570,7 @@ private struct FriendsListCard: View {
                 }
             }
         }
-        .picoCreamCard()
+        .picoCreamCard(showsShadow: false)
     }
 }
 

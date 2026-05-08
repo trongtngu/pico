@@ -1055,7 +1055,7 @@ private struct FishCatchRevealPage: View {
                     .offset(y: -heroSize * 0.04)
                     .allowsHitTesting(false)
 
-                VStack(spacing: PicoSpacing.standard) {
+                VStack(spacing: 0) {
                     Spacer(minLength: 0)
 
                     Text("You caught")
@@ -1063,10 +1063,16 @@ private struct FishCatchRevealPage: View {
                         .foregroundStyle(PicoColors.textSecondary)
                         .multilineTextAlignment(.center)
 
+                    Spacer()
+                        .frame(height: 28)
+
                     FishCatchHeroIcon(
                         row: row,
                         size: heroSize
                     )
+
+                    Spacer()
+                        .frame(height: PicoSpacing.tiny)
 
                     VStack(spacing: PicoSpacing.iconTextGap) {
                         Text(row.label)
@@ -1542,7 +1548,7 @@ struct BondsContent: View {
             .padding(PicoSpacing.cardPadding)
             .picoCreamCard(showsShadow: false)
         } else {
-            BondsListCard(
+            BondsGroupedList(
                 residents: bonds,
                 ownerID: currentUserID,
                 onClaim: claimReward
@@ -1591,15 +1597,15 @@ struct BondsContent: View {
     }
 }
 
-private struct BondsListCard: View {
+private struct BondsGroupedList: View {
     let residents: [VillageResident]
     let ownerID: UUID?
     let onClaim: (VillageResident) -> Void
 
-    private var groups: [BondCardGroup] {
+    private var groups: [BondLevelGroup] {
         Dictionary(grouping: residents, by: \.bondLevel)
             .map { level, residents in
-                BondCardGroup(
+                BondLevelGroup(
                     level: level,
                     residents: residents.sorted {
                         if $0.completedPairSessions != $1.completedPairSessions {
@@ -1614,21 +1620,20 @@ private struct BondsListCard: View {
     }
 
     var body: some View {
-        VStack(spacing: PicoSpacing.section) {
+        VStack(spacing: PicoSpacing.largeSection) {
             ForEach(groups) { group in
-                BondCardGroupView(
+                BondLevelGroupView(
                     group: group,
                     ownerID: ownerID,
                     onClaim: onClaim
                 )
             }
         }
-        .padding(.leading, PicoSpacing.compact)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-private struct BondCardGroup: Identifiable {
+private struct BondLevelGroup: Identifiable {
     let level: Int
     let residents: [VillageResident]
 
@@ -1639,28 +1644,33 @@ private struct BondCardGroup: Identifiable {
     }
 }
 
-private struct BondCardGroupView: View {
-    let group: BondCardGroup
+private struct BondLevelGroupView: View {
+    let group: BondLevelGroup
     let ownerID: UUID?
     let onClaim: (VillageResident) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+        VStack(alignment: .leading, spacing: PicoSpacing.iconTextGap) {
             heading
-                .padding(.horizontal, PicoSpacing.tiny)
+                .padding(.horizontal, PicoSpacing.iconTextGap)
 
-            VStack(spacing: PicoSpacing.compact) {
-                ForEach(group.residents) { resident in
+            VStack(spacing: 0) {
+                ForEach(Array(group.residents.enumerated()), id: \.element.id) { index, resident in
                     BondRowView(
                         resident: resident,
                         ownerID: ownerID,
                         onClaim: onClaim
                     )
+
+                    if index < group.residents.count - 1 {
+                        PicoCardDivider()
+                            .padding(.leading, 72)
+                    }
                 }
             }
+            .picoCreamCard(showsShadow: false)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.contentPadding)
     }
 
     private var heading: some View {
@@ -1725,15 +1735,7 @@ private struct BondRowView: View {
     }
 
     private var rowBackground: Color {
-        hasPendingReward
-            ? PicoColors.highlightBackground.opacity(0.18)
-            : PicoCreamCardStyle.background
-    }
-
-    private var rowBorder: Color {
-        hasPendingReward
-            ? PicoColors.highlightBorder.opacity(0.42)
-            : PicoCreamCardStyle.border
+        hasPendingReward ? PicoColors.highlightBackground.opacity(0.18) : .clear
     }
 
     var body: some View {
@@ -1758,16 +1760,10 @@ private struct BondRowView: View {
     private var rowSurface: some View {
         rowContent
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(PicoSpacing.standard)
-            .background(
-                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                    .fill(rowBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                    .stroke(rowBorder, lineWidth: PicoCreamCardStyle.borderWidth)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+            .padding(.horizontal, PicoSpacing.cardPadding)
+            .padding(.vertical, PicoSpacing.standard)
+            .background(rowBackground)
+            .contentShape(Rectangle())
     }
 
     private var rowContent: some View {
@@ -3120,7 +3116,7 @@ private struct HomeFocusBottomBar: View {
     let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+        VStack(alignment: .leading, spacing: PicoSpacing.compact) {
             if isLoadingBalance || balanceNotice != nil {
                 HStack(spacing: PicoSpacing.compact) {
                     if isLoadingBalance {
@@ -3665,7 +3661,7 @@ private struct IncomingFocusInviteSheetRow: View {
     }
 
     private var inviteCardContent: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: PicoSpacing.iconTextGap) {
                 AvatarBadgeView(
                     config: invite.host.avatarConfig,
@@ -5286,6 +5282,17 @@ private struct FishingPage: View {
         return "\(discoveredCount)/\(catalogFish.count) discovered"
     }
 
+    private var islandDiscoverySummaries: [String: FishingIslandDiscoverySummary] {
+        Dictionary(
+            uniqueKeysWithValues: PicoIsland.allCases.map { island in
+                (
+                    island.backendID,
+                    FishingIslandDiscoverySummary(counts: fishStore.islandCollectionCounts[island.backendID])
+                )
+            }
+        )
+    }
+
     private var isLoadingCollectionData: Bool {
         fishStore.isLoadingFishCatalog || fishStore.isLoadingCollectionCounts
     }
@@ -5327,7 +5334,7 @@ private struct FishingPage: View {
 
                 switch selectedMode {
                 case .collection:
-                    VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+                    VStack(alignment: .leading, spacing: 0) {
                         FishingCollectionHeader(
                             selectedIsland: $selectedCollectionIsland,
                             discoveryText: collectionDiscoveryText
@@ -5349,6 +5356,8 @@ private struct FishingPage: View {
                     FishingIslandSelectionSection(
                         selectedIsland: islandStore.selectedIsland,
                         isLocked: focusStore.isIslandSelectionLocked,
+                        isLoading: fishStore.isLoadingIslandCollectionCounts,
+                        summaries: islandDiscoverySummaries,
                         selectIsland: selectIsland
                     )
                 }
@@ -5379,7 +5388,11 @@ private struct FishingPage: View {
         case .inventory:
             await loadInventoryData(forceReload: forceReload)
         case .islands:
-            break
+            await fishStore.loadIslandCollectionCounts(
+                for: sessionStore.session,
+                islandIDs: PicoIsland.allCases.map(\.backendID),
+                forceReload: forceReload
+            )
         }
     }
 
@@ -5448,7 +5461,7 @@ private struct FishingCollectionHeader: View {
     let discoveryText: String
 
     var body: some View {
-        HStack(alignment: .center, spacing: PicoSpacing.compact) {
+        HStack(alignment: .center, spacing: PicoSpacing.iconTextGap) {
             Menu {
                 ForEach(PicoIsland.allCases) { island in
                     Button {
@@ -5464,13 +5477,13 @@ private struct FishingCollectionHeader: View {
             } label: {
                 HStack(spacing: PicoSpacing.compact) {
                     FishingIslandSelectorIcon(island: selectedIsland)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 18, height: 18)
 
                     Text(selectedIsland.collectionDisplayName)
-                        .font(PicoTypography.bodySemibold)
-                        .foregroundStyle(PicoColors.textPrimary)
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.82)
+                        .minimumScaleFactor(0.72)
 
                     Image(systemName: "chevron.down")
                         .font(PicoTypography.symbol(size: 11, weight: .bold))
@@ -5482,17 +5495,16 @@ private struct FishingCollectionHeader: View {
                 .contentShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
             }
             .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityLabel(Text("Collection island, \(selectedIsland.collectionDisplayName)"))
-
-            Spacer(minLength: PicoSpacing.compact)
 
             Text(discoveryText)
                 .font(PicoTypography.caption)
                 .foregroundStyle(PicoColors.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
+                .layoutPriority(1)
         }
-        .padding(.leading, PicoSpacing.compact)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -5609,6 +5621,8 @@ private struct FishingInventoryRow: View {
 private struct FishingIslandSelectionSection: View {
     let selectedIsland: PicoIsland
     let isLocked: Bool
+    let isLoading: Bool
+    let summaries: [String: FishingIslandDiscoverySummary]
     let selectIsland: (PicoIsland) -> Void
 
     var body: some View {
@@ -5623,6 +5637,11 @@ private struct FishingIslandSelectionSection: View {
 
                 Spacer(minLength: 0)
 
+                if isLoading {
+                    ProgressView()
+                        .tint(PicoColors.primary)
+                }
+
                 if isLocked {
                     Text("Locked")
                         .font(PicoTypography.caption.weight(.bold))
@@ -5633,19 +5652,35 @@ private struct FishingIslandSelectionSection: View {
                         .clipShape(Capsule(style: .continuous))
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(spacing: PicoSpacing.compact) {
-                ForEach(PicoIsland.allCases) { island in
+            VStack(spacing: 0) {
+                let islands = PicoIsland.allCases
+
+                ForEach(Array(islands.enumerated()), id: \.element.id) { index, island in
                     FishingIslandRow(
                         island: island,
                         isSelected: selectedIsland == island,
                         isLocked: isLocked,
+                        summary: summaries[island.backendID] ?? FishingIslandDiscoverySummary(counts: nil),
                         select: {
                             selectIsland(island)
                         }
                     )
+
+                    if index < islands.count - 1 {
+                        PicoCardDivider(horizontalPadding: 0)
+                            .padding(.leading, 68)
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(PicoCreamCardStyle.background)
+            .clipShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous)
+                    .stroke(PicoCreamCardStyle.border, lineWidth: PicoCreamCardStyle.borderWidth)
+            )
 
             if isLocked {
                 Text("Island selection is locked during an open focus session.")
@@ -5654,9 +5689,7 @@ private struct FishingIslandSelectionSection: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .picoCreamCard(
-            padding: PicoCreamCardStyle.contentPadding
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -5664,6 +5697,7 @@ private struct FishingIslandRow: View {
     let island: PicoIsland
     let isSelected: Bool
     let isLocked: Bool
+    let summary: FishingIslandDiscoverySummary
     let select: () -> Void
 
     var body: some View {
@@ -5672,34 +5706,34 @@ private struct FishingIslandRow: View {
                 FishingIslandSelectorIcon(island: island)
                     .frame(width: 40, height: 40)
 
-                Text(island.displayName)
-                    .font(PicoTypography.primaryLabel)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(island.displayName)
+                        .font(PicoTypography.primaryLabel)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
+
+                    Text(subtitle)
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .lineLimit(1)
+                }
 
                 Spacer(minLength: PicoSpacing.compact)
 
                 statusIcon
             }
-            .padding(PicoSpacing.standard)
-            .background(rowBackground)
-            .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                    .stroke(rowBorder, lineWidth: 1)
-            )
+            .padding(.horizontal, PicoSpacing.standard)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isLocked || isSelected)
+        .disabled(isLocked)
         .accessibilityLabel(Text("\(island.displayName), \(isSelected ? "selected" : "not selected")"))
     }
 
-    private var rowBackground: Color {
-        isSelected ? Color(hex: 0xEAF6DE).opacity(0.92) : PicoColors.softSurface.opacity(0.72)
-    }
-
-    private var rowBorder: Color {
-        isSelected ? PicoColors.primary.opacity(0.42) : PicoColors.border.opacity(0.72)
+    private var subtitle: String {
+        summary.displayText
     }
 
     @ViewBuilder
@@ -5710,16 +5744,46 @@ private struct FishingIslandRow: View {
                 .foregroundStyle(PicoColors.textSecondary)
                 .frame(width: 28, height: 28)
         } else if isSelected {
-            Image(systemName: "checkmark.circle.fill")
-                .font(PicoTypography.symbol(size: 24, weight: .bold))
+            Image(systemName: "checkmark")
+                .font(PicoTypography.symbol(size: 17, weight: .bold))
                 .foregroundStyle(PicoColors.primary)
                 .frame(width: 28, height: 28)
         } else {
-            Image(systemName: "circle")
-                .font(PicoTypography.symbol(size: 22, weight: .semibold))
-                .foregroundStyle(PicoColors.textSecondary.opacity(0.58))
+            Image(systemName: "chevron.right")
+                .font(PicoTypography.symbol(size: 15, weight: .semibold))
+                .foregroundStyle(PicoColors.textMuted)
                 .frame(width: 28, height: 28)
         }
+    }
+}
+
+private struct FishingIslandDiscoverySummary {
+    let discoveredSpeciesCount: Int
+    let totalSpeciesCount: Int
+    let isLoaded: Bool
+
+    init(counts: [FishCount]?) {
+        guard let counts else {
+            discoveredSpeciesCount = 0
+            totalSpeciesCount = 0
+            isLoaded = false
+            return
+        }
+
+        discoveredSpeciesCount = counts.filter { $0.count > 0 }.count
+        totalSpeciesCount = counts.count
+        isLoaded = true
+    }
+
+    var displayText: String {
+        guard isLoaded else { return "Loading species..." }
+        guard totalSpeciesCount > 0 else { return "0 species discovered" }
+
+        if discoveredSpeciesCount >= totalSpeciesCount {
+            return "all species discovered!"
+        }
+
+        return "\(discoveredSpeciesCount)/\(totalSpeciesCount) species discovered"
     }
 }
 
@@ -5988,9 +6052,9 @@ private struct FishingTierSection: View {
                 }
             }
         }
-        .padding(.horizontal, PicoCreamCardStyle.contentPadding)
-        .padding(.top, PicoSpacing.iconTextGap)
-        .padding(.bottom, PicoSpacing.iconTextGap)
+        .padding(.horizontal, PicoSpacing.compact)
+        .padding(.top, PicoSpacing.compact)
+        .padding(.bottom, PicoSpacing.compact)
     }
 
     private func count(for catalogFish: FishingCatalogFish) -> Int {
@@ -6003,11 +6067,16 @@ private struct FishingCollectionTile: View {
     let count: Int
 
     private enum Layout {
-        static let tileHeight: CGFloat = 172
+        static let tileHeight: CGFloat = 188
         static let iconSize: CGFloat = 72
         static let iconFrameHeight: CGFloat = 72
+        static let iconNameOverlap: CGFloat = 4
         static let nameHeight: CGFloat = 34
+        static let nameBadgeGap: CGFloat = 2
         static let nameFontSize: CGFloat = 16
+        static let countBadgeMinWidth: CGFloat = 38
+        static let lockIconSize: CGFloat = 14
+        static let lockIconFrameSize: CGFloat = 18
     }
 
     private var isUnlocked: Bool {
@@ -6020,7 +6089,7 @@ private struct FishingCollectionTile: View {
     }
 
     var body: some View {
-        VStack(spacing: PicoSpacing.tiny) {
+        VStack(spacing: 0) {
             HStack {
                 Spacer(minLength: 0)
                 countBadge
@@ -6033,7 +6102,7 @@ private struct FishingCollectionTile: View {
             )
             .frame(height: Layout.iconFrameHeight)
 
-            VStack(spacing: PicoSpacing.tiny) {
+            VStack(spacing: Layout.nameBadgeGap) {
                 Text(displayNameText)
                     .font(PicoTypography.primary(size: Layout.nameFontSize, weight: .bold))
                     .foregroundStyle(PicoColors.textPrimary)
@@ -6042,17 +6111,18 @@ private struct FishingCollectionTile: View {
                     .minimumScaleFactor(0.86)
                     .allowsTightening(true)
                     .frame(maxWidth: .infinity)
-                    .frame(height: Layout.nameHeight)
+                    .frame(height: Layout.nameHeight, alignment: .bottom)
 
                 FishingRarityBadge(
                     rarityName: fish.tier.title.lowercased(),
                     style: fish.tier.rarityStyle
                 )
             }
+            .padding(.top, -Layout.iconNameOverlap)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, PicoSpacing.compact)
-        .padding(.vertical, 6)
+        .padding(.vertical, 12)
         .frame(height: Layout.tileHeight)
         .background(tileBackground)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
@@ -6087,14 +6157,14 @@ private struct FishingCollectionTile: View {
                     .minimumScaleFactor(0.72)
             } else {
                 Image(systemName: "lock.fill")
-                    .font(PicoTypography.symbol(size: 12, weight: .bold))
-                    .frame(width: 16, height: 16)
+                    .font(PicoTypography.symbol(size: Layout.lockIconSize, weight: .bold))
+                    .frame(width: Layout.lockIconFrameSize, height: Layout.lockIconFrameSize)
             }
         }
         .foregroundStyle(countBadgeForeground)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .frame(minWidth: 30)
+        .padding(.horizontal, PicoSpacing.iconTextGap)
+        .padding(.vertical, 5)
+        .frame(minWidth: Layout.countBadgeMinWidth)
         .background(countBadgeBackground)
         .clipShape(Capsule(style: .continuous))
         .accessibilityLabel(Text(isUnlocked ? "\(count) caught" : "Locked"))

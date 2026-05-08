@@ -17,11 +17,13 @@ final class FishStore: ObservableObject {
     @Published private(set) var fishCatalogIslandID: String = PicoIsland.original.backendID
     @Published private(set) var collectionCounts: [FishCount] = []
     @Published private(set) var collectionCountsIslandID: String = PicoIsland.original.backendID
+    @Published private(set) var islandCollectionCounts: [String: [FishCount]] = [:]
     @Published private(set) var inventoryCounts: [FishCount] = []
     @Published private(set) var isLoadingSessionCatches = false
     @Published private(set) var isLoadingInventory = false
     @Published private(set) var isLoadingFishCatalog = false
     @Published private(set) var isLoadingCollectionCounts = false
+    @Published private(set) var isLoadingIslandCollectionCounts = false
     @Published private(set) var isLoadingInventoryCounts = false
     @Published private(set) var isSellingFish = false
     @Published var notice: String?
@@ -136,7 +138,40 @@ final class FishStore: ObservableObject {
         defer { isLoadingCollectionCounts = false }
 
         do {
-            collectionCounts = try await fishService.fetchCollectionCounts(for: session, islandID: resolvedIslandID)
+            let counts = try await fishService.fetchCollectionCounts(for: session, islandID: resolvedIslandID)
+            collectionCounts = counts
+            islandCollectionCounts[resolvedIslandID] = counts
+        } catch {
+            notice = displayMessage(for: error)
+        }
+    }
+
+    func loadIslandCollectionCounts(
+        for session: AuthSession?,
+        islandIDs: [String],
+        forceReload: Bool = false
+    ) async {
+        guard let session, !isLoadingIslandCollectionCounts else { return }
+
+        let resolvedIslandIDs = islandIDs
+            .map { $0.isEmpty ? PicoIsland.original.backendID : $0 }
+            .uniqued()
+
+        guard forceReload || resolvedIslandIDs.contains(where: { islandCollectionCounts[$0] == nil }) else { return }
+
+        isLoadingIslandCollectionCounts = true
+        notice = nil
+        defer { isLoadingIslandCollectionCounts = false }
+
+        do {
+            for islandID in resolvedIslandIDs where forceReload || islandCollectionCounts[islandID] == nil {
+                let counts = try await fishService.fetchCollectionCounts(for: session, islandID: islandID)
+                islandCollectionCounts[islandID] = counts
+
+                if collectionCountsIslandID == islandID {
+                    collectionCounts = counts
+                }
+            }
         } catch {
             notice = displayMessage(for: error)
         }
@@ -150,6 +185,10 @@ final class FishStore: ObservableObject {
         collectionCounts = []
         fishCatalogIslandID = resolvedIslandID
         collectionCountsIslandID = resolvedIslandID
+
+        if let counts = islandCollectionCounts[resolvedIslandID] {
+            collectionCounts = counts
+        }
     }
 
     func loadInventoryCounts(for session: AuthSession?) async {
@@ -208,10 +247,12 @@ final class FishStore: ObservableObject {
         fishCatalogIslandID = PicoIsland.original.backendID
         collectionCounts = []
         collectionCountsIslandID = PicoIsland.original.backendID
+        islandCollectionCounts = [:]
         inventoryCounts = []
         isLoadingInventory = false
         isLoadingFishCatalog = false
         isLoadingCollectionCounts = false
+        isLoadingIslandCollectionCounts = false
         isLoadingInventoryCounts = false
     }
 
@@ -240,5 +281,12 @@ final class FishStore: ObservableObject {
     private func displayMessage(for error: Error) -> String? {
         guard !error.isCancellation else { return nil }
         return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+private extension Sequence where Element: Hashable {
+    func uniqued() -> [Element] {
+        var seen: Set<Element> = []
+        return filter { seen.insert($0).inserted }
     }
 }
