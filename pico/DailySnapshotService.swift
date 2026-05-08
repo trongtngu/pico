@@ -7,6 +7,13 @@
 
 import Foundation
 
+enum DailySnapshotLoadState: Equatable {
+    case idle
+    case loading
+    case loaded
+    case failed
+}
+
 struct DailySnapshotDay: RawRepresentable, Codable, Hashable, Comparable, Identifiable {
     let rawValue: String
 
@@ -53,10 +60,6 @@ struct DailyVillageSnapshotVisitor: Identifiable, Equatable {
     let profile: UserProfile
     let bondLevel: Int
     let completedPairSessions: Int
-
-    var islandParticipant: IslandParticipant {
-        IslandParticipant(profile: profile, bondLevel: bondLevel)
-    }
 }
 
 struct DailyVillageSnapshot: Identifiable, Equatable {
@@ -75,26 +78,6 @@ struct DailyVillageSnapshot: Identifiable, Equatable {
     let createdAt: Date?
     let updatedAt: Date?
     let notice: String?
-
-    var owner: UserProfile {
-        ownerProfile
-    }
-
-    var visitorParticipants: [IslandParticipant] {
-        visitors.map(\.islandParticipant)
-    }
-
-    var island: PicoIsland {
-        PicoIsland(backendID: islandID)
-    }
-
-    var mapStyle: VillageMapStyle {
-        island.mapStyle
-    }
-
-    var islandParticipants: [IslandParticipant] {
-        [IslandParticipant(profile: ownerProfile, bondLevel: 0)] + visitorParticipants
-    }
 }
 
 enum DailySnapshotServiceError: LocalizedError {
@@ -143,21 +126,6 @@ final class DailySnapshotService {
         )
 
         return response.first?.dailyVillageSnapshot
-    }
-
-    func listSnapshots(
-        startDay: DailySnapshotDay,
-        endDay: DailySnapshotDay,
-        for authSession: AuthSession
-    ) async throws -> [DailyVillageSnapshot] {
-        let response: [DailyVillageSnapshotResponse] = try await send(
-            path: "/rest/v1/rpc/list_daily_village_snapshots",
-            method: "POST",
-            body: ListDailySnapshotsRequest(startDay: startDay, endDay: endDay),
-            accessToken: authSession.accessToken
-        )
-
-        return response.map(\.dailyVillageSnapshot)
     }
 
     private func send<RequestBody: Encodable, ResponseBody: Decodable>(
@@ -224,11 +192,6 @@ final class DailySnapshotService {
 
 private struct FetchDailySnapshotRequest: Encodable {
     let requestedSnapshotDay: DailySnapshotDay
-}
-
-private struct ListDailySnapshotsRequest: Encodable {
-    let startDay: DailySnapshotDay
-    let endDay: DailySnapshotDay
 }
 
 private struct DailyVillageSnapshotResponse: Decodable {

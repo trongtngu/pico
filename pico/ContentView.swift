@@ -32,7 +32,6 @@ struct AppShellView: View {
     @StateObject private var berryStore = BerryStore()
     @StateObject private var fishStore = FishStore()
     @StateObject private var islandStore = IslandStore()
-    @StateObject private var dailySnapshotStore = DailySnapshotStore()
 
     var body: some View {
         ZStack {
@@ -81,7 +80,6 @@ struct AppShellView: View {
         .environmentObject(berryStore)
         .environmentObject(fishStore)
         .environmentObject(islandStore)
-        .environmentObject(dailySnapshotStore)
         .task(id: sessionStore.session?.user?.id) {
             await sessionStore.refreshSessionIfNeeded()
             islandStore.configure(for: sessionStore.session?.user?.id)
@@ -91,11 +89,9 @@ struct AppShellView: View {
                 villageStore.clear()
                 berryStore.clear()
                 fishStore.clear()
-                dailySnapshotStore.clear()
                 focusStore.updateKnownVillageResidentIDs(nil)
             } else {
                 await villageStore.loadResidents(for: sessionStore.session)
-                await dailySnapshotStore.loadToday(for: sessionStore.session)
                 focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
                 await berryStore.loadBalance(for: sessionStore.session)
             }
@@ -120,9 +116,6 @@ struct AppShellView: View {
             guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return }
             Task {
                 await villageStore.loadResidents(for: sessionStore.session)
-                if !focusStore.hasPendingResultSync {
-                    await dailySnapshotStore.loadToday(for: sessionStore.session)
-                }
                 await berryStore.loadBalance(for: sessionStore.session)
                 if fishStore.fishCatalog.isEmpty || fishStore.fishCatalogIslandID != islandStore.selectedIslandID {
                     await fishStore.loadFishCatalog(
@@ -142,7 +135,6 @@ struct AppShellView: View {
                   let resultSession = focusStore.resultSession,
                   resultSession.status == .completed else { return }
             Task {
-                await dailySnapshotStore.loadToday(for: sessionStore.session)
                 if fishStore.fishCatalog.isEmpty || fishStore.fishCatalogIslandID != islandStore.selectedIslandID {
                     await fishStore.loadFishCatalog(
                         for: sessionStore.session,
@@ -199,6 +191,8 @@ struct AppShellView: View {
         NavigationStack {
             selectedTab.rootView(openFocus: {
                 selectTab(.home)
+            }, openStore: {
+                selectTab(.store)
             }, openNavigation: {
                 isNavigationDrawerOpen = true
             }, usesDrawerNavigation: usesDrawerNavigation)
@@ -228,6 +222,19 @@ struct AppShellView: View {
     private func selectTab(_ tab: AppTab) {
         selectedTab = tab
         isNavigationDrawerOpen = false
+
+        if tab == .home {
+            Task {
+                await refreshHomeVillageData()
+            }
+        }
+    }
+
+    private func refreshHomeVillageData() async {
+        await sessionStore.reloadProfile()
+        await villageStore.loadResidents(for: sessionStore.session, force: true)
+        focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
+        await berryStore.loadBalance(for: sessionStore.session)
     }
 }
 
@@ -381,6 +388,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
     @ViewBuilder
     func rootView(
         openFocus: @escaping () -> Void,
+        openStore: @escaping () -> Void,
         openNavigation: @escaping () -> Void,
         usesDrawerNavigation: Bool
     ) -> some View {
@@ -397,7 +405,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
         case .friends:
             FriendsPage()
         case .settings:
-            ProfilePage()
+            ProfilePage(openStore: openStore)
         }
     }
 }
@@ -408,11 +416,11 @@ private struct HomePage: View {
     @EnvironmentObject private var berryStore: BerryStore
     @EnvironmentObject private var fishStore: FishStore
     @EnvironmentObject private var villageStore: VillageStore
-    @EnvironmentObject private var dailySnapshotStore: DailySnapshotStore
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var islandStore: IslandStore
     let showsMenuButton: Bool
     let openNavigation: () -> Void
+    private let dailySnapshotService = DailySnapshotService()
     @State private var isStartFocusSheetPresented = false
     @State private var startFocusStep = StartFocusSheetStep.modePicker
     @State private var startFocusSheetHeight: CGFloat = 360
@@ -427,29 +435,16 @@ private struct HomePage: View {
                 ScrollView {
                     GeometryReader { viewport in
                         VStack(spacing: PicoSpacing.compact) {
-                            ZStack(alignment: .top) {
-                                VillageHeroSection(
-                                    residents: [],
-                                    currentUserProfile: heroCurrentUserProfile,
-                                    participants: heroParticipants,
-                                    isLoading: heroIsLoading,
-                                    notice: heroNotice,
-                                    isFishingMode: focusStore.activeSession?.isLive == true,
-                                    mapStyle: heroMapStyle,
-                                    height: villageHeight(for: viewport.size.height)
-                                )
-
-                                if !isLiveFocusActive, !isSelectedDayToday {
-                                    DailySnapshotDayContextHeader(
-                                        selectedDayText: selectedDayContextLabel,
-                                        summaryText: selectedDaySummaryText
-                                    )
-                                    .padding(.top, PicoSpacing.compact)
-                                    .allowsHitTesting(false)
-                                }
-                            }
-                            .id(dailySnapshotStore.selectedDay)
-                            .transition(.opacity)
+                            VillageHeroSection(
+                                residents: [],
+                                currentUserProfile: heroCurrentUserProfile,
+                                participants: heroParticipants,
+                                isLoading: heroIsLoading,
+                                notice: heroNotice,
+                                isFishingMode: focusStore.activeSession?.isLive == true,
+                                mapStyle: heroMapStyle,
+                                height: villageHeight(for: viewport.size.height)
+                            )
 
                         }
                         .padding(.horizontal, PicoSpacing.standard)
@@ -480,7 +475,6 @@ private struct HomePage: View {
                         berryCount: berryStore.balance.berries,
                         completionStreak: berryStore.completionStreak,
                         showsMenuButton: showsMenuButton,
-                        selectedDayLabel: selectedDayLabel,
                         openNavigation: openNavigation,
                         chooseDateAction: presentSnapshotDatePicker
                     )
@@ -498,7 +492,6 @@ private struct HomePage: View {
             }
         }
         .animation(.snappy(duration: 0.22), value: focusStore.resultSession?.id)
-        .animation(.snappy(duration: 0.18), value: dailySnapshotStore.selectedDay)
         .picoScreenBackground()
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isStartFocusSheetPresented) {
@@ -517,9 +510,6 @@ private struct HomePage: View {
             DailySnapshotCalendarScreen(
                 initialDate: snapshotPickerDate,
                 maximumDate: snapshotPickerMaximumDate,
-                initialSnapshot: calendarInitialSnapshot,
-                session: sessionStore.session,
-                selectDateAction: selectSnapshotDate,
                 fetchSnapshotAction: fetchCalendarSnapshot
             )
         }
@@ -536,8 +526,8 @@ private struct HomePage: View {
             )
         }
         .task {
+            await sessionStore.loadProfileIfNeeded()
             await villageStore.loadResidents(for: sessionStore.session)
-            await dailySnapshotStore.loadToday(for: sessionStore.session)
             await berryStore.loadBalance(for: sessionStore.session)
         }
         .onChange(of: focusStore.resultSession) {
@@ -574,11 +564,7 @@ private struct HomePage: View {
     }
 
     private var heroCurrentUserProfile: UserProfile? {
-        if isLiveFocusActive {
-            return sessionStore.profile
-        }
-
-        return dailySnapshotStore.currentSnapshot?.owner ?? sessionStore.profile
+        sessionStore.profile
     }
 
     private var heroParticipants: [IslandParticipant]? {
@@ -586,122 +572,27 @@ private struct HomePage: View {
             return activeIslandParticipants
         }
 
-        if let snapshot = dailySnapshotStore.currentSnapshot {
-            return snapshot.islandParticipants
-        }
-
-        guard let currentUserProfile = sessionStore.profile else { return [] }
-        return [IslandParticipant(profile: currentUserProfile, bondLevel: 0)]
+        return currentIslandParticipants
     }
 
     private var heroMapStyle: VillageMapStyle {
-        if isLiveFocusActive {
-            return islandStore.selectedIsland.mapStyle
-        }
-
-        return dailySnapshotStore.currentSnapshot?.mapStyle ?? islandStore.selectedIsland.mapStyle
+        islandStore.selectedIsland.mapStyle
     }
 
     private var heroIsLoading: Bool {
-        if isLiveFocusActive {
-            return villageStore.isLoadingResidents
-        }
-
-        return dailySnapshotStore.isLoadingSnapshot
+        villageStore.isLoadingResidents
     }
 
     private var heroNotice: String? {
-        if isLiveFocusActive {
-            return villageStore.notice
-        }
-
-        return dailySnapshotStore.notice
+        villageStore.notice
     }
 
     private var isLiveFocusActive: Bool {
         focusStore.activeSession?.isLive == true
     }
 
-    private var todaySnapshotDay: DailySnapshotDay {
-        DailySnapshotDay(date: Date(), calendar: .current)
-    }
-
-    private var isSelectedDayToday: Bool {
-        dailySnapshotStore.selectedDay == todaySnapshotDay
-    }
-
-    private var selectedDayLabel: String {
-        if isSelectedDayToday {
-            return "Today"
-        }
-
-        guard let date = dailySnapshotStore.selectedDay.date(calendar: .current) else {
-            return dailySnapshotStore.selectedDay.rawValue
-        }
-
-        return date.formatted(
-            .dateTime
-                .weekday(.abbreviated)
-                .month(.abbreviated)
-                .day()
-        )
-    }
-
-    private var selectedDayContextLabel: String {
-        let calendar = Calendar.current
-        guard let selectedDate = dailySnapshotStore.selectedDay.date(calendar: calendar) else {
-            return dailySnapshotStore.selectedDay.rawValue
-        }
-
-        if calendar.isDateInYesterday(selectedDate) {
-            return "Yesterday"
-        }
-
-        let dateFormatter = DateFormatter()
-        dateFormatter.calendar = calendar
-        dateFormatter.locale = Locale.current
-        dateFormatter.dateFormat = "dd/MM/yyyy"
-
-        let weekdayFormatter = DateFormatter()
-        weekdayFormatter.calendar = calendar
-        weekdayFormatter.locale = Locale.current
-        weekdayFormatter.dateFormat = "EEEE"
-
-        return "\(weekdayFormatter.string(from: selectedDate)) \(dateFormatter.string(from: selectedDate))"
-    }
-
-    private var selectedDaySummaryText: String {
-        "\(selectedDayFocusSummaryText) · \(selectedDayCatchSummaryText)"
-    }
-
-    private var selectedDayFocusSummaryText: String {
-        let totalMinutes = max(0, (dailySnapshotStore.currentSnapshot?.totalFocusSeconds ?? 0) / 60)
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-
-        if totalMinutes < 60 {
-            return "\(minutes)m focused"
-        }
-
-        if minutes == 0 {
-            return "\(hours)h focused"
-        }
-
-        return "\(hours)h \(minutes)m focused"
-    }
-
-    private var selectedDayCatchSummaryText: String {
-        "\(dailySnapshotStore.currentSnapshot?.fishCaughtCount ?? 0) caught"
-    }
-
     private var snapshotPickerMaximumDate: Date {
         Calendar.current.startOfDay(for: Date())
-    }
-
-    private var calendarInitialSnapshot: DailyVillageSnapshot? {
-        let today = DailySnapshotDay(date: snapshotPickerMaximumDate, calendar: .current)
-        guard dailySnapshotStore.currentSnapshot?.snapshotDay == today else { return nil }
-        return dailySnapshotStore.currentSnapshot
     }
 
     private var activeIslandParticipants: [IslandParticipant]? {
@@ -743,6 +634,16 @@ private struct HomePage: View {
             }
     }
 
+    private var currentIslandParticipants: [IslandParticipant]? {
+        guard let currentUserProfile = sessionStore.profile else {
+            return villageStore.residents.map(IslandParticipant.init(resident:))
+        }
+
+        return [IslandParticipant(profile: currentUserProfile, bondLevel: 0)] + villageStore.residents
+            .filter { $0.profile.userID != currentUserProfile.userID }
+            .map(IslandParticipant.init(resident:))
+    }
+
     private var completedResultSession: FocusSession? {
         guard let resultSession = focusStore.resultSession, resultSession.status == .completed else { return nil }
         return resultSession
@@ -777,14 +678,11 @@ private struct HomePage: View {
     }
 
     private func refreshVillagePage() async {
+        await sessionStore.reloadProfile()
         await refreshLiveVillageData(
             session: sessionStore.session,
             focusStore: focusStore,
             villageStore: villageStore
-        )
-        await dailySnapshotStore.loadSnapshot(
-            day: dailySnapshotStore.selectedDay,
-            for: sessionStore.session
         )
         await friendStore.loadFriends(for: sessionStore.session)
         await berryStore.loadBalance(for: sessionStore.session)
@@ -797,22 +695,9 @@ private struct HomePage: View {
         isSnapshotDatePickerPresented = true
     }
 
-    private func selectSnapshotDate(_ date: Date) {
-        let calendar = Calendar.current
-        let clampedDate = min(
-            calendar.startOfDay(for: date),
-            snapshotPickerMaximumDate
-        )
-        let day = DailySnapshotDay(date: clampedDate, calendar: calendar)
-
-        snapshotPickerDate = clampedDate
-        Task {
-            await dailySnapshotStore.loadSnapshot(day: day, for: sessionStore.session)
-        }
-    }
-
     private func fetchCalendarSnapshot(day: DailySnapshotDay) async throws -> DailyVillageSnapshot? {
-        try await dailySnapshotStore.fetchSnapshot(day: day, for: sessionStore.session)
+        guard let session = sessionStore.session else { return nil }
+        return try await dailySnapshotService.fetchSnapshot(day: day, for: session)
     }
 
     private func villageHeight(for viewportHeight: CGFloat) -> CGFloat {
@@ -1064,7 +949,7 @@ private struct FishCatchRevealPage: View {
                         .multilineTextAlignment(.center)
 
                     Spacer()
-                        .frame(height: 28)
+                        .frame(height: PicoSpacing.largeSection + PicoSpacing.iconTextGap)
 
                     FishCatchHeroIcon(
                         row: row,
@@ -1072,7 +957,7 @@ private struct FishCatchRevealPage: View {
                     )
 
                     Spacer()
-                        .frame(height: PicoSpacing.tiny)
+                        .frame(height: 0)
 
                     VStack(spacing: PicoSpacing.iconTextGap) {
                         Text(row.label)
@@ -1286,7 +1171,6 @@ private struct HomeTopBar: View {
     let berryCount: Int
     let completionStreak: Int
     let showsMenuButton: Bool
-    let selectedDayLabel: String
     let openNavigation: () -> Void
     let chooseDateAction: () -> Void
 
@@ -1306,7 +1190,6 @@ private struct HomeTopBar: View {
             HomeTopBarCalendarStats(
                 berryCount: berryCount,
                 completionStreak: completionStreak,
-                selectedDayLabel: selectedDayLabel,
                 chooseDateAction: chooseDateAction
             )
         }
@@ -1319,7 +1202,6 @@ private struct HomeTopBar: View {
 private struct HomeTopBarCalendarStats: View {
     let berryCount: Int
     let completionStreak: Int
-    let selectedDayLabel: String
     let chooseDateAction: () -> Void
 
     var body: some View {
@@ -1340,7 +1222,6 @@ private struct HomeTopBarCalendarStats: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("Open calendar picker"))
-                .accessibilityValue(Text(selectedDayLabel))
             }
         }
         .frame(minWidth: 156, alignment: .topTrailing)
@@ -2202,28 +2083,6 @@ private struct VillageHeroSection: View {
     }
 }
 
-private struct DailySnapshotDayContextHeader: View {
-    let selectedDayText: String
-    let summaryText: String
-
-    var body: some View {
-        VStack(spacing: PicoSpacing.tiny) {
-            Text(selectedDayText)
-                .font(PicoTypography.sectionTitle)
-                .foregroundStyle(PicoColors.textPrimary)
-                .lineLimit(2)
-
-            Text(summaryText)
-                .font(PicoTypography.captionSemibold)
-                .foregroundStyle(PicoColors.textSecondary)
-                .lineLimit(1)
-        }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, PicoSpacing.standard)
-    }
-}
-
 private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
     case fish
     case bonds
@@ -2252,9 +2111,6 @@ private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
 private struct DailySnapshotCalendarScreen: View {
     let initialDate: Date
     let maximumDate: Date
-    let initialSnapshot: DailyVillageSnapshot?
-    let session: AuthSession?
-    let selectDateAction: (Date) -> Void
     let fetchSnapshotAction: (DailySnapshotDay) async throws -> DailyVillageSnapshot?
     @Environment(\.dismiss) private var dismiss
     @State private var displayedMonth = Calendar.current.startOfDay(for: Date())
@@ -2319,9 +2175,6 @@ private struct DailySnapshotCalendarScreen: View {
         .background(PicoCalendarStyle.background.ignoresSafeArea())
         .onAppear {
             selectedDate = initialDate
-            if let initialSnapshot {
-                snapshotByDay[initialSnapshot.snapshotDay] = initialSnapshot
-            }
             let selectedMonth = monthStart(for: initialDate)
             displayedMonth = selectedMonth
             loadSelectedSnapshotIfNeeded(for: initialDate)
@@ -2438,7 +2291,6 @@ private struct DailySnapshotCalendarScreen: View {
                     DailySnapshotCalendarDayCell(day: day) {
                         guard let date = day.date, !day.isFuture else { return }
                         selectedDate = date
-                        selectDateAction(date)
                         loadSelectedSnapshotIfNeeded(for: date)
                     }
                 }
@@ -5555,9 +5407,7 @@ private struct FishingInventorySection: View {
                 }
             }
         }
-        .picoCreamCard(
-            padding: PicoCreamCardStyle.contentPadding
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -6400,9 +6250,7 @@ private struct StorePage: View {
                                 }
                             }
                         }
-                        .picoCreamCard(
-                            padding: PicoCreamCardStyle.contentPadding
-                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     case .sell:
                         StoreFishSection(
                             groups: fishGroups,
@@ -6454,6 +6302,7 @@ private struct StorePage: View {
             }
         }
         .picoCreamCard(
+            showsShadow: false,
             padding: PicoCreamCardStyle.contentPadding
         )
     }
@@ -6631,9 +6480,7 @@ private struct StoreFishSection: View {
                 }
             }
         }
-        .picoCreamCard(
-            padding: PicoCreamCardStyle.contentPadding
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -6675,6 +6522,7 @@ private struct StoreFishGroupRow: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(group.rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
         .overlay(
@@ -6777,8 +6625,12 @@ private struct StoreHatRow: View {
                 .frame(width: 86, alignment: .trailing)
         }
         .padding(PicoSpacing.compact)
-        .background(PicoColors.softSurface.opacity(0.64))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        )
         .accessibilityElement(children: .combine)
     }
 
@@ -6848,57 +6700,54 @@ private struct StoreBuyButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
                     .fill(isEnabled ? PicoColors.primary.opacity(configuration.isPressed ? 0.82 : 1) : PicoColors.softSurface.opacity(0.72))
             )
-            .shadow(
-                color: isEnabled ? PicoColors.primary.opacity(0.18) : .clear,
-                radius: 8,
-                x: 0,
-                y: 4
-            )
     }
 }
 
 private struct ProfilePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
+    let openStore: () -> Void
     @State private var displayName = ""
     @State private var draftDisplayName = ""
     @State private var avatarConfig = AvatarCatalog.defaultConfig
     @State private var isNameEditorPresented = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: PicoSpacing.standard) {
-                profileContent
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: PicoSpacing.standard) {
+                    profileContent
 
-                if sessionStore.profile != nil {
-                    ProfileAvatarOutfitCard(
-                        avatarConfig: avatarConfig
-                    )
+                    if sessionStore.profile != nil {
+                        ProfileAvatarOutfitCard(
+                            selection: $avatarConfig,
+                            ownedHats: sessionStore.ownedHats,
+                            canCycleHats: availableHats.count >= 2,
+                            showsSaveButton: hasProfileChanges,
+                            canSave: canSave,
+                            isSaving: sessionStore.isProfileSaving,
+                            previousHat: selectPreviousHat,
+                            nextHat: selectNextHat,
+                            buyInStore: openStore,
+                            save: saveProfile
+                        )
+                    }
 
-                    ProfileHatCollectionCard(
-                        selection: $avatarConfig,
-                        ownedHats: sessionStore.ownedHats,
-                        canCycleHats: ownedHats.count >= 2,
-                        showsSaveButton: hasProfileChanges,
-                        canSave: canSave,
-                        isSaving: sessionStore.isProfileSaving,
-                        previousHat: selectPreviousHat,
-                        nextHat: selectNextHat,
-                        save: saveProfile
-                    )
+                    if let profileNotice = sessionStore.profileNotice {
+                        ProfileNoticeCard(text: profileNotice)
+                    }
+
+                    Spacer(minLength: PicoSpacing.largeSection)
+
+                    ProfileSignOutBar {
+                        sessionStore.signOut()
+                    }
+                    .padding(.top, PicoSpacing.section)
                 }
-
-                if let profileNotice = sessionStore.profileNotice {
-                    ProfileNoticeCard(text: profileNotice)
-                }
-
-                ProfileSignOutBar {
-                    sessionStore.signOut()
-                }
-                .padding(.top, PicoSpacing.section)
+                .frame(minHeight: max(0, geometry.size.height - PicoSpacing.largeSection), alignment: .top)
+                .padding(.horizontal, PicoSpacing.standard)
+                .padding(.vertical, PicoSpacing.section)
+                .padding(.bottom, PicoSpacing.largeSection)
             }
-            .padding(.horizontal, PicoSpacing.standard)
-            .padding(.vertical, PicoSpacing.section)
-            .padding(.bottom, PicoSpacing.largeSection)
         }
         .picoScreenBackground()
         .task {
@@ -6944,6 +6793,7 @@ private struct ProfilePage: View {
                 .foregroundStyle(PicoColors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .picoCreamCard(
+                    showsShadow: false,
                     padding: PicoCreamCardStyle.contentPadding
                 )
         } else {
@@ -6969,8 +6819,8 @@ private struct ProfilePage: View {
         return normalizedDisplayName != profile.displayName || avatarConfig != profile.avatarConfig
     }
 
-    private var ownedHats: [AvatarHat] {
-        AvatarHat.allCases.filter { $0.isOwned(in: sessionStore.ownedHats) }
+    private var availableHats: [AvatarHat] {
+        AvatarHat.allCases
     }
 
     private func syncEditableProfile() {
@@ -6989,7 +6839,7 @@ private struct ProfilePage: View {
     }
 
     private func selectHat(offset: Int) {
-        let hats = ownedHats
+        let hats = availableHats
         guard hats.count >= 2 else { return }
 
         guard let currentIndex = hats.firstIndex(of: avatarConfig.selectedHat) else {
@@ -7125,6 +6975,7 @@ private struct ProfileCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous))
         .picoCreamCard(
+            showsShadow: false,
             padding: PicoCreamCardStyle.contentPadding
         )
         .accessibilityLabel(Text("\(displayName), @\(profile.username), edit display name"))
@@ -7132,20 +6983,6 @@ private struct ProfileCardView: View {
 }
 
 private struct ProfileAvatarOutfitCard: View {
-    let avatarConfig: AvatarConfig
-
-    var body: some View {
-        UserAvatar(config: avatarConfig)
-            .frame(maxWidth: .infinity)
-            .frame(height: 190)
-            .padding(.top, PicoSpacing.standard)
-            .padding(.horizontal, PicoSpacing.cardPadding)
-            .padding(.bottom, PicoSpacing.compact)
-            .picoCreamCard()
-    }
-}
-
-private struct ProfileHatCollectionCard: View {
     @Binding var selection: AvatarConfig
     let ownedHats: Set<AvatarHat>
     let canCycleHats: Bool
@@ -7154,10 +6991,41 @@ private struct ProfileHatCollectionCard: View {
     let isSaving: Bool
     let previousHat: () -> Void
     let nextHat: () -> Void
+    let buyInStore: () -> Void
     let save: () -> Void
+
+    private var selectedHatIsOwned: Bool {
+        selection.selectedHat.isOwned(in: ownedHats)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            ZStack(alignment: .topTrailing) {
+                UserAvatar(config: selection)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 190)
+
+                if !selectedHatIsOwned {
+                    Image(systemName: "lock.fill")
+                        .font(PicoTypography.symbol(size: 17, weight: .semibold))
+                        .foregroundStyle(PicoColors.textOnPrimary)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(PicoColors.textPrimary.opacity(0.76)))
+                        .overlay {
+                            Circle()
+                                .stroke(PicoColors.textOnPrimary.opacity(0.24), lineWidth: 1)
+                        }
+                        .padding(.top, PicoSpacing.compact)
+                        .padding(.trailing, PicoSpacing.compact)
+                        .accessibilityLabel(Text("Hat locked"))
+                }
+            }
+            .padding(.top, PicoSpacing.compact)
+            .padding(.horizontal, PicoSpacing.compact)
+
+            Divider()
+                .overlay(PicoColors.border)
+
             HStack(spacing: PicoSpacing.standard) {
                 StoreHatsSectionHeader()
 
@@ -7175,6 +7043,19 @@ private struct ProfileHatCollectionCard: View {
                         hatCollectionItem(hat)
                     }
                 }
+            }
+
+            if !selectedHatIsOwned {
+                Button(action: buyInStore) {
+                    HStack(spacing: PicoSpacing.tiny) {
+                        Image(systemName: "bag")
+                            .font(PicoTypography.symbol(size: 15, weight: .semibold))
+
+                        Text("Buy in Store")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PicoPrimaryButtonStyle())
             }
 
             if showsSaveButton {
@@ -7202,6 +7083,7 @@ private struct ProfileHatCollectionCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .picoCreamCard(
+            showsShadow: false,
             padding: PicoCreamCardStyle.contentPadding
         )
     }
@@ -7221,7 +7103,6 @@ private struct ProfileHatCollectionCard: View {
         let isOwned = hat.isOwned(in: ownedHats)
 
         return Button {
-            guard isOwned else { return }
             selection = selection.withHat(hat)
         } label: {
             VStack(spacing: PicoSpacing.compact) {
@@ -7263,7 +7144,6 @@ private struct ProfileHatCollectionCard: View {
             .opacity(isOwned ? 1 : 0.72)
         }
         .buttonStyle(.plain)
-        .disabled(!isOwned)
         .accessibilityLabel(Text(isOwned ? "\(hat.name) hat" : "\(hat.name) hat, not owned"))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
