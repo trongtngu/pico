@@ -942,15 +942,34 @@ private struct VillagerWalkDirection: Equatable {
     let isFlipped: Bool
 
     init(dx: CGFloat, dy: CGFloat) {
-        if abs(dx) > abs(dy) {
+        let angle = atan2(dy, dx)
+        let octant = (Int((angle / (CGFloat.pi / 4)).rounded()) + 8) % 8
+
+        switch octant {
+        case 0:
             row = 2
-            isFlipped = dx > 0
-        } else if dy > 0 {
+            isFlipped = true
+        case 1:
+            row = 3
+            isFlipped = true
+        case 2:
             row = 4
             isFlipped = false
-        } else {
+        case 3:
+            row = 3
+            isFlipped = false
+        case 4:
+            row = 2
+            isFlipped = false
+        case 5:
+            row = 1
+            isFlipped = false
+        case 6:
             row = 0
             isFlipped = false
+        default:
+            row = 1
+            isFlipped = true
         }
     }
 }

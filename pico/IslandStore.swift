@@ -28,7 +28,7 @@ enum PicoIsland: String, CaseIterable, Identifiable, Codable {
         case .original:
             "Forest island"
         case .sand:
-            "Tropical island"
+            "Beach Island"
         }
     }
 
@@ -85,6 +85,7 @@ final class IslandStore: ObservableObject {
     private let userDefaults: UserDefaults
     private let keyPrefix = "pico.selected-island"
     private var currentUserID: UUID?
+    private var ownedIslandIDs: Set<String> = [PicoIsland.original.backendID]
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -94,7 +95,8 @@ final class IslandStore: ObservableObject {
         selectedIsland.backendID
     }
 
-    func configure(for userID: UUID?) {
+    func configure(for userID: UUID?, ownedIslandIDs: Set<String> = [PicoIsland.original.backendID]) {
+        self.ownedIslandIDs = ownedIslandIDs.union([PicoIsland.original.backendID])
         guard currentUserID != userID else { return }
 
         currentUserID = userID
@@ -103,20 +105,39 @@ final class IslandStore: ObservableObject {
             return
         }
 
-        selectedIsland = PicoIsland(backendID: userDefaults.string(forKey: storageKey(for: userID)))
+        let storedIsland = PicoIsland(backendID: userDefaults.string(forKey: storageKey(for: userID)))
+        let ownedStoredIsland = isOwned(storedIsland) ? storedIsland : .original
+        selectedIsland = ownedStoredIsland
+        persistSelectedIsland()
     }
 
     func select(_ island: PicoIsland) {
+        guard isOwned(island) else { return }
         guard selectedIsland != island else { return }
-
         selectedIsland = island
-        if let currentUserID {
-            userDefaults.set(island.backendID, forKey: storageKey(for: currentUserID))
-        }
+        persistSelectedIsland()
     }
 
     func select(mapStyle: VillageMapStyle) {
         select(PicoIsland(mapStyle: mapStyle))
+    }
+
+    func updateOwnedIslandIDs(_ ownedIslandIDs: Set<String>) {
+        self.ownedIslandIDs = ownedIslandIDs.union([PicoIsland.original.backendID])
+        if !isOwned(selectedIsland) {
+            selectedIsland = .original
+            persistSelectedIsland()
+        }
+    }
+
+    func isOwned(_ island: PicoIsland) -> Bool {
+        island == .original || ownedIslandIDs.contains(island.backendID)
+    }
+
+    private func persistSelectedIsland() {
+        if let currentUserID {
+            userDefaults.set(selectedIsland.backendID, forKey: storageKey(for: currentUserID))
+        }
     }
 
     private func storageKey(for userID: UUID) -> String {

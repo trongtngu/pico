@@ -82,7 +82,11 @@ struct AppShellView: View {
         .environmentObject(islandStore)
         .task(id: sessionStore.session?.user?.id) {
             await sessionStore.refreshSessionIfNeeded()
-            islandStore.configure(for: sessionStore.session?.user?.id)
+            await sessionStore.loadProfileIfNeeded()
+            islandStore.configure(
+                for: sessionStore.session?.user?.id,
+                ownedIslandIDs: sessionStore.ownedIslandIDs
+            )
             focusStore.updateSelectedIslandID(islandStore.selectedIslandID)
             await focusStore.restoreSavedState(for: sessionStore.session)
             if sessionStore.session == nil {
@@ -95,6 +99,10 @@ struct AppShellView: View {
                 focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
                 await berryStore.loadBalance(for: sessionStore.session)
             }
+        }
+        .onChange(of: sessionStore.ownedIslandIDs) {
+            islandStore.updateOwnedIslandIDs(sessionStore.ownedIslandIDs)
+            focusStore.updateSelectedIslandID(islandStore.selectedIslandID)
         }
         .onChange(of: islandStore.selectedIsland) {
             focusStore.updateSelectedIslandID(islandStore.selectedIslandID)
@@ -399,7 +407,7 @@ private enum AppTab: String, CaseIterable, Identifiable {
                 openNavigation: openNavigation
             )
         case .fishing:
-            FishingPage()
+            FishingPage(openStore: openStore)
         case .store:
             StorePage()
         case .friends:
@@ -2227,6 +2235,7 @@ private struct DailySnapshotCalendarScreen: View {
             let selectedMonth = monthStart(for: initialDate)
             displayedMonth = selectedMonth
             loadDisplayedMonthActivityIfNeeded(for: selectedMonth)
+            loadSelectedSnapshotIfNeeded(for: initialDate)
         }
         .onChange(of: selectedDate) {
             let selectedMonth = monthStart(for: selectedDate)
@@ -3284,9 +3293,9 @@ private struct StartFocusCTA: View {
     private var shadowColor: Color {
         switch mode {
         case .startFocus:
-            PicoColors.primary.opacity(0.24)
+            .clear
         case .viewFish:
-            reelBaseColor.opacity(0.22)
+            .clear
         }
     }
 
@@ -5226,6 +5235,7 @@ private struct FishingPage: View {
     @EnvironmentObject private var focusStore: FocusStore
     @EnvironmentObject private var fishStore: FishStore
     @EnvironmentObject private var islandStore: IslandStore
+    let openStore: () -> Void
     @State private var selectedMode: FishingPageMode = .collection
     @State private var selectedCollectionIsland: PicoIsland = .original
 
@@ -5266,10 +5276,6 @@ private struct FishingPage: View {
         )
     }
 
-    private var isLoadingCollectionData: Bool {
-        fishStore.isLoadingFishCatalog || fishStore.isLoadingCollectionCounts
-    }
-
     private var inventoryGroups: [StoreFishGroup] {
         StoreFishGroup.groups(
             from: fishStore.inventory,
@@ -5291,6 +5297,11 @@ private struct FishingPage: View {
         selectedCollectionIsland.backendID
     }
 
+    private var selectedCollectionIslandIsOwned: Bool {
+        selectedCollectionIsland == .original
+            || sessionStore.ownedIslandIDs.contains(selectedCollectionIsland.backendID)
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: PicoSpacing.section) {
@@ -5310,13 +5321,21 @@ private struct FishingPage: View {
                     VStack(alignment: .leading, spacing: 0) {
                         FishingCollectionHeader(
                             selectedIsland: $selectedCollectionIsland,
-                            discoveryText: collectionDiscoveryText
+                            discoveryText: collectionDiscoveryText,
+                            isLocked: !selectedCollectionIslandIsOwned
                         )
+
+                        if !selectedCollectionIslandIsOwned {
+                            FishingCollectionBuyIslandCTA(
+                                island: selectedCollectionIsland,
+                                openStore: openStore
+                            )
+                            .padding(.top, PicoSpacing.compact)
+                        }
 
                         FishingCollectionSections(
                             catalogFish: catalogFish,
-                            counts: collectionCounts,
-                            isLoading: isLoadingCollectionData
+                            counts: collectionCounts
                         )
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -5328,9 +5347,11 @@ private struct FishingPage: View {
                 case .islands:
                     FishingIslandSelectionSection(
                         selectedIsland: islandStore.selectedIsland,
-                        isLocked: focusStore.isIslandSelectionLocked,
+                        isSessionLocked: focusStore.isIslandSelectionLocked,
+                        ownedIslandIDs: sessionStore.ownedIslandIDs,
                         isLoading: fishStore.isLoadingIslandCollectionCounts,
                         summaries: islandDiscoverySummaries,
+                        openStore: openStore,
                         selectIsland: selectIsland
                     )
                 }
@@ -5403,10 +5424,32 @@ private struct FishingPage: View {
 
     private func selectIsland(_ island: PicoIsland) {
         guard !focusStore.isIslandSelectionLocked else { return }
+        guard islandStore.isOwned(island) else { return }
 
         withAnimation(.snappy(duration: 0.22)) {
             islandStore.select(island)
         }
+    }
+}
+
+private struct FishingCollectionBuyIslandCTA: View {
+    let island: PicoIsland
+    let openStore: () -> Void
+
+    var body: some View {
+        Button(action: openStore) {
+            Text("Buy in store")
+                .font(PicoTypography.statusLabel)
+                .foregroundStyle(PicoColors.textOnPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(PicoColors.primary)
+                .clipShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel(Text("Buy \(island.collectionDisplayName) in store"))
     }
 }
 
@@ -5432,6 +5475,7 @@ private enum FishingPageMode: String, CaseIterable, Identifiable {
 private struct FishingCollectionHeader: View {
     @Binding var selectedIsland: PicoIsland
     let discoveryText: String
+    let isLocked: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: PicoSpacing.iconTextGap) {
@@ -5450,33 +5494,43 @@ private struct FishingCollectionHeader: View {
             } label: {
                 HStack(spacing: PicoSpacing.compact) {
                     FishingIslandSelectorIcon(island: selectedIsland)
-                        .frame(width: 18, height: 18)
+                        .frame(width: 24, height: 24)
 
                     Text(selectedIsland.collectionDisplayName)
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textSecondary)
+                        .font(PicoTypography.cardTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                        .minimumScaleFactor(0.78)
 
                     Image(systemName: "chevron.down")
-                        .font(PicoTypography.symbol(size: 11, weight: .bold))
-                        .foregroundStyle(PicoColors.textSecondary)
+                        .font(PicoTypography.symbol(size: 13, weight: .bold))
+                        .foregroundStyle(PicoColors.textPrimary)
                         .accessibilityHidden(true)
                 }
-                .padding(.horizontal, PicoSpacing.compact)
-                .padding(.vertical, 2)
                 .contentShape(RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous))
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityLabel(Text("Collection island, \(selectedIsland.collectionDisplayName)"))
 
-            Text(discoveryText)
-                .font(PicoTypography.caption)
-                .foregroundStyle(PicoColors.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .layoutPriority(1)
+            HStack(spacing: PicoSpacing.tiny) {
+                if isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(PicoTypography.symbol(size: 11, weight: .bold))
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .accessibilityHidden(true)
+                }
+
+                Text(discoveryText)
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .monospacedDigit()
+            }
+            .layoutPriority(1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(isLocked ? "Locked, \(discoveryText)" : discoveryText))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -5591,9 +5645,11 @@ private struct FishingInventoryRow: View {
 
 private struct FishingIslandSelectionSection: View {
     let selectedIsland: PicoIsland
-    let isLocked: Bool
+    let isSessionLocked: Bool
+    let ownedIslandIDs: Set<String>
     let isLoading: Bool
     let summaries: [String: FishingIslandDiscoverySummary]
+    let openStore: () -> Void
     let selectIsland: (PicoIsland) -> Void
 
     var body: some View {
@@ -5613,7 +5669,7 @@ private struct FishingIslandSelectionSection: View {
                         .tint(PicoColors.primary)
                 }
 
-                if isLocked {
+                if isSessionLocked {
                     Text("Locked")
                         .font(PicoTypography.caption.weight(.bold))
                         .foregroundStyle(PicoColors.textSecondary)
@@ -5632,8 +5688,10 @@ private struct FishingIslandSelectionSection: View {
                     FishingIslandRow(
                         island: island,
                         isSelected: selectedIsland == island,
-                        isLocked: isLocked,
+                        isSessionLocked: isSessionLocked,
+                        isOwned: island == .original || ownedIslandIDs.contains(island.backendID),
                         summary: summaries[island.backendID] ?? FishingIslandDiscoverySummary(counts: nil),
+                        openStore: openStore,
                         select: {
                             selectIsland(island)
                         }
@@ -5653,7 +5711,7 @@ private struct FishingIslandSelectionSection: View {
                     .stroke(PicoCreamCardStyle.border, lineWidth: PicoCreamCardStyle.borderWidth)
             )
 
-            if isLocked {
+            if isSessionLocked {
                 Text("Island selection is locked during an open focus session.")
                     .font(PicoTypography.caption)
                     .foregroundStyle(PicoColors.textSecondary)
@@ -5667,49 +5725,98 @@ private struct FishingIslandSelectionSection: View {
 private struct FishingIslandRow: View {
     let island: PicoIsland
     let isSelected: Bool
-    let isLocked: Bool
+    let isSessionLocked: Bool
+    let isOwned: Bool
     let summary: FishingIslandDiscoverySummary
+    let openStore: () -> Void
     let select: () -> Void
 
     var body: some View {
-        Button(action: select) {
-            HStack(spacing: PicoSpacing.standard) {
-                FishingIslandSelectorIcon(island: island)
-                    .frame(width: 40, height: 40)
+        Group {
+            if isOwned {
+                Button(action: select) {
+                    rowContent {
+                        statusIcon
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isSessionLocked)
+            } else {
+                rowContent {
+                    Button(action: openStore) {
+                        Text("Buy in Store")
+                            .lineLimit(1)
+                        .font(PicoTypography.statusLabel)
+                        .foregroundStyle(PicoColors.textOnPrimary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 38)
+                        .background(PicoColors.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+        .accessibilityLabel(Text(accessibilityLabel))
+    }
 
-                VStack(alignment: .leading, spacing: 2) {
+    private func rowContent<Control: View>(@ViewBuilder control: () -> Control) -> some View {
+        HStack(spacing: PicoSpacing.standard) {
+            FishingIslandSelectorIcon(island: island)
+                .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: PicoSpacing.tiny) {
                     Text(island.displayName)
                         .font(PicoTypography.primaryLabel)
                         .foregroundStyle(PicoColors.textPrimary)
                         .lineLimit(1)
 
-                    Text(subtitle)
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textSecondary)
-                        .lineLimit(1)
+                    if !isOwned {
+                        Image(systemName: "lock.fill")
+                            .font(PicoTypography.symbol(size: 12, weight: .bold))
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .accessibilityHidden(true)
+                    }
                 }
 
-                Spacer(minLength: PicoSpacing.compact)
-
-                statusIcon
+                Text(subtitle)
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, PicoSpacing.standard)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
-            .contentShape(Rectangle())
+
+            Spacer(minLength: PicoSpacing.compact)
+
+            control()
         }
-        .buttonStyle(.plain)
-        .disabled(isLocked)
-        .accessibilityLabel(Text("\(island.displayName), \(isSelected ? "selected" : "not selected")"))
+        .padding(.horizontal, PicoSpacing.standard)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private var subtitle: String {
         summary.displayText
     }
 
+    private var accessibilityLabel: String {
+        if !isOwned {
+            return "\(island.displayName), locked"
+        }
+
+        return "\(island.displayName), \(isSelected ? "selected" : "not selected")"
+    }
+
     @ViewBuilder
     private var statusIcon: some View {
-        if isLocked {
+        if !isOwned {
+            Image(systemName: "lock.fill")
+                .font(PicoTypography.symbol(size: 17, weight: .bold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(width: 28, height: 28)
+        } else if isSessionLocked {
             Image(systemName: "lock.fill")
                 .font(PicoTypography.symbol(size: 17, weight: .bold))
                 .foregroundStyle(PicoColors.textSecondary)
@@ -5808,7 +5915,7 @@ private extension PicoIsland {
         case .original:
             "Forest Island"
         case .sand:
-            "Sand Island"
+            "Beach Island"
         }
     }
 
@@ -5839,42 +5946,12 @@ private enum FishingTier: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
-        switch self {
-        case .common:
-            "Common"
-        case .rare:
-            "Rare"
-        case .ultraRare:
-            "Super Rare"
-        }
-    }
-
     var rarity: FishRarity {
         FishRarity(rawValue: rawValue) ?? .common
     }
 
     var rarityStyle: PicoFishRarityStyle {
         rarity.picoStyle
-    }
-
-    var accentColor: Color {
-        rarityStyle.accentColor
-    }
-
-    var badgeBackground: Color {
-        rarityStyle.pillBackgroundColor
-    }
-
-    var headerIconName: String {
-        switch self {
-        case .common:
-            "Wood_Chest"
-        case .rare:
-            "LightWood_Chest"
-        case .ultraRare:
-            "FantasyWood_Chest"
-        }
     }
 
     nonisolated init?(rarity: FishRarity) {
@@ -5960,77 +6037,25 @@ private struct FishingCatalogFish: Identifiable {
 private struct FishingCollectionSections: View {
     let catalogFish: [FishingCatalogFish]
     let counts: [FishType: Int]
-    let isLoading: Bool
-
-    private let tiers = FishingTier.allCases
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-            ForEach(tiers) { tier in
-                FishingTierSection(
-                    tier: tier,
-                    fish: catalogFish.filter { $0.tier == tier },
-                    counts: counts,
-                    isLoading: isLoading
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct FishingTierSection: View {
-    let tier: FishingTier
-    let fish: [FishingCatalogFish]
-    let counts: [FishType: Int]
-    let isLoading: Bool
 
     private let columns = [
         GridItem(.flexible(), spacing: PicoSpacing.iconTextGap),
         GridItem(.flexible(), spacing: PicoSpacing.iconTextGap)
     ]
 
-    private var unlockedCount: Int {
-        fish.filter { counts[$0.seaCritterID, default: 0] > 0 }.count
-    }
-
-    private var displayFish: [FishingCatalogFish] {
-        fish.sorted { lhs, rhs in
-            let lhsIsUnlocked = count(for: lhs) > 0
-            let rhsIsUnlocked = count(for: rhs) > 0
-
-            if lhsIsUnlocked != rhsIsUnlocked {
-                return !lhsIsUnlocked && rhsIsUnlocked
-            }
-
-            return lhs.sortOrder < rhs.sortOrder
-        }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-            FishingSectionHeader(
-                title: tier.title,
-                titleIconName: tier.headerIconName,
-                countText: "\(unlockedCount)/\(fish.count)",
-                countIconName: "Bucket",
-                accentColor: tier.accentColor,
-                isComplete: unlockedCount == fish.count && !fish.isEmpty,
-                isLoading: isLoading
-            )
-
-            LazyVGrid(
-                columns: columns,
-                spacing: PicoSpacing.iconTextGap
-            ) {
-                ForEach(displayFish) { catalogFish in
-                    FishingCollectionTile(
-                        fish: catalogFish,
-                        count: count(for: catalogFish)
-                    )
-                }
+        LazyVGrid(
+            columns: columns,
+            spacing: PicoSpacing.iconTextGap
+        ) {
+            ForEach(catalogFish) { catalogFish in
+                FishingCollectionTile(
+                    fish: catalogFish,
+                    count: count(for: catalogFish)
+                )
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, PicoSpacing.compact)
         .padding(.top, PicoSpacing.compact)
         .padding(.bottom, PicoSpacing.compact)
@@ -6047,15 +6072,14 @@ private struct FishingCollectionTile: View {
 
     private enum Layout {
         static let tileHeight: CGFloat = 188
-        static let iconSize: CGFloat = 72
-        static let iconFrameHeight: CGFloat = 72
-        static let iconNameOverlap: CGFloat = 4
-        static let nameHeight: CGFloat = 34
-        static let nameBadgeGap: CGFloat = 2
-        static let nameFontSize: CGFloat = 16
-        static let countBadgeMinWidth: CGFloat = 38
-        static let lockIconSize: CGFloat = 14
-        static let lockIconFrameSize: CGFloat = 18
+        static let iconSize: CGFloat = 104
+        static let iconFrameHeight: CGFloat = 104
+        static let iconNameGap: CGFloat = 0
+        static let nameHeight: CGFloat = 48
+        static let nameFontSize: CGFloat = 27
+        static let cornerBadgeInset: CGFloat = 14
+        static let lockIconSize: CGFloat = 15
+        static let lockIconFrameSize: CGFloat = 20
     }
 
     private var isUnlocked: Bool {
@@ -6068,40 +6092,33 @@ private struct FishingCollectionTile: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Spacer(minLength: 0)
-                countBadge
-            }
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: Layout.iconNameGap) {
+                FishingCatalogIcon(
+                    fish: fish,
+                    isUnlocked: isUnlocked,
+                    size: Layout.iconSize
+                )
+                .frame(height: Layout.iconFrameHeight)
 
-            FishingCatalogIcon(
-                fish: fish,
-                isUnlocked: isUnlocked,
-                size: Layout.iconSize
-            )
-            .frame(height: Layout.iconFrameHeight)
-
-            VStack(spacing: Layout.nameBadgeGap) {
                 Text(displayNameText)
                     .font(PicoTypography.primary(size: Layout.nameFontSize, weight: .bold))
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .minimumScaleFactor(0.86)
+                    .minimumScaleFactor(0.68)
                     .allowsTightening(true)
                     .frame(maxWidth: .infinity)
                     .frame(height: Layout.nameHeight, alignment: .bottom)
-
-                FishingRarityBadge(
-                    rarityName: fish.tier.title.lowercased(),
-                    style: fish.tier.rarityStyle
-                )
             }
-            .padding(.top, -Layout.iconNameOverlap)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .padding(.horizontal, PicoSpacing.compact)
+
+            countBadge
+                .padding(.top, Layout.cornerBadgeInset)
+                .padding(.trailing, Layout.cornerBadgeInset)
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, PicoSpacing.compact)
-        .padding(.vertical, 12)
         .frame(height: Layout.tileHeight)
         .background(tileBackground)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
@@ -6112,26 +6129,18 @@ private struct FishingCollectionTile: View {
     }
 
     private var tileBackground: Color {
-        if !isUnlocked {
-            return PicoColors.softSurface.opacity(0.72)
-        }
-
-        return PicoCreamCardStyle.background
+        fish.tier.rarityStyle.rowBackgroundColor
     }
 
     private var tileBorder: Color {
-        if !isUnlocked {
-            return PicoColors.border.opacity(0.7)
-        }
-
-        return PicoCreamCardStyle.border
+        fish.tier.rarityStyle.rowBorderColor
     }
 
     private var countBadge: some View {
         Group {
             if isUnlocked {
-                Text("x\(count)")
-                    .font(FishingRarityBadge.badgeFont)
+                Text("×\(count)")
+                    .font(PicoTypography.pill)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
             } else {
@@ -6141,20 +6150,11 @@ private struct FishingCollectionTile: View {
             }
         }
         .foregroundStyle(countBadgeForeground)
-        .padding(.horizontal, PicoSpacing.iconTextGap)
-        .padding(.vertical, 5)
-        .frame(minWidth: Layout.countBadgeMinWidth)
-        .background(countBadgeBackground)
-        .clipShape(Capsule(style: .continuous))
         .accessibilityLabel(Text(isUnlocked ? "\(count) caught" : "Locked"))
     }
 
     private var countBadgeForeground: Color {
         FishRarity.common.picoStyle.pillTextColor
-    }
-
-    private var countBadgeBackground: Color {
-        FishRarity.common.picoStyle.pillBackgroundColor
     }
 }
 
@@ -6176,58 +6176,6 @@ private extension String {
         }
 
         return self
-    }
-}
-
-private struct FishingSectionHeader: View {
-    let title: String
-    let titleIconName: String?
-    let countText: String
-    let countIconName: String?
-    var accentColor: Color = PicoColors.textSecondary
-    var isComplete = false
-    let isLoading: Bool
-
-    var body: some View {
-        HStack(alignment: .center, spacing: PicoSpacing.iconTextGap) {
-            HStack(spacing: PicoSpacing.compact) {
-                if let titleIconName {
-                    FishingCountIcon(name: titleIconName)
-                        .frame(width: 24, height: 24)
-                }
-
-                Text(title)
-                    .font(PicoTypography.cardTitle)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-            }
-
-            Spacer(minLength: 0)
-
-            if isLoading {
-                ProgressView()
-                    .tint(PicoColors.primary)
-                    .frame(height: 36)
-            } else {
-                HStack(spacing: PicoSpacing.tiny) {
-                    if let countIconName {
-                        FishingCountIcon(name: countIconName, fallbackColor: countForegroundColor)
-                            .frame(width: 17, height: 17)
-                    }
-
-                    Text(countText)
-                        .font(PicoTypography.inlineValue)
-                        .foregroundStyle(countForegroundColor)
-                        .monospacedDigit()
-                }
-                .frame(minHeight: 36, alignment: .center)
-            }
-        }
-    }
-
-    private var countForegroundColor: Color {
-        isComplete ? accentColor : PicoColors.textSecondary
     }
 }
 
@@ -6298,37 +6246,26 @@ private struct FishingCatalogIcon: View {
     }
 }
 
-private struct FishingRarityBadge: View {
-    let rarityName: String
-    let style: PicoFishRarityStyle
-
-    static let badgeFont = PicoTypography.pill
-    static let badgeHeight: CGFloat = 25
-
-    var body: some View {
-        Text(rarityName)
-            .font(Self.badgeFont)
-            .foregroundStyle(style.pillTextColor)
-            .lineLimit(1)
-            .padding(.horizontal, PicoSpacing.compact)
-            .padding(.vertical, 5)
-            .frame(height: Self.badgeHeight)
-            .background(style.pillBackgroundColor)
-            .clipShape(Capsule(style: .continuous))
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
-    }
-}
-
 private struct StorePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var berryStore: BerryStore
     @EnvironmentObject private var fishStore: FishStore
     @EnvironmentObject private var islandStore: IslandStore
     @State private var selectedMode: StoreMode = .buy
+    @State private var previewedIsland: PicoIsland?
+    @State private var previewedHatItem: StoreItem?
+    @State private var sellingFishGroup: StoreFishGroup?
 
-    private var purchasableHats: [AvatarHat] {
-        AvatarHat.allCases.filter { $0 != .none }
+    private var islandItems: [StoreItem] {
+        berryStore.storeCatalog
+            .filter { $0.itemType == .island }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    private var hatItems: [StoreItem] {
+        berryStore.storeCatalog
+            .filter { $0.itemType == .hat && $0.avatarHat != nil }
+            .sorted { $0.sortOrder < $1.sortOrder }
     }
 
     private var fishGroups: [StoreFishGroup] {
@@ -6362,30 +6299,25 @@ private struct StorePage: View {
                 Group {
                     switch selectedMode {
                     case .buy:
-                        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-                            StoreHatsSectionHeader()
-
-                            VStack(spacing: PicoSpacing.compact) {
-                                ForEach(purchasableHats) { hat in
-                                    StoreHatRow(
-                                        hat: hat,
-                                        berryBalance: berryStore.balance.berries,
-                                        isOwned: hat.isOwned(in: sessionStore.ownedHats),
-                                        isPurchasing: berryStore.purchasingHat == hat,
-                                        isPurchaseDisabled: berryStore.purchasingHat != nil || berryStore.isLoadingBalance || sessionStore.session == nil
-                                    ) {
-                                        purchase(hat)
-                                    }
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        StoreBuyCatalogSection(
+                            islandItems: islandItems,
+                            hatItems: hatItems,
+                            berryBalance: berryStore.balance.berries,
+                            ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
+                            purchasingStoreItemID: berryStore.purchasingStoreItemID,
+                            isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
+                                || berryStore.isLoadingBalance
+                                || berryStore.isLoadingStoreCatalog
+                                || sessionStore.session == nil,
+                            previewItem: preview,
+                            purchase: purchase
+                        )
                     case .sell:
                         StoreFishSection(
                             groups: fishGroups,
                             isLoading: fishStore.isLoadingInventory,
                             isSelling: fishStore.isSellingFish,
-                            sellGroup: sellFishGroup
+                            presentSellSheet: presentSellSheet
                         )
                     }
                 }
@@ -6395,9 +6327,76 @@ private struct StorePage: View {
             .padding(.bottom, PicoSpacing.largeSection)
         }
         .picoScreenBackground()
+        .fullScreenCover(item: $previewedIsland) { island in
+            StoreIslandPreviewOverlay(
+                island: island,
+                item: islandItem(for: island),
+                berryBalance: berryStore.balance.berries,
+                ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
+                purchasingStoreItemID: berryStore.purchasingStoreItemID,
+                isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
+                    || berryStore.isLoadingBalance
+                    || berryStore.isLoadingStoreCatalog
+                    || sessionStore.session == nil,
+                currentUserProfile: sessionStore.profile,
+                catalog: fishStore.fishCatalog(for: island.backendID),
+                isLoadingCatalog: fishStore.loadingFishCatalogIslandIDs.contains(island.backendID)
+            ) {
+                previewedIsland = nil
+            } purchase: { item in
+                purchase(item)
+            }
+            .task(id: island.backendID) {
+                await fishStore.loadPreviewFishCatalog(
+                    for: sessionStore.session,
+                    islandID: island.backendID
+                )
+            }
+            .onAppear {
+                if sessionStore.profile == nil {
+                    Task {
+                        await sessionStore.loadProfileIfNeeded()
+                    }
+                }
+            }
+        }
+        .fullScreenCover(item: $previewedHatItem) { item in
+            StoreHatPreviewOverlay(
+                item: item,
+                hatItems: hatItems,
+                berryBalance: berryStore.balance.berries,
+                ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
+                purchasingStoreItemID: berryStore.purchasingStoreItemID,
+                isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
+                    || berryStore.isLoadingBalance
+                    || berryStore.isLoadingStoreCatalog
+                    || sessionStore.session == nil,
+                currentUserProfile: sessionStore.profile,
+                close: {
+                    previewedHatItem = nil
+                },
+                purchase: purchase
+            )
+        }
+        .sheet(item: $sellingFishGroup) { group in
+            StoreFishSellSheet(
+                group: group,
+                isSelling: fishStore.isSellingFish,
+                close: {
+                    sellingFishGroup = nil
+                },
+                sell: { quantity in
+                    sellFishGroup(group, quantity: quantity)
+                }
+            )
+            .presentationDetents([.height(420)])
+        }
         .task(id: islandStore.selectedIsland) {
             await sessionStore.loadProfileIfNeeded()
             await berryStore.loadBalance(for: sessionStore.session)
+            await berryStore.loadStoreCatalog(for: sessionStore.session)
+            await berryStore.loadStoreInventory(for: sessionStore.session)
+            berryStore.applyOwnedStoreItemIDs(sessionStore.ownedStoreItemIDs)
             if fishStore.fishCatalog.isEmpty || fishStore.fishCatalogIslandID != islandStore.selectedIslandID {
                 await fishStore.loadFishCatalog(
                     for: sessionStore.session,
@@ -6436,16 +6435,37 @@ private struct StorePage: View {
         )
     }
 
-    private func purchase(_ hat: AvatarHat) {
+    private func purchase(_ item: StoreItem) {
         Task {
-            guard let result = await berryStore.purchaseAvatarHat(hat, for: sessionStore.session) else { return }
-            sessionStore.applyOwnedHats(result.ownedHats)
+            guard let result = await berryStore.purchaseStoreItem(item, for: sessionStore.session) else { return }
+            sessionStore.applyOwnedStoreItemIDs(result.ownedStoreItemIDs)
+            islandStore.updateOwnedIslandIDs(sessionStore.ownedIslandIDs)
         }
     }
 
-    private func sellFishGroup(_ group: StoreFishGroup) {
-        guard let fishCatch = group.catches.first else { return }
-        sellFish([fishCatch])
+    private func preview(_ item: StoreItem) {
+        if let island = item.picoIsland {
+            previewedIsland = island
+        } else if item.avatarHat != nil {
+            previewedHatItem = item
+        }
+    }
+
+    private func islandItem(for island: PicoIsland) -> StoreItem? {
+        islandItems.first { $0.picoIsland == island }
+    }
+
+    private func presentSellSheet(_ group: StoreFishGroup) {
+        guard !fishStore.isSellingFish, !group.catches.isEmpty else { return }
+        sellingFishGroup = group
+    }
+
+    private func sellFishGroup(_ group: StoreFishGroup, quantity: Int) {
+        let selectedCatches = Array(group.catches.prefix(max(0, min(quantity, group.catches.count))))
+        guard !selectedCatches.isEmpty else { return }
+
+        sellingFishGroup = nil
+        sellFish(selectedCatches)
     }
 
     private func sellFish(_ catches: [FishCatch]) {
@@ -6574,7 +6594,7 @@ private struct StoreFishSection: View {
     let groups: [StoreFishGroup]
     let isLoading: Bool
     let isSelling: Bool
-    let sellGroup: (StoreFishGroup) -> Void
+    let presentSellSheet: (StoreFishGroup) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
@@ -6606,8 +6626,8 @@ private struct StoreFishSection: View {
                         StoreFishGroupRow(
                             group: group,
                             isSelling: isSelling,
-                            sell: {
-                                sellGroup(group)
+                            openSellSheet: {
+                                presentSellSheet(group)
                             }
                         )
                     }
@@ -6618,16 +6638,189 @@ private struct StoreFishSection: View {
     }
 }
 
+private struct StoreFishSellSheet: View {
+    let group: StoreFishGroup
+    let isSelling: Bool
+    let close: () -> Void
+    let sell: (Int) -> Void
+
+    @State private var quantity: Int
+
+    init(
+        group: StoreFishGroup,
+        isSelling: Bool,
+        close: @escaping () -> Void,
+        sell: @escaping (Int) -> Void
+    ) {
+        self.group = group
+        self.isSelling = isSelling
+        self.close = close
+        self.sell = sell
+        _quantity = State(initialValue: min(1, max(1, group.catches.count)))
+    }
+
+    private var maxQuantity: Int {
+        max(1, group.catches.count)
+    }
+
+    private var selectedCatches: [FishCatch] {
+        Array(group.catches.prefix(quantity))
+    }
+
+    private var totalValue: Int {
+        selectedCatches.reduce(0) { $0 + $1.sellValue }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            HStack {
+                Spacer(minLength: 0)
+
+                Button(action: close) {
+                    PicoIcon(.xMarkRegular, size: 16)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 38, height: 38)
+                        .background(PicoColors.softSurface)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Close"))
+            }
+
+            HStack(spacing: PicoSpacing.standard) {
+                StoreFishIcon(
+                    group: group,
+                    size: 74,
+                    imagePadding: 0
+                )
+
+                VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                    Text(group.displayName)
+                        .font(PicoTypography.cardTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+
+                    Text("\(group.count) available")
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .monospacedDigit()
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(spacing: PicoSpacing.compact) {
+                quantityCard
+                totalCard
+            }
+            .frame(maxWidth: .infinity)
+
+            HStack(spacing: PicoSpacing.compact) {
+                Button("Cancel", action: close)
+                    .buttonStyle(PicoSecondaryButtonStyle())
+                    .disabled(isSelling)
+
+                Button {
+                    sell(quantity)
+                } label: {
+                    HStack(spacing: PicoSpacing.tiny) {
+                        Text("Sell")
+
+                        if isSelling {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(PicoColors.textOnPrimary)
+                        }
+                    }
+                }
+                .buttonStyle(PicoPrimaryButtonStyle())
+                .disabled(isSelling || group.catches.isEmpty)
+            }
+        }
+        .padding(PicoSpacing.standard)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(PicoColors.appBackground)
+        .presentationBackground(PicoColors.appBackground)
+        .presentationDragIndicator(.visible)
+    }
+
+    private var quantityCard: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            Text("Quantity")
+                .font(PicoTypography.primaryLabelSemibold)
+                .foregroundStyle(PicoColors.textPrimary)
+
+            Spacer(minLength: PicoSpacing.compact)
+
+            HStack(spacing: PicoSpacing.compact) {
+                quantityButton(systemName: "minus") {
+                    quantity = max(1, quantity - 1)
+                }
+                .disabled(isSelling || quantity <= 1)
+
+                Text("\(quantity)")
+                    .font(PicoTypography.primaryLabelSemibold)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .monospacedDigit()
+                    .frame(minWidth: 28)
+
+                quantityButton(systemName: "plus") {
+                    quantity = min(maxQuantity, quantity + 1)
+                }
+                .disabled(isSelling || quantity >= maxQuantity)
+            }
+        }
+        .padding(PicoSpacing.standard)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PicoColors.softSurface.opacity(0.62))
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+    }
+
+    private var totalCard: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            Text("Total")
+                .font(PicoTypography.primaryLabelSemibold)
+                .foregroundStyle(PicoColors.textPrimary)
+
+            Spacer(minLength: PicoSpacing.compact)
+
+            BerryAmountLabel(
+                count: totalValue,
+                font: PicoTypography.primaryLabelSemibold,
+                iconSize: 18,
+                textColor: PicoColors.textPrimary
+            )
+        }
+        .padding(PicoSpacing.standard)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PicoColors.softSurface.opacity(0.62))
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+    }
+
+    private func quantityButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(PicoTypography.symbol(size: 13, weight: .bold))
+                .foregroundStyle(PicoColors.textPrimary)
+                .frame(width: 30, height: 30)
+                .background(PicoColors.softSurface)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct StoreFishGroupRow: View {
     let group: StoreFishGroup
     let isSelling: Bool
-    let sell: () -> Void
+    let openSellSheet: () -> Void
 
     var body: some View {
-        HStack(spacing: PicoSpacing.standard) {
-            fishIcon
+        Button(action: openSellSheet) {
+            HStack(spacing: PicoSpacing.standard) {
+                fishIcon
 
-            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
                 Text(group.displayName)
                     .font(PicoTypography.fishName)
                     .foregroundStyle(PicoColors.textPrimary)
@@ -6635,34 +6828,29 @@ private struct StoreFishGroupRow: View {
                     .minimumScaleFactor(0.5)
                     .allowsTightening(true)
 
+                Spacer(minLength: PicoSpacing.compact)
+
                 BerryAmountLabel(
                     count: group.unitValue,
-                    font: PicoTypography.pill,
-                    iconSize: 15,
+                    font: PicoTypography.primaryLabelSemibold,
+                    iconSize: 16,
                     textColor: PicoColors.textPrimary
                 )
             }
-
-            Spacer(minLength: PicoSpacing.compact)
-
-            VStack(alignment: .trailing, spacing: PicoSpacing.compact) {
-                Button("Sell") {
-                    sell()
-                }
-                .buttonStyle(StoreBuyButtonStyle())
-                .disabled(isSelling)
-                .accessibilityLabel(Text("Sell one \(group.displayName)"))
-            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(group.rowBackground)
+            .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .stroke(group.rowBorder, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(group.rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                .stroke(group.rowBorder, lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .disabled(isSelling || group.catches.isEmpty)
+        .accessibilityLabel(Text("Sell \(group.displayName), \(formattedBerryCount(group.unitValue)) each, \(group.count) available"))
     }
 
     private var fishIcon: some View {
@@ -6719,41 +6907,131 @@ private struct StoreFishIcon: View {
     }
 }
 
-private struct StoreHatRow: View {
-    let hat: AvatarHat
+private struct StoreBuyCatalogSection: View {
+    let islandItems: [StoreItem]
+    let hatItems: [StoreItem]
+    let berryBalance: Int
+    let ownedStoreItemIDs: Set<String>
+    let purchasingStoreItemID: String?
+    let isPurchaseDisabled: Bool
+    let previewItem: (StoreItem) -> Void
+    let purchase: (StoreItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.section) {
+            StoreItemSection(
+                title: "Islands",
+                icon: .map,
+                items: islandItems,
+                berryBalance: berryBalance,
+                ownedStoreItemIDs: ownedStoreItemIDs,
+                purchasingStoreItemID: purchasingStoreItemID,
+                isPurchaseDisabled: isPurchaseDisabled,
+                previewItem: previewItem,
+                purchase: purchase
+            )
+
+            StoreItemSection(
+                title: "Hats",
+                icon: .hat,
+                items: hatItems,
+                berryBalance: berryBalance,
+                ownedStoreItemIDs: ownedStoreItemIDs,
+                purchasingStoreItemID: purchasingStoreItemID,
+                isPurchaseDisabled: isPurchaseDisabled,
+                previewItem: previewItem,
+                purchase: purchase
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private enum StoreSectionIcon {
+    case hat
+    case map
+    case system(String)
+}
+
+private struct StoreItemSection: View {
+    let title: String
+    let icon: StoreSectionIcon
+    let items: [StoreItem]
+    let berryBalance: Int
+    let ownedStoreItemIDs: Set<String>
+    let purchasingStoreItemID: String?
+    let isPurchaseDisabled: Bool
+    let previewItem: (StoreItem) -> Void
+    let purchase: (StoreItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            StoreSectionHeader(title: title, icon: icon)
+
+            if items.isEmpty {
+                Text("No items available.")
+                    .font(PicoTypography.body)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, PicoSpacing.tiny)
+            } else {
+                VStack(spacing: PicoSpacing.compact) {
+                    ForEach(items) { item in
+                        StoreItemRow(
+                            item: item,
+                            berryBalance: berryBalance,
+                            isOwned: ownedStoreItemIDs.contains(item.id),
+                            isPurchasing: purchasingStoreItemID == item.id,
+                            isPurchaseDisabled: isPurchaseDisabled,
+                            preview: {
+                                previewItem(item)
+                            },
+                            purchase: {
+                                purchase(item)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StoreItemRow: View {
+    let item: StoreItem
     let berryBalance: Int
     let isOwned: Bool
     let isPurchasing: Bool
     let isPurchaseDisabled: Bool
+    let preview: () -> Void
     let purchase: () -> Void
 
     private var missingBerries: Int {
-        max(0, hat.berryCost - berryBalance)
+        max(0, item.berryPrice - berryBalance)
     }
 
     private var canPurchase: Bool {
-        !isOwned && missingBerries == 0 && !isPurchaseDisabled
+        !isOwned && !item.isPaidOnly && missingBerries == 0 && !isPurchaseDisabled
     }
 
     var body: some View {
         HStack(spacing: PicoSpacing.standard) {
-            AvatarBadgeView(config: AvatarCatalog.defaultConfig.withHat(hat), size: 58)
+            Button(action: preview) {
+                HStack(spacing: PicoSpacing.standard) {
+                    itemIcon
 
-            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
-                Text(hat.name)
-                    .font(PicoTypography.primaryLabelSemibold)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .lineLimit(1)
+                    Text(item.displayName)
+                        .font(PicoTypography.primaryLabelSemibold)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
 
-                BerryAmountLabel(
-                    count: hat.berryCost,
-                    font: PicoTypography.caption,
-                    iconSize: 15,
-                    textColor: PicoColors.textSecondary
-                )
+                    Spacer(minLength: PicoSpacing.compact)
+                }
+                .contentShape(Rectangle())
             }
-
-            Spacer(minLength: PicoSpacing.compact)
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             purchaseControl
                 .frame(width: 86, alignment: .trailing)
@@ -6765,7 +7043,22 @@ private struct StoreHatRow: View {
             RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
                 .stroke(PicoColors.border, lineWidth: 1)
         )
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var itemIcon: some View {
+        if let hat = item.avatarHat {
+            AvatarBadgeView(config: AvatarCatalog.defaultConfig.withHat(hat), size: 58)
+        } else if let island = item.picoIsland {
+            FishingIslandSelectorIcon(island: island)
+                .frame(width: 58, height: 58)
+        } else {
+            Image(systemName: item.itemType == .island ? "map.fill" : "bag.fill")
+                .font(PicoTypography.symbol(size: 28, weight: .semibold))
+                .foregroundStyle(PicoColors.primary)
+                .frame(width: 58, height: 58)
+        }
     }
 
     @ViewBuilder
@@ -6780,9 +7073,253 @@ private struct StoreHatRow: View {
             }
             .foregroundStyle(PicoColors.primary.opacity(0.78))
             .frame(height: 34, alignment: .trailing)
+        } else if item.isPaidOnly {
+            Text("Paid")
+                .font(PicoTypography.statusLabel)
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(height: 34, alignment: .trailing)
         } else {
             Button {
+                guard canPurchase else { return }
                 purchase()
+            } label: {
+                HStack(spacing: PicoSpacing.tiny) {
+                    BerryAmountLabel(
+                        count: item.berryPrice,
+                        font: PicoTypography.primaryLabelSemibold,
+                        iconSize: 16,
+                        textColor: PicoColors.textPrimary
+                    )
+
+                    if isPurchasing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(PicoColors.primary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+private struct StoreSectionHeader: View {
+    let title: String
+    let icon: StoreSectionIcon
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            switch icon {
+            case .hat:
+                hatIcon
+            case .map:
+                mapIcon
+            case .system(let name):
+                Image(systemName: name)
+                    .font(PicoTypography.symbol(size: 20, weight: .semibold))
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(width: 24, height: 24)
+            }
+
+            Text(title)
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+        }
+    }
+
+    @ViewBuilder
+    private var mapIcon: some View {
+        if let image = UIImage(named: "Map") ?? UIImage(named: "Icons/Map") ?? UIImage(named: "Icons/Map.png") {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+        } else {
+            Image(systemName: "map.fill")
+                .font(PicoTypography.symbol(size: 20, weight: .semibold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(width: 24, height: 24)
+        }
+    }
+
+    @ViewBuilder
+    private var hatIcon: some View {
+        if let image = UIImage(named: "Beanie_Yellow") {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+        } else {
+            Image(systemName: "hat.widebrim")
+                .font(PicoTypography.symbol(size: 20, weight: .semibold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(width: 24, height: 24)
+        }
+    }
+}
+
+private struct StoreIslandPreviewOverlay: View {
+    let island: PicoIsland
+    let item: StoreItem?
+    let berryBalance: Int
+    let ownedStoreItemIDs: Set<String>
+    let purchasingStoreItemID: String?
+    let isPurchaseDisabled: Bool
+    let currentUserProfile: UserProfile?
+    let catalog: [FishCatalogItem]
+    let isLoadingCatalog: Bool
+    let close: () -> Void
+    let purchase: (StoreItem) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topTrailing) {
+                PicoColors.appBackground
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: PicoSpacing.standard) {
+                        VStack(spacing: PicoSpacing.tiny) {
+                            Text(island.displayName)
+                                .font(PicoTypography.primary(size: 38, weight: .bold))
+                                .foregroundStyle(PicoColors.textPrimary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.64)
+
+                            if let item {
+                                BerryAmountLabel(
+                                    count: item.berryPrice,
+                                    font: PicoTypography.primaryLabelSemibold,
+                                    iconSize: 16,
+                                    textColor: PicoColors.textPrimary
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 64)
+
+                        StoreIslandMapPreview(
+                            island: island,
+                            currentUserProfile: currentUserProfile
+                        )
+                        .frame(
+                            width: previewSize(in: proxy.size),
+                            height: previewSize(in: proxy.size)
+                        )
+
+                        StoreIslandSpeciesGrid(
+                            catalog: catalog,
+                            isLoading: isLoadingCatalog
+                        )
+                        .padding(.horizontal, PicoSpacing.standard)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(
+                        minHeight: max(
+                            0,
+                            proxy.size.height - proxy.safeAreaInsets.top - proxy.safeAreaInsets.bottom
+                        ),
+                        alignment: .center
+                    )
+                    .padding(.top, proxy.safeAreaInsets.top)
+                    .padding(.bottom, PicoSpacing.standard)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if let item {
+                        StoreIslandPreviewPurchaseFooter(
+                            item: item,
+                            island: island,
+                            berryBalance: berryBalance,
+                            ownedStoreItemIDs: ownedStoreItemIDs,
+                            purchasingStoreItemID: purchasingStoreItemID,
+                            isPurchaseDisabled: isPurchaseDisabled,
+                            purchase: purchase
+                        )
+                    }
+                }
+
+                Button(action: close) {
+                    PicoIcon(.xMarkRegular, size: 18)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 44, height: 44)
+                        .background(PicoColors.surface)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Close island preview"))
+                .padding(PicoSpacing.standard)
+            }
+        }
+    }
+
+    private func previewSize(in size: CGSize) -> CGFloat {
+        min(
+            370,
+            max(220, min(size.width - 24, size.height * 0.38))
+        )
+    }
+}
+
+private struct StoreIslandPreviewPurchaseFooter: View {
+    let item: StoreItem
+    let island: PicoIsland
+    let berryBalance: Int
+    let ownedStoreItemIDs: Set<String>
+    let purchasingStoreItemID: String?
+    let isPurchaseDisabled: Bool
+    let purchase: (StoreItem) -> Void
+
+    private var isOwned: Bool {
+        ownedStoreItemIDs.contains(item.id)
+    }
+
+    private var missingBerries: Int {
+        max(0, item.berryPrice - berryBalance)
+    }
+
+    private var canPurchase: Bool {
+        !isOwned && !item.isPaidOnly && missingBerries == 0 && !isPurchaseDisabled
+    }
+
+    private var isPurchasing: Bool {
+        purchasingStoreItemID == item.id
+    }
+
+    var body: some View {
+        purchaseControl
+            .frame(maxWidth: 360)
+        .padding(.horizontal, PicoSpacing.standard)
+        .padding(.top, PicoSpacing.compact)
+        .padding(.bottom, PicoSpacing.standard)
+        .frame(maxWidth: .infinity)
+        .background(PicoColors.appBackground)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(PicoColors.border.opacity(0.72))
+                .frame(height: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var purchaseControl: some View {
+        if isOwned {
+            HStack(spacing: PicoSpacing.tiny) {
+                Text("✓")
+                    .font(PicoTypography.statusLabel)
+
+                Text("Owned")
+                    .font(PicoTypography.statusLabel)
+            }
+            .foregroundStyle(PicoColors.primary.opacity(0.78))
+            .frame(maxWidth: .infinity, minHeight: 52)
+        } else if item.isPaidOnly {
+            Text("Paid")
+                .font(PicoTypography.button)
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 52)
+        } else {
+            Button {
+                guard canPurchase else { return }
+                purchase(item)
             } label: {
                 HStack(spacing: PicoSpacing.tiny) {
                     Text("Buy")
@@ -6790,35 +7327,406 @@ private struct StoreHatRow: View {
                     if isPurchasing {
                         ProgressView()
                             .controlSize(.mini)
-                            .tint(canPurchase ? PicoColors.textOnPrimary : PicoColors.textSecondary)
+                            .tint(PicoColors.textOnPrimary)
                     }
                 }
             }
-            .buttonStyle(StoreBuyButtonStyle())
+            .buttonStyle(StoreIslandPreviewBuyButtonStyle())
             .disabled(!canPurchase)
+            .accessibilityLabel(Text("Buy \(island.displayName)"))
+            .accessibilityHint(Text(missingBerries > 0 ? "You need \(formattedBerryCount(missingBerries)) more." : ""))
         }
+    }
+}
+
+private struct StoreIslandPreviewBuyButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(PicoTypography.button)
+            .foregroundStyle(isEnabled ? PicoColors.textOnPrimary : PicoColors.textSecondary)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .padding(.horizontal, PicoSpacing.standard)
+            .background(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .fill(isEnabled ? PicoColors.primary.opacity(configuration.isPressed ? 0.82 : 1) : PicoColors.softSurface)
+            )
+    }
+}
+
+private struct StoreIslandSpeciesGrid: View {
+    let catalog: [FishCatalogItem]
+    let isLoading: Bool
+
+    private let columns = Array(
+        repeating: GridItem(.flexible(), spacing: PicoSpacing.compact),
+        count: 3
+    )
+
+    var body: some View {
+        VStack(alignment: .center, spacing: PicoSpacing.standard) {
+            Text(discoveryText)
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            if catalog.isEmpty {
+                placeholder
+            } else {
+                LazyVGrid(columns: columns, spacing: PicoSpacing.compact) {
+                    ForEach(catalog) { item in
+                        StoreIslandSpeciesSilhouette(item: item)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Available species silhouettes"))
+    }
+
+    private var discoveryText: String {
+        let speciesCount = catalog.count
+        return "\(speciesCount) new \(speciesCount == 1 ? "species" : "species") to discover!"
+    }
+
+    @ViewBuilder
+    private var placeholder: some View {
+        if isLoading {
+            LazyVGrid(columns: columns, spacing: PicoSpacing.compact) {
+                ForEach(0..<6, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                        .fill(PicoColors.softSurface)
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(PicoColors.primary)
+                        }
+                }
+            }
+        } else {
+            Text("No silhouettes available.")
+                .font(PicoTypography.caption)
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 110, alignment: .center)
+        }
+    }
+}
+
+private struct StoreIslandSpeciesSilhouette: View {
+    let item: FishCatalogItem
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .renderingMode(.template)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .foregroundStyle(Color.black.opacity(0.82))
+            } else {
+                Image(systemName: "fish")
+                    .font(PicoTypography.symbol(size: 52, weight: .semibold))
+                    .foregroundStyle(Color.black.opacity(0.82))
+            }
+        }
+        .padding(PicoSpacing.standard)
+        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .background(item.rarity.picoStyle.rowBackgroundColor)
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                .stroke(item.rarity.picoStyle.rowBorderColor, lineWidth: 1)
+        )
+        .accessibilityHidden(true)
+    }
+
+    private var image: UIImage? {
+        fishImageResourceCandidates(named: item.assetName)
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
+    }
+}
+
+private struct StoreIslandMapPreview: View {
+    let island: PicoIsland
+    let currentUserProfile: UserProfile?
+
+    var body: some View {
+        VillageView(
+            residents: [],
+            currentUserProfile: currentUserProfile,
+            isFishingMode: true,
+            mapStyle: island.mapStyle,
+            maxTileWidth: 58
+        )
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.large, style: .continuous))
+        .accessibilityLabel(Text("\(island.displayName) preview"))
+    }
+}
+
+private struct StoreHatPreviewOverlay: View {
+    private static let scrubPointsPerStep: CGFloat = 30
+
+    let hatItems: [StoreItem]
+    let berryBalance: Int
+    let ownedStoreItemIDs: Set<String>
+    let purchasingStoreItemID: String?
+    let isPurchaseDisabled: Bool
+    let currentUserProfile: UserProfile?
+    let close: () -> Void
+    let purchase: (StoreItem) -> Void
+
+    @State private var selectedItem: StoreItem
+    @State private var direction: AvatarPreviewDirection = .front
+    @State private var scrubStartDirection: AvatarPreviewDirection?
+
+    init(
+        item: StoreItem,
+        hatItems: [StoreItem],
+        berryBalance: Int,
+        ownedStoreItemIDs: Set<String>,
+        purchasingStoreItemID: String?,
+        isPurchaseDisabled: Bool,
+        currentUserProfile: UserProfile?,
+        close: @escaping () -> Void,
+        purchase: @escaping (StoreItem) -> Void
+    ) {
+        self.hatItems = hatItems
+        self.berryBalance = berryBalance
+        self.ownedStoreItemIDs = ownedStoreItemIDs
+        self.purchasingStoreItemID = purchasingStoreItemID
+        self.isPurchaseDisabled = isPurchaseDisabled
+        self.currentUserProfile = currentUserProfile
+        self.close = close
+        self.purchase = purchase
+        _selectedItem = State(initialValue: item)
+    }
+
+    private var availableHatItems: [StoreItem] {
+        hatItems.filter { $0.avatarHat != nil }
+    }
+
+    private var currentItem: StoreItem {
+        availableHatItems.first { $0.id == selectedItem.id } ?? selectedItem
+    }
+
+    private var currentHat: AvatarHat {
+        currentItem.avatarHat ?? .none
+    }
+
+    private var avatarConfig: AvatarConfig {
+        (currentUserProfile?.avatarConfig ?? AvatarCatalog.defaultConfig).withHat(currentHat)
+    }
+
+    private var isOwned: Bool {
+        ownedStoreItemIDs.contains(currentItem.id)
+    }
+
+    private var missingBerries: Int {
+        max(0, currentItem.berryPrice - berryBalance)
+    }
+
+    private var canPurchase: Bool {
+        !isOwned && !currentItem.isPaidOnly && missingBerries == 0 && !isPurchaseDisabled
+    }
+
+    private var isPurchasing: Bool {
+        purchasingStoreItemID == currentItem.id
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topTrailing) {
+                PicoColors.appBackground
+                    .ignoresSafeArea()
+
+                VStack(spacing: PicoSpacing.standard) {
+                    VStack(spacing: PicoSpacing.tiny) {
+                        Text(currentItem.displayName)
+                            .font(PicoTypography.primary(size: 38, weight: .bold))
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.64)
+
+                        BerryAmountLabel(
+                            count: currentItem.berryPrice,
+                            font: PicoTypography.primaryLabelSemibold,
+                            iconSize: 16,
+                            textColor: PicoColors.textPrimary
+                        )
+                    }
+                    .padding(.horizontal, 64)
+
+                    ZStack {
+                        avatarPreview
+                            .frame(height: avatarHeight(in: proxy.size))
+
+                        HStack {
+                            hatCycleButton(icon: .chevronLeftRegular, label: "Previous hat") {
+                                selectHat(offset: -1)
+                            }
+
+                            Spacer(minLength: 0)
+
+                            hatCycleButton(icon: .chevronRightRegular, label: "Next hat") {
+                                selectHat(offset: 1)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, PicoSpacing.standard)
+
+                    AvatarDirectionScrubRail(direction: $direction)
+                        .frame(maxWidth: 188)
+                        .frame(maxWidth: .infinity, alignment: .center)
+
+                    purchaseControl
+                        .frame(maxWidth: 320)
+                        .padding(.horizontal, PicoSpacing.standard)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .padding(.top, proxy.safeAreaInsets.top + PicoSpacing.tiny)
+                .padding(.bottom, max(proxy.safeAreaInsets.bottom, PicoSpacing.standard))
+
+                Button(action: close) {
+                    PicoIcon(.xMarkRegular, size: 18)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 44, height: 44)
+                        .background(PicoColors.surface)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Close hat preview"))
+                .padding(PicoSpacing.standard)
+            }
+        }
+    }
+
+    private var avatarPreview: some View {
+        UserAvatar(
+            config: avatarConfig,
+            maxSpriteSide: 230,
+            animationRow: direction.animationRow,
+            isFlipped: direction.isFlipped
+        )
+        .contentShape(Rectangle())
+        .gesture(avatarScrubGesture)
+        .accessibilityLabel(Text("\(currentItem.displayName) preview"))
+    }
+
+    @ViewBuilder
+    private var purchaseControl: some View {
+        if isOwned {
+            HStack(spacing: PicoSpacing.tiny) {
+                Text("✓")
+                    .font(PicoTypography.statusLabel)
+
+                Text("Owned")
+                    .font(PicoTypography.statusLabel)
+            }
+            .foregroundStyle(PicoColors.primary.opacity(0.78))
+            .frame(maxWidth: .infinity, minHeight: 52)
+        } else if currentItem.isPaidOnly {
+            Text("Paid")
+                .font(PicoTypography.button)
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 52)
+        } else {
+            Button {
+                guard canPurchase else { return }
+                purchase(currentItem)
+            } label: {
+                HStack(spacing: PicoSpacing.tiny) {
+                    Text("Buy")
+
+                    if isPurchasing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(PicoColors.textOnPrimary)
+                    }
+                }
+            }
+            .buttonStyle(StoreHatPreviewBuyButtonStyle())
+            .disabled(!canPurchase)
+            .accessibilityHint(Text(missingBerries > 0 ? "You need \(formattedBerryCount(missingBerries)) more." : ""))
+        }
+    }
+
+    private func hatCycleButton(icon: PicoIconAsset, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            PicoIcon(icon, size: 18)
+                .foregroundStyle(availableHatItems.count >= 2 ? PicoColors.textPrimary : PicoColors.textMuted)
+                .frame(width: 46, height: 46)
+                .background(PicoColors.surface)
+                .clipShape(Circle())
+                .overlay {
+                    Circle()
+                        .stroke(PicoColors.border, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(availableHatItems.count < 2)
+        .accessibilityLabel(Text(label))
+    }
+
+    private var avatarScrubGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let startDirection = scrubStartDirection ?? direction
+                scrubStartDirection = startDirection
+                let steps = Int((value.translation.width / Self.scrubPointsPerStep).rounded())
+                direction = startDirection.rotated(by: steps)
+            }
+            .onEnded { _ in
+                scrubStartDirection = nil
+            }
+    }
+
+    private func selectHat(offset: Int) {
+        let items = availableHatItems
+        guard items.count >= 2 else { return }
+
+        guard let currentIndex = items.firstIndex(where: { $0.id == currentItem.id }) else {
+            selectedItem = items[0]
+            return
+        }
+
+        let nextIndex = (currentIndex + offset + items.count) % items.count
+        selectedItem = items[nextIndex]
+    }
+
+    private func avatarHeight(in size: CGSize) -> CGFloat {
+        min(270, max(210, size.height * 0.36))
+    }
+}
+
+private struct StoreHatPreviewBuyButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(PicoTypography.button)
+            .foregroundStyle(isEnabled ? PicoColors.textOnPrimary : PicoColors.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .padding(.horizontal, PicoSpacing.standard)
+            .background(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .fill(isEnabled ? PicoColors.primary.opacity(configuration.isPressed ? 0.82 : 1) : PicoColors.softSurface)
+            )
     }
 }
 
 private struct StoreHatsSectionHeader: View {
     var body: some View {
-        HStack(spacing: PicoSpacing.compact) {
-            if let image = UIImage(named: "Beanie_Yellow") {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 24, height: 24)
-            } else {
-                Image(systemName: "hat.widebrim")
-                    .font(PicoTypography.symbol(size: 20, weight: .semibold))
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .frame(width: 24, height: 24)
-            }
-
-            Text("Hats")
-                .font(PicoTypography.cardTitle)
-                .foregroundStyle(PicoColors.textPrimary)
-        }
+        StoreSectionHeader(title: "Hats", icon: .hat)
     }
 }
 
@@ -7317,15 +8225,23 @@ private struct ProfileAvatarOutfitCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-            ZStack(alignment: .topTrailing) {
-                UserAvatar(
-                    config: selection,
-                    animationRow: direction.animationRow,
-                    isFlipped: direction.isFlipped
-                )
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 190)
-
+            UserAvatar(
+                config: selection,
+                animationRow: direction.animationRow,
+                isFlipped: direction.isFlipped
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 190)
+            .contentShape(Rectangle())
+            .gesture(avatarScrubGesture)
+            .overlay(alignment: .topLeading) {
+                if !selectedHatIsOwned {
+                    ProfileBuyInStorePillButton(action: buyInStore)
+                        .padding(.top, PicoSpacing.compact)
+                        .padding(.leading, PicoSpacing.compact)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
                 if !selectedHatIsOwned {
                     Image(systemName: "lock.fill")
                         .font(PicoTypography.symbol(size: 17, weight: .semibold))
@@ -7341,8 +8257,6 @@ private struct ProfileAvatarOutfitCard: View {
                         .accessibilityLabel(Text("Hat locked"))
                 }
             }
-            .contentShape(Rectangle())
-            .gesture(avatarScrubGesture)
             .padding(.top, PicoSpacing.compact)
             .padding(.horizontal, PicoSpacing.compact)
 
@@ -7370,19 +8284,6 @@ private struct ProfileAvatarOutfitCard: View {
                         hatCollectionItem(hat)
                     }
                 }
-            }
-
-            if !selectedHatIsOwned {
-                Button(action: buyInStore) {
-                    HStack(spacing: PicoSpacing.tiny) {
-                        Image(systemName: "bag")
-                            .font(PicoTypography.symbol(size: 15, weight: .semibold))
-
-                        Text("Buy in Store")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PicoPrimaryButtonStyle())
             }
 
             if showsSaveButton {
@@ -7486,6 +8387,26 @@ private struct ProfileAvatarOutfitCard: View {
         .buttonStyle(.plain)
         .accessibilityLabel(Text(isOwned ? "\(hat.name) hat" : "\(hat.name) hat, not owned"))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct ProfileBuyInStorePillButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("Buy in store")
+                .font(PicoTypography.statusLabel)
+                .foregroundStyle(PicoColors.textOnPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(PicoColors.primary)
+                .clipShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel(Text("Buy selected hat in store"))
     }
 }
 

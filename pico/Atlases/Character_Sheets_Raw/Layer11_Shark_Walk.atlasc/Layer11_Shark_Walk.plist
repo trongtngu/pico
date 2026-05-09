@@ -7,7 +7,7 @@
             <key>generator</key>
             <string>TexturePacker 7.12.0 - https://www.codeandweb.com/texturepacker</string>
             <key>smartupdate</key>
-            <string>$TexturePacker:SmartUpdate:801948e373dea4bcb865bce91d628cfb:94428004e2ee67b37ab9f2c75062b5c5:42310766ac0813db6cba2f1a9f0a9069$</string>
+            <string>$TexturePacker:SmartUpdate:25d1efeccb4f9ff195f913f5eb9a7cb3:504477e1faa53295599e6e8f83778687:609cf2cf89040494a29400cb92718b7f$</string>
         </dict>
         <key>format</key>
         <string>APPL</string>
@@ -15,7 +15,7 @@
         <array>
             <dict>
                 <key>path</key>
-                <string>Layer11_Helmet_Silver.1.png</string>
+                <string>Layer11_Shark_Walk.1.png</string>
                 <key>size</key>
                 <string>{2760,2300}</string>
                 <key>subimages</key>
@@ -26,7 +26,7 @@
                         <key>isFullyOpaque</key>
                         <false/>
                         <key>name</key>
-                        <string>Layer11_Hemlet_Silver.png</string>
+                        <string>Layer_11_Shark_Walk.png</string>
                         <key>spriteOffset</key>
                         <string>{0,0}</string>
                         <key>spriteSourceSize</key>

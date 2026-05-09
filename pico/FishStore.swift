@@ -15,6 +15,7 @@ final class FishStore: ObservableObject {
     @Published private(set) var inventory: [FishCatch] = []
     @Published private(set) var fishCatalog: [FishCatalogItem] = []
     @Published private(set) var fishCatalogIslandID: String = PicoIsland.original.backendID
+    @Published private(set) var fishCatalogsByIslandID: [String: [FishCatalogItem]] = [:]
     @Published private(set) var collectionCounts: [FishCount] = []
     @Published private(set) var collectionCountsIslandID: String = PicoIsland.original.backendID
     @Published private(set) var islandCollectionCounts: [String: [FishCount]] = [:]
@@ -22,6 +23,7 @@ final class FishStore: ObservableObject {
     @Published private(set) var isLoadingSessionCatches = false
     @Published private(set) var isLoadingInventory = false
     @Published private(set) var isLoadingFishCatalog = false
+    @Published private(set) var loadingFishCatalogIslandIDs: Set<String> = []
     @Published private(set) var isLoadingCollectionCounts = false
     @Published private(set) var isLoadingIslandCollectionCounts = false
     @Published private(set) var isLoadingInventoryCounts = false
@@ -49,6 +51,20 @@ final class FishStore: ObservableObject {
 
     init(fishService: FishService? = nil) {
         self.fishService = fishService ?? FishService()
+    }
+
+    func fishCatalog(for islandID: String) -> [FishCatalogItem] {
+        let resolvedIslandID = islandID.isEmpty ? PicoIsland.original.backendID : islandID
+
+        if let cachedCatalog = fishCatalogsByIslandID[resolvedIslandID] {
+            return cachedCatalog
+        }
+
+        if fishCatalogIslandID == resolvedIslandID {
+            return fishCatalog
+        }
+
+        return []
     }
 
     func loadSessionCatches(
@@ -113,7 +129,32 @@ final class FishStore: ObservableObject {
         defer { isLoadingFishCatalog = false }
 
         do {
-            fishCatalog = try await fishService.fetchFishCatalog(for: session, islandID: resolvedIslandID)
+            let nextCatalog = try await fishService.fetchFishCatalog(for: session, islandID: resolvedIslandID)
+            fishCatalog = nextCatalog
+            fishCatalogsByIslandID[resolvedIslandID] = nextCatalog
+        } catch {
+            notice = displayMessage(for: error)
+        }
+    }
+
+    func loadPreviewFishCatalog(
+        for session: AuthSession?,
+        islandID: String,
+        forceReload: Bool = false
+    ) async {
+        guard let session else { return }
+
+        let resolvedIslandID = islandID.isEmpty ? PicoIsland.original.backendID : islandID
+        guard forceReload || fishCatalogsByIslandID[resolvedIslandID] == nil else { return }
+        guard !loadingFishCatalogIslandIDs.contains(resolvedIslandID) else { return }
+
+        loadingFishCatalogIslandIDs.insert(resolvedIslandID)
+        notice = nil
+        defer { loadingFishCatalogIslandIDs.remove(resolvedIslandID) }
+
+        do {
+            let nextCatalog = try await fishService.fetchFishCatalog(for: session, islandID: resolvedIslandID)
+            fishCatalogsByIslandID[resolvedIslandID] = nextCatalog
         } catch {
             notice = displayMessage(for: error)
         }
@@ -186,6 +227,10 @@ final class FishStore: ObservableObject {
         fishCatalogIslandID = resolvedIslandID
         collectionCountsIslandID = resolvedIslandID
 
+        if let cachedCatalog = fishCatalogsByIslandID[resolvedIslandID] {
+            fishCatalog = cachedCatalog
+        }
+
         if let counts = islandCollectionCounts[resolvedIslandID] {
             collectionCounts = counts
         }
@@ -245,12 +290,14 @@ final class FishStore: ObservableObject {
         inventory = []
         fishCatalog = []
         fishCatalogIslandID = PicoIsland.original.backendID
+        fishCatalogsByIslandID = [:]
         collectionCounts = []
         collectionCountsIslandID = PicoIsland.original.backendID
         islandCollectionCounts = [:]
         inventoryCounts = []
         isLoadingInventory = false
         isLoadingFishCatalog = false
+        loadingFishCatalogIslandIDs = []
         isLoadingCollectionCounts = false
         isLoadingIslandCollectionCounts = false
         isLoadingInventoryCounts = false

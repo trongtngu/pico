@@ -21,6 +21,48 @@ struct UserBerryBalance: Equatable {
     )
 }
 
+enum StoreItemType: String, Codable, Equatable, Hashable, CaseIterable {
+    case hat
+    case island
+}
+
+struct StoreItem: Identifiable, Equatable, Hashable {
+    let id: String
+    let itemType: StoreItemType
+    let itemKey: String
+    let displayName: String
+    let berryPrice: Int
+    let isEnabled: Bool
+    let isLimited: Bool
+    let isPaidOnly: Bool
+    let sortOrder: Int
+
+    var avatarHat: AvatarHat? {
+        guard itemType == .hat, let rawValue = Int(itemKey) else { return nil }
+        return AvatarHat(rawValue: rawValue)
+    }
+
+    var picoIsland: PicoIsland? {
+        guard itemType == .island else { return nil }
+        return PicoIsland(backendID: itemKey)
+    }
+}
+
+struct StoreInventoryItem: Equatable, Hashable {
+    let storeItemID: String
+    let itemType: StoreItemType
+    let itemKey: String
+    let displayName: String
+    let berryPrice: Int
+    let acquiredAt: Date?
+    let acquisitionSource: String
+}
+
+struct StorePurchaseResult: Equatable {
+    let balance: UserBerryBalance
+    let ownedStoreItemIDs: Set<String>
+}
+
 enum BerryServiceError: LocalizedError {
     case missingConfiguration
     case invalidResponse
@@ -66,11 +108,48 @@ final class BerryService {
         return response.first?.berryBalance ?? .zero
     }
 
-    func purchaseAvatarHat(_ hat: AvatarHat, for authSession: AuthSession) async throws -> HatPurchaseResult {
-        let response: [HatPurchaseResponse] = try await send(
-            path: "/rest/v1/rpc/purchase_avatar_hat",
+    func fetchStoreCatalog(for authSession: AuthSession) async throws -> [StoreItem] {
+        let response: [StoreItemResponse] = try await send(
+            path: "/rest/v1/rpc/fetch_store_catalog",
             method: "POST",
-            body: HatPurchaseRequest(hat: hat.rawValue),
+            body: EmptyBerryRequest(),
+            accessToken: authSession.accessToken
+        )
+
+        return response.map(\.storeItem)
+            .sorted {
+                if $0.itemType != $1.itemType {
+                    return $0.itemType.sortRank < $1.itemType.sortRank
+                }
+
+                return $0.sortOrder < $1.sortOrder
+            }
+    }
+
+    func fetchUserStoreInventory(for authSession: AuthSession) async throws -> [StoreInventoryItem] {
+        let response: [StoreInventoryResponse] = try await send(
+            path: "/rest/v1/rpc/fetch_user_store_inventory",
+            method: "POST",
+            body: EmptyBerryRequest(),
+            accessToken: authSession.accessToken
+        )
+
+        return response.map(\.inventoryItem)
+    }
+
+    func purchaseStoreItem(_ item: StoreItem, for authSession: AuthSession) async throws -> StorePurchaseResult {
+        try await purchaseStoreItem(type: item.itemType, key: item.itemKey, for: authSession)
+    }
+
+    func purchaseStoreItem(
+        type: StoreItemType,
+        key: String,
+        for authSession: AuthSession
+    ) async throws -> StorePurchaseResult {
+        let response: [StorePurchaseResponse] = try await send(
+            path: "/rest/v1/rpc/purchase_store_item",
+            method: "POST",
+            body: StorePurchaseRequest(itemType: type.rawValue, itemKey: key),
             accessToken: authSession.accessToken
         )
 
@@ -145,15 +224,6 @@ final class BerryService {
 
 private struct EmptyBerryRequest: Encodable {}
 
-struct HatPurchaseResult: Equatable {
-    let balance: UserBerryBalance
-    let ownedHats: Set<AvatarHat>
-}
-
-private struct HatPurchaseRequest: Encodable {
-    let hat: Int
-}
-
 private struct UserBerryBalanceResponse: Decodable {
     let berries: Int
     let completionStreak: Int
@@ -170,23 +240,87 @@ private struct UserBerryBalanceResponse: Decodable {
     }
 }
 
-private struct HatPurchaseResponse: Decodable {
+private struct StoreItemResponse: Decodable {
+    let id: String
+    let itemType: StoreItemType
+    let itemKey: String
+    let displayName: String
+    let berryPrice: Int
+    let isEnabled: Bool
+    let isLimited: Bool
+    let isPaidOnly: Bool
+    let sortOrder: Int
+
+    var storeItem: StoreItem {
+        StoreItem(
+            id: id,
+            itemType: itemType,
+            itemKey: itemKey,
+            displayName: displayName,
+            berryPrice: berryPrice,
+            isEnabled: isEnabled,
+            isLimited: isLimited,
+            isPaidOnly: isPaidOnly,
+            sortOrder: sortOrder
+        )
+    }
+}
+
+private struct StoreInventoryResponse: Decodable {
+    let storeItemId: String
+    let itemType: StoreItemType
+    let itemKey: String
+    let displayName: String
+    let berryPrice: Int
+    let acquiredAt: String?
+    let acquisitionSource: String
+
+    var inventoryItem: StoreInventoryItem {
+        StoreInventoryItem(
+            storeItemID: storeItemId,
+            itemType: itemType,
+            itemKey: itemKey,
+            displayName: displayName,
+            berryPrice: berryPrice,
+            acquiredAt: acquiredAt.flatMap(FocusDateFormatter.date(from:)),
+            acquisitionSource: acquisitionSource
+        )
+    }
+}
+
+private struct StorePurchaseRequest: Encodable {
+    let itemType: String
+    let itemKey: String
+}
+
+private struct StorePurchaseResponse: Decodable {
     let berries: Int
     let completionStreak: Int
     let lastCompletedOn: String?
     let lastCompletedAt: String?
-    let ownedHats: [Int]
+    let ownedStoreItemIds: [String]
 
-    var purchaseResult: HatPurchaseResult {
-        HatPurchaseResult(
+    var purchaseResult: StorePurchaseResult {
+        StorePurchaseResult(
             balance: UserBerryBalance(
                 berries: berries,
                 completionStreak: completionStreak,
                 lastCompletedOn: lastCompletedOn,
                 lastCompletedAt: lastCompletedAt.flatMap(FocusDateFormatter.date(from:))
             ),
-            ownedHats: Set(ownedHats.compactMap(AvatarHat.init(rawValue:))).union([.none])
+            ownedStoreItemIDs: Set(ownedStoreItemIds)
         )
+    }
+}
+
+private extension StoreItemType {
+    var sortRank: Int {
+        switch self {
+        case .island:
+            0
+        case .hat:
+            1
+        }
     }
 }
 
