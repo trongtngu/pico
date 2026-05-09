@@ -12,7 +12,9 @@ import Combine
 final class AuthSessionStore: ObservableObject {
     @Published private(set) var session: AuthSession?
     @Published private(set) var profile: UserProfile?
+    @Published private(set) var ownedStoreItemIDs: Set<String> = []
     @Published private(set) var ownedHats: Set<AvatarHat> = [.none]
+    @Published private(set) var ownedIslandIDs: Set<String> = [PicoIsland.original.backendID]
     @Published private(set) var isLoading = false
     @Published private(set) var isRestoringSession = true
     @Published private(set) var isProfileLoading = false
@@ -159,8 +161,10 @@ final class AuthSessionStore: ObservableObject {
         }
     }
 
-    func applyOwnedHats(_ hats: Set<AvatarHat>) {
-        ownedHats = hats.union([.none])
+    func applyOwnedStoreItemIDs(_ itemIDs: Set<String>) {
+        ownedStoreItemIDs = itemIDs
+        ownedHats = Self.ownedHats(from: itemIDs)
+        ownedIslandIDs = Self.ownedIslandIDs(from: itemIDs)
         profileNotice = nil
     }
 
@@ -176,7 +180,9 @@ final class AuthSessionStore: ObservableObject {
             displayName: "Tommy",
             avatarConfig: AvatarCatalog.defaultConfig
         )
+        store.ownedStoreItemIDs = Set(StoreItem.previewOwnedItemIDs)
         store.ownedHats = Set(AvatarHat.allCases)
+        store.ownedIslandIDs = Set(PicoIsland.allCases.map(\.backendID))
         store.hasLoadedProfile = true
         return store
     }
@@ -261,9 +267,9 @@ final class AuthSessionStore: ObservableObject {
 
         do {
             let nextProfile = try await authService.fetchProfile(for: session)
-            let nextOwnedHats = try await authService.fetchOwnedHats(for: session)
+            let nextOwnedStoreItemIDs = try await authService.fetchStoreInventoryItemIDs(for: session)
             profile = nextProfile
-            ownedHats = nextOwnedHats
+            applyOwnedStoreItemIDs(nextOwnedStoreItemIDs)
             hasLoadedProfile = true
         } catch {
             profileNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -272,10 +278,44 @@ final class AuthSessionStore: ObservableObject {
 
     private func resetProfile() {
         profile = nil
+        ownedStoreItemIDs = []
         ownedHats = [.none]
+        ownedIslandIDs = [PicoIsland.original.backendID]
         isProfileLoading = false
         isProfileSaving = false
         profileNotice = nil
         hasLoadedProfile = false
     }
+
+    private static func ownedHats(from itemIDs: Set<String>) -> Set<AvatarHat> {
+        let storeHats = itemIDs.compactMap { itemID -> AvatarHat? in
+            guard itemID.hasPrefix("hat:"),
+                  let rawValue = Int(itemID.dropFirst("hat:".count)) else {
+                return nil
+            }
+
+            return AvatarHat(rawValue: rawValue)
+        }
+
+        return Set(storeHats).union([.none])
+    }
+
+    private static func ownedIslandIDs(from itemIDs: Set<String>) -> Set<String> {
+        let storeIslands = itemIDs.compactMap { itemID -> String? in
+            guard itemID.hasPrefix("island:") else { return nil }
+            return String(itemID.dropFirst("island:".count))
+        }
+
+        return Set(storeIslands).union([PicoIsland.original.backendID])
+    }
+}
+
+private extension StoreItem {
+    static let previewOwnedItemIDs = [
+        "island:sand",
+        "hat:1",
+        "hat:2",
+        "hat:3",
+        "hat:4"
+    ]
 }

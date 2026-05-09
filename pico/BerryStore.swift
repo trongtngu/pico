@@ -11,8 +11,12 @@ import Combine
 @MainActor
 final class BerryStore: ObservableObject {
     @Published private(set) var balance: UserBerryBalance = .zero
+    @Published private(set) var storeCatalog: [StoreItem] = []
+    @Published private(set) var ownedStoreItemIDs: Set<String> = []
     @Published private(set) var isLoadingBalance = false
-    @Published private(set) var purchasingHat: AvatarHat?
+    @Published private(set) var isLoadingStoreCatalog = false
+    @Published private(set) var isLoadingStoreInventory = false
+    @Published private(set) var purchasingStoreItemID: String?
     @Published var notice: String?
 
     var completionStreak: Int {
@@ -44,16 +48,51 @@ final class BerryStore: ObservableObject {
         notice = nil
     }
 
-    func purchaseAvatarHat(_ hat: AvatarHat, for session: AuthSession?) async -> HatPurchaseResult? {
-        guard let session, purchasingHat == nil else { return nil }
+    func loadStoreCatalog(for session: AuthSession?) async {
+        guard let session, !isLoadingStoreCatalog else { return }
 
-        purchasingHat = hat
+        isLoadingStoreCatalog = true
         notice = nil
-        defer { purchasingHat = nil }
+        defer { isLoadingStoreCatalog = false }
 
         do {
-            let result = try await berryService.purchaseAvatarHat(hat, for: session)
+            storeCatalog = try await berryService.fetchStoreCatalog(for: session)
+        } catch {
+            notice = displayMessage(for: error)
+        }
+    }
+
+    func loadStoreInventory(for session: AuthSession?) async {
+        guard let session, !isLoadingStoreInventory else { return }
+
+        isLoadingStoreInventory = true
+        notice = nil
+        defer { isLoadingStoreInventory = false }
+
+        do {
+            let inventory = try await berryService.fetchUserStoreInventory(for: session)
+            ownedStoreItemIDs = Set(inventory.map(\.storeItemID))
+        } catch {
+            notice = displayMessage(for: error)
+        }
+    }
+
+    func applyOwnedStoreItemIDs(_ itemIDs: Set<String>) {
+        ownedStoreItemIDs = itemIDs
+        notice = nil
+    }
+
+    func purchaseStoreItem(_ item: StoreItem, for session: AuthSession?) async -> StorePurchaseResult? {
+        guard let session, purchasingStoreItemID == nil else { return nil }
+
+        purchasingStoreItemID = item.id
+        notice = nil
+        defer { purchasingStoreItemID = nil }
+
+        do {
+            let result = try await berryService.purchaseStoreItem(item, for: session)
             balance = result.balance
+            ownedStoreItemIDs = result.ownedStoreItemIDs
             return result
         } catch {
             notice = displayMessage(for: error)
@@ -63,9 +102,13 @@ final class BerryStore: ObservableObject {
 
     func clear() {
         balance = .zero
+        storeCatalog = []
+        ownedStoreItemIDs = []
         notice = nil
         isLoadingBalance = false
-        purchasingHat = nil
+        isLoadingStoreCatalog = false
+        isLoadingStoreInventory = false
+        purchasingStoreItemID = nil
     }
 
     #if DEBUG

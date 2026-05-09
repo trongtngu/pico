@@ -84,21 +84,6 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
 
     var id: Int { rawValue }
 
-    var berryCost: Int {
-        switch self {
-        case .none:
-            0
-        case .bambooHat:
-            5
-        case .beanie:
-            20
-        case .bow:
-            40
-        case .helmet:
-            75
-        }
-    }
-
     func isOwned(in ownedHats: Set<AvatarHat>) -> Bool {
         self == .none || ownedHats.contains(self)
     }

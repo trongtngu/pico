@@ -82,7 +82,11 @@ struct AppShellView: View {
         .environmentObject(islandStore)
         .task(id: sessionStore.session?.user?.id) {
             await sessionStore.refreshSessionIfNeeded()
-            islandStore.configure(for: sessionStore.session?.user?.id)
+            await sessionStore.loadProfileIfNeeded()
+            islandStore.configure(
+                for: sessionStore.session?.user?.id,
+                ownedIslandIDs: sessionStore.ownedIslandIDs
+            )
             focusStore.updateSelectedIslandID(islandStore.selectedIslandID)
             await focusStore.restoreSavedState(for: sessionStore.session)
             if sessionStore.session == nil {
@@ -95,6 +99,10 @@ struct AppShellView: View {
                 focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
                 await berryStore.loadBalance(for: sessionStore.session)
             }
+        }
+        .onChange(of: sessionStore.ownedIslandIDs) {
+            islandStore.updateOwnedIslandIDs(sessionStore.ownedIslandIDs)
+            focusStore.updateSelectedIslandID(islandStore.selectedIslandID)
         }
         .onChange(of: islandStore.selectedIsland) {
             focusStore.updateSelectedIslandID(islandStore.selectedIslandID)
@@ -5328,7 +5336,8 @@ private struct FishingPage: View {
                 case .islands:
                     FishingIslandSelectionSection(
                         selectedIsland: islandStore.selectedIsland,
-                        isLocked: focusStore.isIslandSelectionLocked,
+                        isSessionLocked: focusStore.isIslandSelectionLocked,
+                        ownedIslandIDs: sessionStore.ownedIslandIDs,
                         isLoading: fishStore.isLoadingIslandCollectionCounts,
                         summaries: islandDiscoverySummaries,
                         selectIsland: selectIsland
@@ -5403,6 +5412,7 @@ private struct FishingPage: View {
 
     private func selectIsland(_ island: PicoIsland) {
         guard !focusStore.isIslandSelectionLocked else { return }
+        guard islandStore.isOwned(island) else { return }
 
         withAnimation(.snappy(duration: 0.22)) {
             islandStore.select(island)
@@ -5591,7 +5601,8 @@ private struct FishingInventoryRow: View {
 
 private struct FishingIslandSelectionSection: View {
     let selectedIsland: PicoIsland
-    let isLocked: Bool
+    let isSessionLocked: Bool
+    let ownedIslandIDs: Set<String>
     let isLoading: Bool
     let summaries: [String: FishingIslandDiscoverySummary]
     let selectIsland: (PicoIsland) -> Void
@@ -5613,7 +5624,7 @@ private struct FishingIslandSelectionSection: View {
                         .tint(PicoColors.primary)
                 }
 
-                if isLocked {
+                if isSessionLocked {
                     Text("Locked")
                         .font(PicoTypography.caption.weight(.bold))
                         .foregroundStyle(PicoColors.textSecondary)
@@ -5632,7 +5643,8 @@ private struct FishingIslandSelectionSection: View {
                     FishingIslandRow(
                         island: island,
                         isSelected: selectedIsland == island,
-                        isLocked: isLocked,
+                        isSessionLocked: isSessionLocked,
+                        isOwned: island == .original || ownedIslandIDs.contains(island.backendID),
                         summary: summaries[island.backendID] ?? FishingIslandDiscoverySummary(counts: nil),
                         select: {
                             selectIsland(island)
@@ -5653,7 +5665,7 @@ private struct FishingIslandSelectionSection: View {
                     .stroke(PicoCreamCardStyle.border, lineWidth: PicoCreamCardStyle.borderWidth)
             )
 
-            if isLocked {
+            if isSessionLocked {
                 Text("Island selection is locked during an open focus session.")
                     .font(PicoTypography.caption)
                     .foregroundStyle(PicoColors.textSecondary)
@@ -5667,7 +5679,8 @@ private struct FishingIslandSelectionSection: View {
 private struct FishingIslandRow: View {
     let island: PicoIsland
     let isSelected: Bool
-    let isLocked: Bool
+    let isSessionLocked: Bool
+    let isOwned: Bool
     let summary: FishingIslandDiscoverySummary
     let select: () -> Void
 
@@ -5699,17 +5712,30 @@ private struct FishingIslandRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isLocked)
-        .accessibilityLabel(Text("\(island.displayName), \(isSelected ? "selected" : "not selected")"))
+        .disabled(isSessionLocked || !isOwned)
+        .accessibilityLabel(Text(accessibilityLabel))
     }
 
     private var subtitle: String {
         summary.displayText
     }
 
+    private var accessibilityLabel: String {
+        if !isOwned {
+            return "\(island.displayName), locked"
+        }
+
+        return "\(island.displayName), \(isSelected ? "selected" : "not selected")"
+    }
+
     @ViewBuilder
     private var statusIcon: some View {
-        if isLocked {
+        if !isOwned {
+            Image(systemName: "lock.fill")
+                .font(PicoTypography.symbol(size: 17, weight: .bold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(width: 28, height: 28)
+        } else if isSessionLocked {
             Image(systemName: "lock.fill")
                 .font(PicoTypography.symbol(size: 17, weight: .bold))
                 .foregroundStyle(PicoColors.textSecondary)
@@ -5808,7 +5834,7 @@ private extension PicoIsland {
         case .original:
             "Forest Island"
         case .sand:
-            "Sand Island"
+            "Beach Island"
         }
     }
 
@@ -6327,8 +6353,16 @@ private struct StorePage: View {
     @EnvironmentObject private var islandStore: IslandStore
     @State private var selectedMode: StoreMode = .buy
 
-    private var purchasableHats: [AvatarHat] {
-        AvatarHat.allCases.filter { $0 != .none }
+    private var islandItems: [StoreItem] {
+        berryStore.storeCatalog
+            .filter { $0.itemType == .island }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    private var hatItems: [StoreItem] {
+        berryStore.storeCatalog
+            .filter { $0.itemType == .hat && $0.avatarHat != nil }
+            .sorted { $0.sortOrder < $1.sortOrder }
     }
 
     private var fishGroups: [StoreFishGroup] {
@@ -6362,24 +6396,18 @@ private struct StorePage: View {
                 Group {
                     switch selectedMode {
                     case .buy:
-                        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
-                            StoreHatsSectionHeader()
-
-                            VStack(spacing: PicoSpacing.compact) {
-                                ForEach(purchasableHats) { hat in
-                                    StoreHatRow(
-                                        hat: hat,
-                                        berryBalance: berryStore.balance.berries,
-                                        isOwned: hat.isOwned(in: sessionStore.ownedHats),
-                                        isPurchasing: berryStore.purchasingHat == hat,
-                                        isPurchaseDisabled: berryStore.purchasingHat != nil || berryStore.isLoadingBalance || sessionStore.session == nil
-                                    ) {
-                                        purchase(hat)
-                                    }
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        StoreBuyCatalogSection(
+                            islandItems: islandItems,
+                            hatItems: hatItems,
+                            berryBalance: berryStore.balance.berries,
+                            ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
+                            purchasingStoreItemID: berryStore.purchasingStoreItemID,
+                            isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
+                                || berryStore.isLoadingBalance
+                                || berryStore.isLoadingStoreCatalog
+                                || sessionStore.session == nil,
+                            purchase: purchase
+                        )
                     case .sell:
                         StoreFishSection(
                             groups: fishGroups,
@@ -6398,6 +6426,9 @@ private struct StorePage: View {
         .task(id: islandStore.selectedIsland) {
             await sessionStore.loadProfileIfNeeded()
             await berryStore.loadBalance(for: sessionStore.session)
+            await berryStore.loadStoreCatalog(for: sessionStore.session)
+            await berryStore.loadStoreInventory(for: sessionStore.session)
+            berryStore.applyOwnedStoreItemIDs(sessionStore.ownedStoreItemIDs)
             if fishStore.fishCatalog.isEmpty || fishStore.fishCatalogIslandID != islandStore.selectedIslandID {
                 await fishStore.loadFishCatalog(
                     for: sessionStore.session,
@@ -6436,10 +6467,11 @@ private struct StorePage: View {
         )
     }
 
-    private func purchase(_ hat: AvatarHat) {
+    private func purchase(_ item: StoreItem) {
         Task {
-            guard let result = await berryStore.purchaseAvatarHat(hat, for: sessionStore.session) else { return }
-            sessionStore.applyOwnedHats(result.ownedHats)
+            guard let result = await berryStore.purchaseStoreItem(item, for: sessionStore.session) else { return }
+            sessionStore.applyOwnedStoreItemIDs(result.ownedStoreItemIDs)
+            islandStore.updateOwnedIslandIDs(sessionStore.ownedIslandIDs)
         }
     }
 
@@ -6719,8 +6751,91 @@ private struct StoreFishIcon: View {
     }
 }
 
-private struct StoreHatRow: View {
-    let hat: AvatarHat
+private struct StoreBuyCatalogSection: View {
+    let islandItems: [StoreItem]
+    let hatItems: [StoreItem]
+    let berryBalance: Int
+    let ownedStoreItemIDs: Set<String>
+    let purchasingStoreItemID: String?
+    let isPurchaseDisabled: Bool
+    let purchase: (StoreItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.section) {
+            StoreItemSection(
+                title: "Islands",
+                icon: .system("map.fill"),
+                items: islandItems,
+                berryBalance: berryBalance,
+                ownedStoreItemIDs: ownedStoreItemIDs,
+                purchasingStoreItemID: purchasingStoreItemID,
+                isPurchaseDisabled: isPurchaseDisabled,
+                purchase: purchase
+            )
+
+            StoreItemSection(
+                title: "Hats",
+                icon: .hat,
+                items: hatItems,
+                berryBalance: berryBalance,
+                ownedStoreItemIDs: ownedStoreItemIDs,
+                purchasingStoreItemID: purchasingStoreItemID,
+                isPurchaseDisabled: isPurchaseDisabled,
+                purchase: purchase
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private enum StoreSectionIcon {
+    case hat
+    case system(String)
+}
+
+private struct StoreItemSection: View {
+    let title: String
+    let icon: StoreSectionIcon
+    let items: [StoreItem]
+    let berryBalance: Int
+    let ownedStoreItemIDs: Set<String>
+    let purchasingStoreItemID: String?
+    let isPurchaseDisabled: Bool
+    let purchase: (StoreItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            StoreSectionHeader(title: title, icon: icon)
+
+            if items.isEmpty {
+                Text("No items available.")
+                    .font(PicoTypography.body)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, PicoSpacing.tiny)
+            } else {
+                VStack(spacing: PicoSpacing.compact) {
+                    ForEach(items) { item in
+                        StoreItemRow(
+                            item: item,
+                            berryBalance: berryBalance,
+                            isOwned: ownedStoreItemIDs.contains(item.id),
+                            isPurchasing: purchasingStoreItemID == item.id,
+                            isPurchaseDisabled: isPurchaseDisabled,
+                            purchase: {
+                                purchase(item)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StoreItemRow: View {
+    let item: StoreItem
     let berryBalance: Int
     let isOwned: Bool
     let isPurchasing: Bool
@@ -6728,25 +6843,25 @@ private struct StoreHatRow: View {
     let purchase: () -> Void
 
     private var missingBerries: Int {
-        max(0, hat.berryCost - berryBalance)
+        max(0, item.berryPrice - berryBalance)
     }
 
     private var canPurchase: Bool {
-        !isOwned && missingBerries == 0 && !isPurchaseDisabled
+        !isOwned && !item.isPaidOnly && missingBerries == 0 && !isPurchaseDisabled
     }
 
     var body: some View {
         HStack(spacing: PicoSpacing.standard) {
-            AvatarBadgeView(config: AvatarCatalog.defaultConfig.withHat(hat), size: 58)
+            itemIcon
 
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
-                Text(hat.name)
+                Text(item.displayName)
                     .font(PicoTypography.primaryLabelSemibold)
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
 
                 BerryAmountLabel(
-                    count: hat.berryCost,
+                    count: item.berryPrice,
                     font: PicoTypography.caption,
                     iconSize: 15,
                     textColor: PicoColors.textSecondary
@@ -6769,6 +6884,21 @@ private struct StoreHatRow: View {
     }
 
     @ViewBuilder
+    private var itemIcon: some View {
+        if let hat = item.avatarHat {
+            AvatarBadgeView(config: AvatarCatalog.defaultConfig.withHat(hat), size: 58)
+        } else if let island = item.picoIsland {
+            FishingIslandSelectorIcon(island: island)
+                .frame(width: 58, height: 58)
+        } else {
+            Image(systemName: item.itemType == .island ? "map.fill" : "bag.fill")
+                .font(PicoTypography.symbol(size: 28, weight: .semibold))
+                .foregroundStyle(PicoColors.primary)
+                .frame(width: 58, height: 58)
+        }
+    }
+
+    @ViewBuilder
     private var purchaseControl: some View {
         if isOwned {
             HStack(spacing: PicoSpacing.tiny) {
@@ -6780,6 +6910,11 @@ private struct StoreHatRow: View {
             }
             .foregroundStyle(PicoColors.primary.opacity(0.78))
             .frame(height: 34, alignment: .trailing)
+        } else if item.isPaidOnly {
+            Text("Paid")
+                .font(PicoTypography.statusLabel)
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(height: 34, alignment: .trailing)
         } else {
             Button {
                 purchase()
@@ -6800,25 +6935,47 @@ private struct StoreHatRow: View {
     }
 }
 
-private struct StoreHatsSectionHeader: View {
+private struct StoreSectionHeader: View {
+    let title: String
+    let icon: StoreSectionIcon
+
     var body: some View {
         HStack(spacing: PicoSpacing.compact) {
-            if let image = UIImage(named: "Beanie_Yellow") {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 24, height: 24)
-            } else {
-                Image(systemName: "hat.widebrim")
+            switch icon {
+            case .hat:
+                hatIcon
+            case .system(let name):
+                Image(systemName: name)
                     .font(PicoTypography.symbol(size: 20, weight: .semibold))
                     .foregroundStyle(PicoColors.textSecondary)
                     .frame(width: 24, height: 24)
             }
 
-            Text("Hats")
+            Text(title)
                 .font(PicoTypography.cardTitle)
                 .foregroundStyle(PicoColors.textPrimary)
         }
+    }
+
+    @ViewBuilder
+    private var hatIcon: some View {
+        if let image = UIImage(named: "Beanie_Yellow") {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+        } else {
+            Image(systemName: "hat.widebrim")
+                .font(PicoTypography.symbol(size: 20, weight: .semibold))
+                .foregroundStyle(PicoColors.textSecondary)
+                .frame(width: 24, height: 24)
+        }
+    }
+}
+
+private struct StoreHatsSectionHeader: View {
+    var body: some View {
+        StoreSectionHeader(title: "Hats", icon: .hat)
     }
 }
 
