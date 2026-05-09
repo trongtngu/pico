@@ -88,7 +88,8 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
         .bambooHat,
         .beanie,
         .bow,
-        .helmet
+        .helmet,
+        .shark
     ]
 
     var id: Int { rawValue }

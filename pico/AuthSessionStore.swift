@@ -316,6 +316,7 @@ private extension StoreItem {
         "hat:1",
         "hat:2",
         "hat:3",
-        "hat:4"
+        "hat:4",
+        "hat:5"
     ]
 }
