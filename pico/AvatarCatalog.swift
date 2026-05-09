@@ -81,6 +81,15 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
     case beanie = 2
     case bow = 3
     case helmet = 4
+    case shark = 5
+
+    static let allCases: [AvatarHat] = [
+        .none,
+        .bambooHat,
+        .beanie,
+        .bow,
+        .helmet
+    ]
 
     var id: Int { rawValue }
 
@@ -100,6 +109,8 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
             "Bow"
         case .helmet:
             "Helmet"
+        case .shark:
+            "Shark Hat"
         }
     }
 
@@ -115,6 +126,8 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
             "gift"
         case .helmet:
             "shield"
+        case .shark:
+            "fish"
         }
     }
 
@@ -130,6 +143,8 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
             .pink
         case .helmet:
             .purple
+        case .shark:
+            .cyan
         }
     }
 
@@ -439,6 +454,8 @@ private extension AvatarHat {
             "Bow_Yellow"
         case .helmet:
             "Helmet_Silver"
+        case .shark:
+            "Shark"
         }
     }
 }
@@ -692,9 +709,6 @@ struct AvatarPickerView: View {
                             }
                             .overlay {
                                 if !isOwned {
-                                    Circle()
-                                        .fill(.black.opacity(0.42))
-
                                     Image(systemName: "lock.fill")
                                         .font(.system(size: 18, weight: .semibold))
                                         .foregroundStyle(PicoColors.textOnPrimary)
@@ -715,10 +729,8 @@ struct AvatarPickerView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 104)
                     .contentShape(Rectangle())
-                    .opacity(isOwned ? 1 : 0.72)
                 }
                 .buttonStyle(.plain)
-                .disabled(!isOwned)
                 .accessibilityAddTraits(selection.selectedHat == hat ? .isSelected : [])
                 .accessibilityLabel(Text(isOwned ? hat.name : "\(hat.name), not owned"))
             }

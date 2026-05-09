@@ -7,7 +7,7 @@
             <key>generator</key>
             <string>TexturePacker 7.12.0 - https://www.codeandweb.com/texturepacker</string>
             <key>smartupdate</key>
-            <string>$TexturePacker:SmartUpdate:801948e373dea4bcb865bce91d628cfb:94428004e2ee67b37ab9f2c75062b5c5:42310766ac0813db6cba2f1a9f0a9069$</string>
+            <string>$TexturePacker:SmartUpdate:2bec1ba260c5e22d8bc17dd67dfa0fe1:4b540baf0403c61352083c51dc15bcd1:6955844ba7f50442b9187fe5f937c5b5$</string>
         </dict>
         <key>format</key>
         <string>APPL</string>
@@ -15,9 +15,9 @@
         <array>
             <dict>
                 <key>path</key>
-                <string>Layer11_Helmet_Silver.1.png</string>
+                <string>Layer11_Shark_Idle.1.png</string>
                 <key>size</key>
-                <string>{2760,2300}</string>
+                <string>{3680,2300}</string>
                 <key>subimages</key>
                 <array>
                     <dict>
@@ -26,13 +26,13 @@
                         <key>isFullyOpaque</key>
                         <false/>
                         <key>name</key>
-                        <string>Layer11_Hemlet_Silver.png</string>
+                        <string>Layer11_Shark_Idle.png</string>
                         <key>spriteOffset</key>
                         <string>{0,0}</string>
                         <key>spriteSourceSize</key>
-                        <string>{2760,2300}</string>
+                        <string>{3680,2300}</string>
                         <key>textureRect</key>
-                        <string>{{0,0},{2760,2300}}</string>
+                        <string>{{0,0},{3680,2300}}</string>
                         <key>textureRotated</key>
                         <false/>
                     </dict>

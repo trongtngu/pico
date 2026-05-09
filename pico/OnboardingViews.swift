@@ -15,45 +15,41 @@ struct AuthEntryView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView {
-                VStack(spacing: PicoSpacing.largeSection) {
-                    Spacer(minLength: max(28, proxy.safeAreaInsets.top + 20))
+            VStack(spacing: PicoSpacing.largeSection) {
+                Spacer(minLength: max(28, proxy.safeAreaInsets.top + 20))
 
-                    VStack(spacing: PicoSpacing.section) {
-                        AuthEntryAvatarView()
-                            .frame(width: 180, height: 180)
+                VStack(spacing: PicoSpacing.section) {
+                    AuthEntryAvatarView()
+                        .frame(width: 180, height: 180)
 
-                        VStack(spacing: PicoSpacing.compact) {
-                            Text("Pico")
-                                .font(PicoTypography.screenTitle)
-                                .foregroundStyle(PicoColors.textPrimary)
-                                .multilineTextAlignment(.center)
+                    VStack(spacing: PicoSpacing.compact) {
+                        Text("Pico")
+                            .font(PicoTypography.screenTitle)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .multilineTextAlignment(.center)
 
-                            Text("Guilt-free focus")
-                                .font(PicoTypography.body)
-                                .foregroundStyle(PicoColors.textSecondary)
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    Spacer(minLength: PicoSpacing.largeSection)
-
-                    VStack(spacing: PicoSpacing.iconTextGap) {
-                        Button("Get started", action: onGetStarted)
-                            .buttonStyle(PicoPrimaryButtonStyle())
-
-                        Button("Already have an account?", action: onLogin)
-                            .buttonStyle(PicoSecondaryButtonStyle())
+                        Text("Guilt-free focus")
+                            .font(PicoTypography.body)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .frame(maxWidth: 520)
-                .frame(minHeight: proxy.size.height)
-                .padding(.horizontal, PicoSpacing.standard)
-                .padding(.bottom, max(PicoSpacing.section, proxy.safeAreaInsets.bottom + PicoSpacing.standard))
-                .frame(maxWidth: .infinity)
+
+                Spacer(minLength: PicoSpacing.largeSection)
+
+                VStack(spacing: PicoSpacing.iconTextGap) {
+                    Button("Get started", action: onGetStarted)
+                        .buttonStyle(PicoPrimaryButtonStyle())
+
+                    Button("Already have an account?", action: onLogin)
+                        .buttonStyle(PicoSecondaryButtonStyle())
+                }
             }
-            .scrollIndicators(.hidden)
+            .frame(maxWidth: 520)
+            .padding(.horizontal, PicoSpacing.standard)
+            .padding(.bottom, max(PicoSpacing.section, proxy.safeAreaInsets.bottom + PicoSpacing.standard))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
         .preferredColorScheme(.light)

@@ -248,12 +248,13 @@ private struct IncomingRequestsPage: View {
                     .tint(PicoColors.primary)
             }
             .padding(PicoSpacing.standard)
-            .picoCreamCard()
+            .picoCreamCard(showsShadow: false)
         } else if friendStore.incomingRequests.isEmpty {
             FriendEmptyStateCard(
                 title: "No incoming requests",
                 message: "Friend requests sent to you will appear here.",
-                imageName: "Letter"
+                imageName: "Letter",
+                showsShadow: false
             )
         } else {
             ForEach(friendStore.incomingRequests) { request in
@@ -611,7 +612,7 @@ private struct IncomingFriendRequestCard: View {
                 .disabled(friendStore.activeRequestID != nil)
             }
         }
-        .picoCreamCard(padding: PicoCreamCardStyle.contentPadding)
+        .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.contentPadding)
     }
 }
 
@@ -659,19 +660,22 @@ private struct FriendEmptyStateCard: View {
     let message: String
     let icon: PicoIconAsset?
     let imageName: String?
+    let showsShadow: Bool
 
-    init(title: String, message: String, icon: PicoIconAsset) {
+    init(title: String, message: String, icon: PicoIconAsset, showsShadow: Bool = true) {
         self.title = title
         self.message = message
         self.icon = icon
         self.imageName = nil
+        self.showsShadow = showsShadow
     }
 
-    init(title: String, message: String, imageName: String) {
+    init(title: String, message: String, imageName: String, showsShadow: Bool = true) {
         self.title = title
         self.message = message
         self.icon = nil
         self.imageName = imageName
+        self.showsShadow = showsShadow
     }
 
     var body: some View {
@@ -690,7 +694,7 @@ private struct FriendEmptyStateCard: View {
         }
         .frame(maxWidth: .infinity)
         .padding(PicoSpacing.cardPadding)
-        .picoCreamCard()
+        .picoCreamCard(showsShadow: showsShadow)
     }
 
     @ViewBuilder
