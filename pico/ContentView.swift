@@ -5930,10 +5930,10 @@ private extension PicoIsland {
             ]
         case .sand:
             [
-                "Icons/IslandSelector_Sand",
-                "Icons/IslandSelector_Sand.png",
-                "IslandSelector_Sand",
-                "IslandSelector_Sand.png"
+                "Icons/SandPile",
+                "Icons/SandPile.png",
+                "SandPile",
+                "SandPile.png"
             ]
         }
     }

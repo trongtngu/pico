@@ -292,6 +292,14 @@ private final class VillageScene: SKScene {
             }
         }
     )
+    private static let sandIslandPalmTreeTiles: Set<TileCoordinate> = [
+        TileCoordinate(row: 1, column: 1),
+        TileCoordinate(row: 1, column: 3),
+        TileCoordinate(row: 1, column: 5)
+    ]
+    private static var sandIslandObstacleTiles: Set<TileCoordinate> {
+        sandIslandPalmTreeTiles
+    }
     private static let originalMainFishingSpot = FishingSpot(
         tile: TileCoordinate(row: 1, column: 2),
         animationRow: 1,
@@ -487,7 +495,12 @@ private final class VillageScene: SKScene {
                 "Mushroom_Poisones4.png"
             ])
         ].compactMapValues { $0 }
-
+        let palmTreeTexture = Self.imageTexture(candidates: [
+            "Icons/palm tree",
+            "Icons/palm tree.png",
+            "palm tree",
+            "palm tree.png"
+        ])
         for tile in TileCoordinate.all(in: gridSize) {
             let texture = texture(
                 for: tile,
@@ -520,6 +533,13 @@ private final class VillageScene: SKScene {
             guard let texture = mushroomTextures[decoration] else { continue }
             addDecorationSprite(texture: texture, tile: tile, layout: layout, decoration: decoration)
         }
+
+        if let palmTreeTexture {
+            for tile in Self.sandIslandPalmTreeTiles where mapStyle == .sandIsland {
+                addPalmTreeSprite(texture: palmTreeTexture, tile: tile, layout: layout)
+            }
+        }
+
     }
 
     private func texture(
@@ -605,7 +625,7 @@ private final class VillageScene: SKScene {
         case .originalIsland:
             return !Self.originalIslandObstacleTiles.contains(tile)
         case .sandIsland:
-            return true
+            return !Self.sandIslandObstacleTiles.contains(tile)
         }
     }
 
@@ -645,6 +665,22 @@ private final class VillageScene: SKScene {
         sprite.size = CGSize(width: layout.tileWidth * widthScale, height: layout.tileWidth * widthScale * aspectRatio)
         sprite.position = basePosition
         sprite.zPosition = -basePosition.y
+        addGridNode(sprite)
+    }
+
+    private func addPalmTreeSprite(
+        texture: SKTexture,
+        tile: TileCoordinate,
+        layout: VillageSceneLayout
+    ) {
+        let center = layout.center(for: tile)
+        let aspectRatio = texture.size().height / max(texture.size().width, 1)
+        let width = layout.tileWidth * 1.55
+        let sprite = SKSpriteNode(texture: texture)
+        sprite.anchorPoint = CGPoint(x: 0.5, y: 0.12)
+        sprite.size = CGSize(width: width, height: width * aspectRatio)
+        sprite.position = center
+        sprite.zPosition = -center.y
         addGridNode(sprite)
     }
 

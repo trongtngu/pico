@@ -23,10 +23,8 @@ struct AuthEntryView: View {
                         .frame(width: 180, height: 180)
 
                     VStack(spacing: PicoSpacing.compact) {
-                        Text("Pico")
-                            .font(PicoTypography.screenTitle)
-                            .foregroundStyle(PicoColors.textPrimary)
-                            .multilineTextAlignment(.center)
+                        PicoLogoImage()
+                            .frame(width: 180, height: 80)
 
                         Text("Guilt-free focus")
                             .font(PicoTypography.body)
@@ -53,6 +51,35 @@ struct AuthEntryView: View {
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
         .preferredColorScheme(.light)
+    }
+}
+
+private struct PicoLogoImage: View {
+    private let image = [
+        "Icons/pico_logo",
+        "Icons/pico_logo.png",
+        "pico_logo",
+        "pico_logo.png"
+    ]
+    .lazy
+    .compactMap { UIImage(named: $0) }
+    .first
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Text("Pico")
+                    .font(PicoTypography.screenTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Pico"))
     }
 }
 
@@ -127,6 +154,12 @@ struct OnboardingSequenceView: View {
     @State private var currentStep: OnboardingStep = OnboardingStep.ordered.first ?? .startFishing
     @State private var hasTrackedOnboardingStart = false
     @State private var lastTrackedScreenStep: OnboardingStep?
+    @State private var selectedPhoneUsageHours = 4
+    @State private var doesNotKnowPhoneUsage = false
+    @State private var selectedFocusIntents: Set<OnboardingFocusIntent> = [.studying]
+    @State private var selectedFocusGoal: OnboardingFocusGoal = .twentyFiveMinutes
+    @State private var selectedFocusBarrier: OnboardingFocusBarrier?
+    @State private var hasTriedProductivityApps: Bool?
 
     private let onboardingVariant = "default"
 
@@ -135,102 +168,112 @@ struct OnboardingSequenceView: View {
     }
 
     private var primaryCTATitle: String {
+        if currentStep.isPreferenceStep {
+            return "Continue"
+        }
+
         if currentStep == .startFishing {
-            return "Start fishing"
+            return "Continue"
         }
 
         if currentStep == .brokenLine {
-            return "I'll focus"
+            return "continue"
         }
 
         return "Continue"
     }
 
+    private var primaryCTAAnalyticsActionName: String {
+        switch currentStep {
+        case .startFishing:
+            "start_fishing"
+        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+            "next"
+        }
+    }
+
     var body: some View {
         GeometryReader { proxy in
-            let visualHeight = min(max(proxy.size.height * 0.48, 390), 460)
+            let visualHeight = min(max(proxy.size.height * 0.42, 320), 430)
 
             VStack(spacing: 0) {
                 OnboardingProgressHeader(
                     currentIndex: currentIndex,
                     totalCount: OnboardingStep.ordered.count,
-                    onBack: goBack,
-                    topInset: proxy.safeAreaInsets.top
+                    onBack: goBack
                 )
 
                 VStack(spacing: 0) {
-                    Group {
-                        if currentStep == .startFishing || currentStep == .stayFocused || currentStep == .brokenLine {
-                            StartFishingOnboardingVisual(isFishing: currentStep != .startFishing)
-                                .frame(height: visualHeight)
-                        } else if currentStep == .rareFish {
-                            RareSeaCreaturesOnboardingVisual()
-                                .frame(height: visualHeight)
-                        } else if currentStep == .friendBonds {
-                            FriendBondsOnboardingVisual()
-                                .frame(height: visualHeight)
-                        } else if currentStep == .authHandoff {
-                            OnboardingAccountAvatarVisual()
-                                .frame(height: visualHeight)
-                        } else {
-                            OnboardingPlaceholderVisual(
-                                symbol: currentStep.visualSymbol,
-                                subtitle: "Placeholder visual"
-                            )
-                            .frame(width: min(visualHeight, 300), height: min(visualHeight, 300))
+                    if currentStep.isPreferenceStep {
+                        Spacer(minLength: PicoSpacing.compact)
+
+                        OnboardingSetupStepContent(
+                            step: currentStep,
+                            selectedPhoneUsageHours: $selectedPhoneUsageHours,
+                            doesNotKnowPhoneUsage: $doesNotKnowPhoneUsage,
+                            selectedFocusIntents: $selectedFocusIntents,
+                            selectedFocusGoal: $selectedFocusGoal,
+                            selectedFocusBarrier: $selectedFocusBarrier,
+                            hasTriedProductivityApps: $hasTriedProductivityApps
+                        )
+
+                        Spacer(minLength: PicoSpacing.compact)
+
+                        if currentStep == .phoneUsage {
+                            OnboardingChoiceButton(
+                                title: "I don't know",
+                                isSelected: doesNotKnowPhoneUsage
+                            ) {
+                                doesNotKnowPhoneUsage.toggle()
+                            }
+                            .padding(.bottom, PicoSpacing.iconTextGap)
                         }
-                    }
-                    .padding(.top, PicoSpacing.section)
 
-                    Spacer(minLength: PicoSpacing.compact)
+                        Button(action: handlePrimaryAction) {
+                            OnboardingPrimaryCTALabel(title: primaryCTATitle)
+                        }
+                        .buttonStyle(PicoPrimaryButtonStyle())
+                    } else {
+                        Spacer(minLength: PicoSpacing.compact)
 
-                    VStack(spacing: PicoSpacing.section) {
-                        VStack(spacing: PicoSpacing.compact) {
-                            if currentStep != .startFishing && currentStep != .stayFocused {
-                                if currentStep == .brokenLine {
-                                    OnboardingBrokenLineTitle()
+                        VStack(spacing: 0) {
+                            OnboardingStoryStepTitle(currentStep: currentStep)
+
+                            Group {
+                                if currentStep == .startFishing || currentStep == .stayFocused || currentStep == .brokenLine {
+                                    StartFishingOnboardingVisual(
+                                        isFishing: currentStep != .startFishing,
+                                        showsFriend: currentStep == .brokenLine
+                                    )
+                                        .frame(height: visualHeight)
                                 } else if currentStep == .rareFish {
-                                    OnboardingRareSeaCreaturesTitle()
+                                    RareSeaCreaturesOnboardingVisual()
+                                        .frame(height: visualHeight)
                                 } else if currentStep == .friendBonds {
-                                    OnboardingFriendBondsTitle()
+                                    FriendBondsOnboardingVisual()
+                                        .frame(height: visualHeight)
                                 } else if currentStep == .authHandoff {
-                                    OnboardingAuthHandoffTitle()
+                                    OnboardingAccountAvatarVisual()
+                                        .frame(height: visualHeight)
                                 } else {
-                                    Text(currentStep.title)
-                                        .font(PicoTypography.sectionTitle)
-                                        .foregroundStyle(PicoColors.textPrimary)
-                                        .multilineTextAlignment(.center)
-                                        .fixedSize(horizontal: false, vertical: true)
+                                    OnboardingPlaceholderVisual(
+                                        symbol: currentStep.visualSymbol,
+                                        subtitle: "Placeholder visual"
+                                    )
+                                    .frame(width: min(visualHeight, 300), height: min(visualHeight, 300))
                                 }
                             }
-
-                            if currentStep == .startFishing {
-                                OnboardingStartFishingTitle()
-                            } else if currentStep == .stayFocused {
-                                OnboardingStayFocusedTitle()
-                            } else if currentStep != .brokenLine && currentStep != .rareFish && currentStep != .friendBonds && currentStep != .authHandoff {
-                                Text(currentStep.placeholderText)
-                                    .font(PicoTypography.body)
-                                    .foregroundStyle(PicoColors.textSecondary)
-                                    .multilineTextAlignment(.center)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
                         }
 
-                        if currentStep == .authHandoff {
-                            VStack(spacing: PicoSpacing.iconTextGap) {
-                                Button("Continue with email", action: handleSignupAction)
-                                    .buttonStyle(PicoPrimaryButtonStyle())
+                        Spacer(minLength: PicoSpacing.compact)
 
-                                Button("Already have an account? Log in", action: onLogin)
-                                    .buttonStyle(PicoSecondaryButtonStyle())
-                            }
-                        } else {
-                            Button(action: handlePrimaryAction) {
-                                OnboardingPrimaryCTALabel(title: primaryCTATitle)
-                            }
-                            .buttonStyle(PicoPrimaryButtonStyle())
-                        }
+                        OnboardingStoryStepActions(
+                            currentStep: currentStep,
+                            primaryCTATitle: primaryCTATitle,
+                            handlePrimaryAction: handlePrimaryAction,
+                            handleSignupAction: handleSignupAction,
+                            onLogin: onLogin
+                        )
                     }
                 }
                 .frame(maxWidth: 520)
@@ -253,7 +296,7 @@ struct OnboardingSequenceView: View {
     private func handlePrimaryAction() {
         AnalyticsService.track(.onboardingActionTapped(
             screenName: currentStep.analyticsName,
-            actionName: currentStep == .startFishing ? "start_fishing" : "next",
+            actionName: primaryCTAAnalyticsActionName,
             onboardingVariant: onboardingVariant
         ))
         goForward()
@@ -311,6 +354,11 @@ struct OnboardingSequenceView: View {
 }
 
 enum OnboardingStep: String, CaseIterable, Identifiable {
+    case phoneUsage
+    case focusIntent
+    case focusGoal
+    case focusBarrier
+    case productivityExperience
     case startFishing
     case stayFocused
     case brokenLine
@@ -319,11 +367,14 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
     case authHandoff
 
     static let ordered: [OnboardingStep] = [
+        .phoneUsage,
+        .focusIntent,
+        .focusGoal,
+        .productivityExperience,
+        .focusBarrier,
         .startFishing,
         .stayFocused,
         .brokenLine,
-        .rareFish,
-        .friendBonds,
         .authHandoff
     ]
 
@@ -331,12 +382,22 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .phoneUsage:
+            "How much time do you spend on your phone?"
+        case .focusIntent:
+            "What do you want to focus on instead?"
+        case .focusGoal:
+            "How much focus do you want back?"
+        case .focusBarrier:
+            "What's stopping you?"
+        case .productivityExperience:
+            "Have you tried other apps?"
         case .startFishing:
             "Start fishing"
         case .stayFocused:
-            "Discover sea creatures as you focus"
+            "Catch fish while you focus"
         case .brokenLine:
-            "Using your phone will scare away the sea life"
+            "Focus better with friends"
         case .rareFish:
             "Discover rare sea creatures"
         case .friendBonds:
@@ -348,10 +409,20 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
 
     var placeholderText: String {
         switch self {
+        case .phoneUsage:
+            ""
+        case .focusIntent:
+            ""
+        case .focusGoal:
+            "You can always change this goal later"
+        case .focusBarrier:
+            ""
+        case .productivityExperience:
+            ""
         case .startFishing:
-            "Welcome to Pico! Discover sea creatures as you focus"
+            "Pico creates a guilt-free focus island"
         case .stayFocused:
-            "Discover sea creatures as you focus."
+            "Catch fish while you focus"
         case .brokenLine:
             "Placeholder copy for explaining that using your phone breaks the fishing line for that focus session."
         case .rareFish:
@@ -365,23 +436,43 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
 
     var visualSymbol: String {
         switch self {
-        case .startFishing:
+        case .phoneUsage:
             "1"
-        case .stayFocused:
+        case .focusIntent:
             "2"
-        case .brokenLine:
+        case .focusGoal:
             "3"
-        case .rareFish:
+        case .productivityExperience:
             "4"
-        case .friendBonds:
+        case .focusBarrier:
             "5"
-        case .authHandoff:
+        case .startFishing:
             "6"
+        case .stayFocused:
+            "7"
+        case .brokenLine:
+            "8"
+        case .rareFish:
+            "9"
+        case .friendBonds:
+            "10"
+        case .authHandoff:
+            "11"
         }
     }
 
     var analyticsName: String {
         switch self {
+        case .phoneUsage:
+            "phone_usage"
+        case .focusIntent:
+            "focus_intent"
+        case .focusGoal:
+            "focus_goal"
+        case .focusBarrier:
+            "focus_barrier"
+        case .productivityExperience:
+            "productivity_experience"
         case .startFishing:
             "start_fishing"
         case .stayFocused:
@@ -396,45 +487,463 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "auth_handoff"
         }
     }
+
+    var isPreferenceStep: Bool {
+        switch self {
+        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience:
+            true
+        case .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+            false
+        }
+    }
+}
+
+private enum OnboardingFocusIntent: String, CaseIterable, Identifiable {
+    case studying = "Studying"
+    case friendsFamily = "Friends/Family"
+    case work = "Work"
+    case creativeProjects = "Creative projects"
+    case reading = "Reading"
+    case exercise = "Exercise"
+    case fitness = "Fitness"
+    case somethingElse = "Something else"
+
+    var id: String { rawValue }
+}
+
+private enum OnboardingFocusGoal: String, CaseIterable, Identifiable {
+    case tenMinutes = "10mins"
+    case twentyFiveMinutes = "25mins"
+    case oneHourPlus = "1hour+"
+
+    var id: String { rawValue }
+}
+
+private enum OnboardingFocusBarrier: String, CaseIterable, Identifiable {
+    case hardToFocusAlone = "It's hard to focus alone"
+    case blockingAppsStopsWorking = "Blocking apps stops working"
+    case slowlyQuit = "I start, then slowly quit"
+    case loseMotivationQuickly = "I lose motivation quickly"
+    case distractedEasily = "I get distracted easily"
+
+    var id: String { rawValue }
+}
+
+private struct OnboardingSetupStepContent: View {
+    let step: OnboardingStep
+    @Binding var selectedPhoneUsageHours: Int
+    @Binding var doesNotKnowPhoneUsage: Bool
+    @Binding var selectedFocusIntents: Set<OnboardingFocusIntent>
+    @Binding var selectedFocusGoal: OnboardingFocusGoal
+    @Binding var selectedFocusBarrier: OnboardingFocusBarrier?
+    @Binding var hasTriedProductivityApps: Bool?
+
+    private let optionColumns = [
+        GridItem(.adaptive(minimum: 132), spacing: PicoSpacing.iconTextGap)
+    ]
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.largeSection) {
+            switch step {
+            case .phoneUsage:
+                phoneUsageContent
+            case .focusIntent:
+                focusIntentContent
+            case .focusGoal:
+                focusGoalContent
+            case .focusBarrier:
+                focusBarrierContent
+            case .productivityExperience:
+                productivityExperienceContent
+            case .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+                EmptyView()
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var phoneUsageContent: some View {
+        VStack(spacing: PicoSpacing.section) {
+            OnboardingQuestionTitle(title: step.title)
+
+            OnboardingPhoneUsageSlider(
+                selectedHours: $selectedPhoneUsageHours,
+                doesNotKnowPhoneUsage: $doesNotKnowPhoneUsage
+            )
+        }
+    }
+
+    private var focusIntentContent: some View {
+        VStack(spacing: PicoSpacing.section) {
+            OnboardingQuestionTitle(title: step.title)
+
+            LazyVGrid(columns: optionColumns, spacing: PicoSpacing.iconTextGap) {
+                ForEach(OnboardingFocusIntent.allCases) { intent in
+                    OnboardingChoiceButton(
+                        title: intent.rawValue,
+                        isSelected: selectedFocusIntents.contains(intent)
+                    ) {
+                        toggleFocusIntent(intent)
+                    }
+                }
+            }
+        }
+    }
+
+    private func toggleFocusIntent(_ intent: OnboardingFocusIntent) {
+        if selectedFocusIntents.contains(intent) {
+            selectedFocusIntents.remove(intent)
+        } else {
+            selectedFocusIntents.insert(intent)
+        }
+    }
+
+    private var focusGoalContent: some View {
+        VStack(spacing: PicoSpacing.section) {
+            OnboardingQuestionTitle(title: step.title)
+
+            Text(step.placeholderText)
+                .font(PicoTypography.body)
+                .foregroundStyle(PicoColors.textSecondary)
+                .multilineTextAlignment(.center)
+
+            VStack(spacing: PicoSpacing.iconTextGap) {
+                ForEach(OnboardingFocusGoal.allCases) { goal in
+                    OnboardingChoiceButton(
+                        title: goal.rawValue,
+                        isSelected: selectedFocusGoal == goal
+                    ) {
+                        selectedFocusGoal = goal
+                    }
+                }
+            }
+        }
+    }
+
+    private var focusBarrierContent: some View {
+        VStack(spacing: PicoSpacing.section) {
+            OnboardingQuestionTitle(title: step.title)
+
+            VStack(spacing: PicoSpacing.iconTextGap) {
+                ForEach(OnboardingFocusBarrier.allCases) { barrier in
+                    OnboardingChoiceButton(
+                        title: barrier.rawValue,
+                        isSelected: selectedFocusBarrier == barrier
+                    ) {
+                        selectedFocusBarrier = barrier
+                    }
+                }
+            }
+        }
+    }
+
+    private var productivityExperienceContent: some View {
+        VStack(spacing: PicoSpacing.section) {
+            OnboardingQuestionTitle(title: step.title)
+
+            VStack(spacing: PicoSpacing.iconTextGap) {
+                OnboardingChoiceButton(
+                    title: "Yes",
+                    isSelected: hasTriedProductivityApps == true
+                ) {
+                    hasTriedProductivityApps = true
+                }
+
+                OnboardingChoiceButton(
+                    title: "No",
+                    isSelected: hasTriedProductivityApps == false
+                ) {
+                    hasTriedProductivityApps = false
+                }
+            }
+        }
+    }
+}
+
+private struct OnboardingStoryStepTitle: View {
+    let currentStep: OnboardingStep
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.compact) {
+            if currentStep != .startFishing && currentStep != .stayFocused {
+                if currentStep == .brokenLine {
+                    OnboardingBrokenLineTitle()
+                } else if currentStep == .rareFish {
+                    OnboardingRareSeaCreaturesTitle()
+                } else if currentStep == .friendBonds {
+                    OnboardingFriendBondsTitle()
+                } else if currentStep == .authHandoff {
+                    OnboardingAuthHandoffTitle()
+                } else {
+                    Text(currentStep.title)
+                        .font(PicoTypography.sectionTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if currentStep == .startFishing {
+                OnboardingStartFishingTitle()
+            } else if currentStep == .stayFocused {
+                OnboardingStayFocusedTitle()
+            } else if currentStep != .brokenLine && currentStep != .rareFish && currentStep != .friendBonds && currentStep != .authHandoff {
+                Text(currentStep.placeholderText)
+                    .font(PicoTypography.body)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct OnboardingStoryStepActions: View {
+    let currentStep: OnboardingStep
+    let primaryCTATitle: String
+    let handlePrimaryAction: () -> Void
+    let handleSignupAction: () -> Void
+    let onLogin: () -> Void
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.iconTextGap) {
+            if currentStep == .authHandoff {
+                VStack(spacing: PicoSpacing.iconTextGap) {
+                    Button("Continue with email", action: handleSignupAction)
+                        .buttonStyle(PicoPrimaryButtonStyle())
+
+                    Button("Already have an account? Log in", action: onLogin)
+                        .buttonStyle(PicoSecondaryButtonStyle())
+                }
+            } else {
+                Button(action: handlePrimaryAction) {
+                    OnboardingPrimaryCTALabel(title: primaryCTATitle)
+                }
+                .buttonStyle(PicoPrimaryButtonStyle())
+            }
+        }
+    }
+}
+
+private struct OnboardingQuestionTitle: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(PicoTypography.sectionTitle)
+            .foregroundStyle(PicoColors.textPrimary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct OnboardingChoiceButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: PicoSpacing.iconTextGap) {
+                Text(title)
+                    .font(PicoTypography.primaryLabelSemibold)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.82)
+
+                Spacer(minLength: PicoSpacing.compact)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(PicoTypography.symbol(size: 22, weight: .semibold))
+                    .foregroundStyle(isSelected ? PicoColors.primary : PicoColors.textMuted)
+            }
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .padding(.horizontal, PicoSpacing.standard)
+            .background(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .fill(PicoColors.softSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .stroke(isSelected ? PicoColors.primary : PicoColors.border, lineWidth: isSelected ? 2 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct OnboardingPhoneUsageSlider: View {
+    @Binding var selectedHours: Int
+    @Binding var doesNotKnowPhoneUsage: Bool
+
+    private let hourRange = 0...12
+    private let trackHeight: CGFloat = 10
+    private let thumbSize: CGFloat = 32
+
+    private var progress: CGFloat {
+        CGFloat(selectedHours - hourRange.lowerBound) / CGFloat(hourRange.upperBound - hourRange.lowerBound)
+    }
+
+    private var hourText: String {
+        if selectedHours == 0 {
+            return "Less than 1 hour"
+        }
+
+        if selectedHours == 1 {
+            return "1 hour"
+        }
+
+        return "\(selectedHours) hours"
+    }
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.section) {
+            Text(hourText)
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .multilineTextAlignment(.center)
+
+            GeometryReader { proxy in
+                let usableWidth = max(proxy.size.width - thumbSize, 1)
+                let thumbX = usableWidth * progress
+
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(PicoColors.softSurface)
+                        .frame(height: trackHeight)
+
+                    Capsule(style: .continuous)
+                        .fill(PicoColors.primary)
+                        .frame(width: thumbX + thumbSize / 2, height: trackHeight)
+
+                    Circle()
+                        .fill(PicoColors.surface)
+                        .frame(width: thumbSize, height: thumbSize)
+                        .overlay(
+                            Circle()
+                                .stroke(PicoColors.primary, lineWidth: 2)
+                        )
+                        .shadow(color: PicoShadow.raisedCardColor, radius: 6, x: 0, y: 3)
+                        .offset(x: thumbX)
+                }
+                .frame(height: thumbSize)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { gesture in
+                            updateSelection(at: gesture.location.x, usableWidth: usableWidth)
+                        }
+                )
+            }
+            .frame(height: thumbSize)
+
+            HStack {
+                Text("0h")
+                Spacer()
+                Text("6h")
+                Spacer()
+                Text("12h+")
+            }
+            .font(PicoTypography.captionSemibold)
+            .foregroundStyle(PicoColors.textSecondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Daily phone usage"))
+        .accessibilityValue(Text(hourText))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                moveSelection(by: 1)
+            case .decrement:
+                moveSelection(by: -1)
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private func updateSelection(at xPosition: CGFloat, usableWidth: CGFloat) {
+        let rawProgress = min(max(Double((xPosition - thumbSize / 2) / usableWidth), 0), 1)
+        let hours = Int((rawProgress * Double(hourRange.upperBound - hourRange.lowerBound)).rounded()) + hourRange.lowerBound
+        selectedHours = min(max(hours, hourRange.lowerBound), hourRange.upperBound)
+        doesNotKnowPhoneUsage = false
+    }
+
+    private func moveSelection(by offset: Int) {
+        selectedHours = min(max(selectedHours + offset, hourRange.lowerBound), hourRange.upperBound)
+        doesNotKnowPhoneUsage = false
+    }
 }
 
 private struct StartFishingOnboardingVisual: View {
     let isFishing: Bool
+    var showsFriend = false
 
-    private static let previewProfile = UserProfile(
-        userID: UUID(uuidString: "4F2FBD45-57C9-4B16-8DE1-07B4460831D6") ?? UUID(),
-        username: "pico",
-        displayName: "Pico",
-        avatarConfig: AvatarCatalog.defaultConfig
-    )
+    private var previewProfile: UserProfile {
+        UserProfile(
+            userID: UUID(uuidString: "4F2FBD45-57C9-4B16-8DE1-07B4460831D6") ?? UUID(),
+            username: "pico",
+            displayName: "Pico",
+            avatarConfig: AvatarCatalog.defaultConfig
+        )
+    }
+
+    private var friendProfile: UserProfile {
+        UserProfile(
+            userID: UUID(uuidString: "A0F2D726-1967-45FB-89E9-A21DD3C0C3E8") ?? UUID(),
+            username: "kai",
+            displayName: "Kai",
+            avatarConfig: AvatarCatalog.defaultConfig.withHat(.beanie)
+        )
+    }
+
+    private var participants: [IslandParticipant]? {
+        guard showsFriend else { return nil }
+
+        return [
+            IslandParticipant(profile: previewProfile, bondLevel: 0),
+            IslandParticipant(profile: friendProfile, bondLevel: 0)
+        ]
+    }
 
     var body: some View {
         VillageView(
             residents: [],
-            currentUserProfile: Self.previewProfile,
+            currentUserProfile: previewProfile,
+            participants: participants,
             isFishingMode: isFishing,
             mapStyle: .originalIsland,
             maxTileWidth: 50,
             mapYOffset: -76
         )
-        .accessibilityLabel(Text(isFishing ? "Pico avatar fishing on the island" : "Pico avatar on the island"))
+        .accessibilityLabel(Text(accessibilityLabel))
+    }
+
+    private var accessibilityLabel: String {
+        if showsFriend {
+            return "Pico and a friend avatar fishing together on the island"
+        }
+
+        return isFishing ? "Pico avatar fishing on the island" : "Pico avatar on the island"
     }
 }
 
 private struct RareSeaCreaturesOnboardingVisual: View {
     private let assetNames = [
-        "Fish_WhaleShark",
-        "SeaMammal_Narwhale",
-        "Fish_HammerHeadShark",
-        "SeaInvertebrate_Jellyfish_Blue",
-        "DeepSeaFish_AnglerFish",
-        "SeaReptile_Turtle",
-        "SeaMammal_Orca",
-        "SeaShellfish_Nautilus",
-        "Fish_StingRay",
-        "SeaInvertebrate_Octopus_Orange",
+        "Fish_MarlinSwordfish",
         "Fish_GreatWhiteShark",
-        "SeaInvertebrate_Squid_Pink"
+        "Fish_HammerHeadShark",
+        "Fish_Sunfish",
+        "Fish_Tuna",
+        "Fish_PufferFish",
+        "TropicalFish_LionFish",
+        "TropicalFish_ButterflyFish",
+        "SeaInvertebrate_Octopus_Orange",
+        "SeaMammal_Dolphin",
+        "Fish_Salmon",
+        "SeaShellfish_Lobster_Red"
     ]
 
     private let secondsPerStep: TimeInterval = 1.85
@@ -619,7 +1128,6 @@ private struct OnboardingProgressHeader: View {
     let currentIndex: Int
     let totalCount: Int
     let onBack: () -> Void
-    let topInset: CGFloat
 
     var body: some View {
         HStack(spacing: PicoSpacing.compact) {
@@ -638,8 +1146,7 @@ private struct OnboardingProgressHeader: View {
             .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, PicoSpacing.standard)
-        .padding(.top, max(0, topInset))
-        .frame(height: topInset + 56, alignment: .top)
+        .frame(height: 56)
         .background(PicoColors.appBackground)
     }
 }
@@ -655,20 +1162,19 @@ private struct OnboardingPrimaryCTALabel: View {
 }
 
 private struct OnboardingStartFishingTitle: View {
-    private let titleFont = PicoTypography.primary(size: 24, weight: .semibold)
+    private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: PicoSpacing.tiny) {
             Text("Welcome to Pico!")
-                .font(titleFont)
-                .foregroundStyle(PicoColors.textPrimary)
-
-            OnboardingFirstCatchTitle(titleFont: titleFont)
+            Text("Your guilt-free focus island")
         }
+        .font(titleFont)
+        .foregroundStyle(PicoColors.textPrimary)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Welcome to Pico! What will you catch today?"))
+        .accessibilityLabel(Text("Welcome! to pico. Stay at a guilt-free focus island"))
     }
 }
 
@@ -702,33 +1208,21 @@ private struct OnboardingFirstCatchTitle: View {
 }
 
 private struct OnboardingStayFocusedTitle: View {
-    private let titleFont = PicoTypography.primary(size: 24, weight: .semibold)
+    private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
-        VStack(spacing: 2) {
-            Text("Discover sea creatures")
-                .font(titleFont)
-                .foregroundStyle(PicoColors.textPrimary)
-
-            HStack(alignment: .center, spacing: PicoSpacing.tiny) {
-                Text("as you focus.")
-                    .font(titleFont)
-                    .foregroundStyle(PicoColors.textPrimary)
-
-                OnboardingBucketImage()
-                    .frame(width: 34, height: 34)
-                    .accessibilityHidden(true)
-            }
-        }
+        Text("Catch fish while you focus")
+            .font(titleFont)
+            .foregroundStyle(PicoColors.textPrimary)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Discover sea creatures as you focus."))
+        .accessibilityLabel(Text("Catch fish while you focus"))
     }
 }
 
 private struct OnboardingFriendBondsTitle: View {
-    private let titleFont = PicoTypography.primary(size: 24, weight: .semibold)
+    private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
         VStack(spacing: 2) {
@@ -754,7 +1248,7 @@ private struct OnboardingFriendBondsTitle: View {
 }
 
 private struct OnboardingRareSeaCreaturesTitle: View {
-    private let titleFont = PicoTypography.primary(size: 24, weight: .semibold)
+    private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
         HStack(alignment: .center, spacing: PicoSpacing.tiny) {
@@ -774,7 +1268,7 @@ private struct OnboardingRareSeaCreaturesTitle: View {
 }
 
 private struct OnboardingAuthHandoffTitle: View {
-    private let titleFont = PicoTypography.primary(size: 24, weight: .semibold)
+    private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
         Text(OnboardingStep.authHandoff.title)
@@ -873,27 +1367,14 @@ private struct OnboardingBucketImage: View {
 }
 
 private struct OnboardingBrokenLineTitle: View {
-    private let titleFont = PicoTypography.primary(size: 24, weight: .semibold)
+    private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
-        VStack(spacing: 2) {
-            Text("Using your phone scares")
-                .font(titleFont)
-                .foregroundStyle(PicoColors.textPrimary)
-
-            HStack(alignment: .center, spacing: PicoSpacing.tiny) {
-                Text("away the sea life")
-                    .font(titleFont)
-                    .foregroundStyle(PicoColors.textPrimary)
-
-                OnboardingEmptyBucketImage()
-                    .frame(width: 34, height: 34)
-                    .accessibilityHidden(true)
-            }
-        }
+        Text(OnboardingStep.brokenLine.title)
+            .font(titleFont)
+            .foregroundStyle(PicoColors.textPrimary)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(OnboardingStep.brokenLine.title))
     }
 }
