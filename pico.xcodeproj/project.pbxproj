@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		65C07C552FB31D44000AA6AB /* SuperwallKit in Frameworks */ = {isa = PBXBuildFile; productRef = 65C07C542FB31D44000AA6AB /* SuperwallKit */; };
 		65D53AE92FAEA13800997E66 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 65D53AE82FAEA13800997E66 /* FirebaseAnalytics */; };
 		C0D000000000000000000001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = C0D000000000000000000002 /* Supabase */; };
 /* End PBXBuildFile section */
@@ -30,6 +31,7 @@
 			files = (
 				65D53AE92FAEA13800997E66 /* FirebaseAnalytics in Frameworks */,
 				C0D000000000000000000001 /* Supabase in Frameworks */,
+				65C07C552FB31D44000AA6AB /* SuperwallKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -82,6 +84,7 @@
 			packageProductDependencies = (
 				C0D000000000000000000002 /* Supabase */,
 				65D53AE82FAEA13800997E66 /* FirebaseAnalytics */,
+				65C07C542FB31D44000AA6AB /* SuperwallKit */,
 			);
 			productName = pico;
 			productReference = 65403AED2F9C237800C650A9 /* Pico: Focus Together.app */;
@@ -114,6 +117,7 @@
 			packageReferences = (
 				C0D000000000000000000003 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				65D53AE62FAE9EB000997E66 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				65C07C532FB31D44000AA6AB /* XCRemoteSwiftPackageReference "Superwall-iOS" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 65403AEE2F9C237800C650A9 /* Products */;
@@ -369,6 +373,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		65C07C532FB31D44000AA6AB /* XCRemoteSwiftPackageReference "Superwall-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/superwall/Superwall-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 4.15.1;
+			};
+		};
 		65D53AE62FAE9EB000997E66 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
@@ -388,6 +400,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		65C07C542FB31D44000AA6AB /* SuperwallKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 65C07C532FB31D44000AA6AB /* XCRemoteSwiftPackageReference "Superwall-iOS" */;
+			productName = SuperwallKit;
+		};
 		65D53AE82FAEA13800997E66 /* FirebaseAnalytics */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 65D53AE62FAE9EB000997E66 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;

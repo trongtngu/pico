@@ -155,10 +155,9 @@ struct OnboardingSequenceView: View {
     @State private var hasTrackedOnboardingStart = false
     @State private var lastTrackedScreenStep: OnboardingStep?
     @State private var selectedPhoneUsageHours = 4
-    @State private var doesNotKnowPhoneUsage = false
-    @State private var selectedFocusIntents: Set<OnboardingFocusIntent> = [.studying]
-    @State private var selectedFocusGoal: OnboardingFocusGoal = .twentyFiveMinutes
-    @State private var selectedFocusBarrier: OnboardingFocusBarrier?
+    @State private var selectedFocusIntents: Set<OnboardingFocusIntent> = []
+    @State private var selectedFocusGoal: OnboardingFocusGoal?
+    @State private var selectedFocusBarriers: Set<OnboardingFocusBarrier> = []
     @State private var hasTriedProductivityApps: Bool?
 
     private let onboardingVariant = "default"
@@ -180,6 +179,10 @@ struct OnboardingSequenceView: View {
             return "continue"
         }
 
+        if currentStep == .whyOtherAppsFail {
+            return "Try Pico instead"
+        }
+
         return "Continue"
     }
 
@@ -187,8 +190,25 @@ struct OnboardingSequenceView: View {
         switch currentStep {
         case .startFishing:
             "start_fishing"
+        case .whyOtherAppsFail:
+            "try_pico_instead"
         case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
             "next"
+        }
+    }
+
+    private var isPrimaryCTAEnabled: Bool {
+        switch currentStep {
+        case .focusIntent:
+            !selectedFocusIntents.isEmpty
+        case .focusGoal:
+            selectedFocusGoal != nil
+        case .focusBarrier:
+            !selectedFocusBarriers.isEmpty
+        case .productivityExperience:
+            hasTriedProductivityApps != nil
+        case .phoneUsage, .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+            true
         }
     }
 
@@ -210,34 +230,28 @@ struct OnboardingSequenceView: View {
                         OnboardingSetupStepContent(
                             step: currentStep,
                             selectedPhoneUsageHours: $selectedPhoneUsageHours,
-                            doesNotKnowPhoneUsage: $doesNotKnowPhoneUsage,
                             selectedFocusIntents: $selectedFocusIntents,
                             selectedFocusGoal: $selectedFocusGoal,
-                            selectedFocusBarrier: $selectedFocusBarrier,
+                            selectedFocusBarriers: $selectedFocusBarriers,
                             hasTriedProductivityApps: $hasTriedProductivityApps
                         )
 
                         Spacer(minLength: PicoSpacing.compact)
 
-                        if currentStep == .phoneUsage {
-                            OnboardingChoiceButton(
-                                title: "I don't know",
-                                isSelected: doesNotKnowPhoneUsage
-                            ) {
-                                doesNotKnowPhoneUsage.toggle()
-                            }
-                            .padding(.bottom, PicoSpacing.iconTextGap)
-                        }
-
                         Button(action: handlePrimaryAction) {
                             OnboardingPrimaryCTALabel(title: primaryCTATitle)
                         }
                         .buttonStyle(PicoPrimaryButtonStyle())
+                        .disabled(!isPrimaryCTAEnabled)
                     } else {
                         Spacer(minLength: PicoSpacing.compact)
 
-                        VStack(spacing: 0) {
+                        VStack(spacing: currentStep == .whyOtherAppsFail ? PicoSpacing.section : 0) {
                             OnboardingStoryStepTitle(currentStep: currentStep)
+                                .frame(
+                                    minHeight: currentStep.usesIslandVisual ? OnboardingStoryLayout.islandTitleSlotHeight : nil,
+                                    alignment: .bottom
+                                )
 
                             Group {
                                 if currentStep == .startFishing || currentStep == .stayFocused || currentStep == .brokenLine {
@@ -255,6 +269,8 @@ struct OnboardingSequenceView: View {
                                 } else if currentStep == .authHandoff {
                                     OnboardingAccountAvatarVisual()
                                         .frame(height: visualHeight)
+                                } else if currentStep == .whyOtherAppsFail {
+                                    OnboardingPillCardsVisual()
                                 } else {
                                     OnboardingPlaceholderVisual(
                                         symbol: currentStep.visualSymbol,
@@ -359,6 +375,7 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
     case focusGoal
     case focusBarrier
     case productivityExperience
+    case whyOtherAppsFail
     case startFishing
     case stayFocused
     case brokenLine
@@ -372,6 +389,7 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
         .focusGoal,
         .productivityExperience,
         .focusBarrier,
+        .whyOtherAppsFail,
         .startFishing,
         .stayFocused,
         .brokenLine,
@@ -392,6 +410,8 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "What's stopping you?"
         case .productivityExperience:
             "Have you tried other apps?"
+        case .whyOtherAppsFail:
+            "What doesn't work"
         case .startFishing:
             "Start fishing"
         case .stayFocused:
@@ -418,6 +438,8 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
         case .focusBarrier:
             ""
         case .productivityExperience:
+            ""
+        case .whyOtherAppsFail:
             ""
         case .startFishing:
             "Pico creates a guilt-free focus island"
@@ -446,18 +468,20 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "4"
         case .focusBarrier:
             "5"
-        case .startFishing:
+        case .whyOtherAppsFail:
             "6"
-        case .stayFocused:
+        case .startFishing:
             "7"
-        case .brokenLine:
+        case .stayFocused:
             "8"
-        case .rareFish:
+        case .brokenLine:
             "9"
-        case .friendBonds:
+        case .rareFish:
             "10"
-        case .authHandoff:
+        case .friendBonds:
             "11"
+        case .authHandoff:
+            "12"
         }
     }
 
@@ -473,6 +497,8 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "focus_barrier"
         case .productivityExperience:
             "productivity_experience"
+        case .whyOtherAppsFail:
+            "why_other_apps_fail"
         case .startFishing:
             "start_fishing"
         case .stayFocused:
@@ -492,10 +518,23 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
         switch self {
         case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience:
             true
-        case .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+        case .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
             false
         }
     }
+
+    var usesIslandVisual: Bool {
+        switch self {
+        case .startFishing, .stayFocused, .brokenLine:
+            true
+        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .whyOtherAppsFail, .rareFish, .friendBonds, .authHandoff:
+            false
+        }
+    }
+}
+
+private enum OnboardingStoryLayout {
+    static let islandTitleSlotHeight: CGFloat = 76
 }
 
 private enum OnboardingFocusIntent: String, CaseIterable, Identifiable {
@@ -532,10 +571,9 @@ private enum OnboardingFocusBarrier: String, CaseIterable, Identifiable {
 private struct OnboardingSetupStepContent: View {
     let step: OnboardingStep
     @Binding var selectedPhoneUsageHours: Int
-    @Binding var doesNotKnowPhoneUsage: Bool
     @Binding var selectedFocusIntents: Set<OnboardingFocusIntent>
-    @Binding var selectedFocusGoal: OnboardingFocusGoal
-    @Binding var selectedFocusBarrier: OnboardingFocusBarrier?
+    @Binding var selectedFocusGoal: OnboardingFocusGoal?
+    @Binding var selectedFocusBarriers: Set<OnboardingFocusBarrier>
     @Binding var hasTriedProductivityApps: Bool?
 
     private let optionColumns = [
@@ -555,7 +593,7 @@ private struct OnboardingSetupStepContent: View {
                 focusBarrierContent
             case .productivityExperience:
                 productivityExperienceContent
-            case .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+            case .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
                 EmptyView()
             }
         }
@@ -564,11 +602,19 @@ private struct OnboardingSetupStepContent: View {
 
     private var phoneUsageContent: some View {
         VStack(spacing: PicoSpacing.section) {
-            OnboardingQuestionTitle(title: step.title)
+            VStack(spacing: PicoSpacing.compact) {
+                OnboardingQuestionTitle(title: step.title)
+
+                Text("Don't worry, we don't judge")
+                    .font(PicoTypography.body)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, PicoSpacing.standard)
 
             OnboardingPhoneUsageSlider(
-                selectedHours: $selectedPhoneUsageHours,
-                doesNotKnowPhoneUsage: $doesNotKnowPhoneUsage
+                selectedHours: $selectedPhoneUsageHours
             )
         }
     }
@@ -628,12 +674,20 @@ private struct OnboardingSetupStepContent: View {
                 ForEach(OnboardingFocusBarrier.allCases) { barrier in
                     OnboardingChoiceButton(
                         title: barrier.rawValue,
-                        isSelected: selectedFocusBarrier == barrier
+                        isSelected: selectedFocusBarriers.contains(barrier)
                     ) {
-                        selectedFocusBarrier = barrier
+                        toggleFocusBarrier(barrier)
                     }
                 }
             }
+        }
+    }
+
+    private func toggleFocusBarrier(_ barrier: OnboardingFocusBarrier) {
+        if selectedFocusBarriers.contains(barrier) {
+            selectedFocusBarriers.remove(barrier)
+        } else {
+            selectedFocusBarriers.insert(barrier)
         }
     }
 
@@ -687,7 +741,7 @@ private struct OnboardingStoryStepTitle: View {
                 OnboardingStartFishingTitle()
             } else if currentStep == .stayFocused {
                 OnboardingStayFocusedTitle()
-            } else if currentStep != .brokenLine && currentStep != .rareFish && currentStep != .friendBonds && currentStep != .authHandoff {
+            } else if currentStep != .brokenLine && currentStep != .rareFish && currentStep != .friendBonds && currentStep != .authHandoff && !currentStep.placeholderText.isEmpty {
                 Text(currentStep.placeholderText)
                     .font(PicoTypography.body)
                     .foregroundStyle(PicoColors.textSecondary)
@@ -776,7 +830,6 @@ private struct OnboardingChoiceButton: View {
 
 private struct OnboardingPhoneUsageSlider: View {
     @Binding var selectedHours: Int
-    @Binding var doesNotKnowPhoneUsage: Bool
 
     private let hourRange = 0...12
     private let trackHeight: CGFloat = 10
@@ -868,12 +921,86 @@ private struct OnboardingPhoneUsageSlider: View {
         let rawProgress = min(max(Double((xPosition - thumbSize / 2) / usableWidth), 0), 1)
         let hours = Int((rawProgress * Double(hourRange.upperBound - hourRange.lowerBound)).rounded()) + hourRange.lowerBound
         selectedHours = min(max(hours, hourRange.lowerBound), hourRange.upperBound)
-        doesNotKnowPhoneUsage = false
     }
 
     private func moveSelection(by offset: Int) {
         selectedHours = min(max(selectedHours + offset, hourRange.lowerBound), hourRange.upperBound)
-        doesNotKnowPhoneUsage = false
+    }
+}
+
+private struct OnboardingPillCardsVisual: View {
+    private let cards = [
+        OnboardingPillCardContent(
+            title: "Timers and blockers create guilt which drains motivation"
+        ),
+        OnboardingPillCardContent(
+            title: "Trying to stay on track alone is difficult"
+        ),
+        OnboardingPillCardContent(
+            title: "Strict routines get boring and hard to keep up with"
+        )
+    ]
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.iconTextGap) {
+            ForEach(cards) { card in
+                OnboardingPillCard(content: card)
+            }
+        }
+        .frame(maxWidth: 430)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct OnboardingPillCardContent: Identifiable {
+    let title: String
+
+    var id: String { title }
+}
+
+private struct OnboardingPillCard: View {
+    let content: OnboardingPillCardContent
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.iconTextGap) {
+            OnboardingPicoErrorCrossIcon()
+
+            Text(content.title)
+                .font(PicoTypography.primaryLabelSemibold)
+                .foregroundStyle(PicoColors.textPrimary)
+                .lineLimit(3)
+                .minimumScaleFactor(0.86)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: PicoSpacing.compact)
+        }
+        .padding(.vertical, PicoSpacing.iconTextGap)
+        .padding(.horizontal, PicoSpacing.standard)
+        .background(
+            Capsule(style: .continuous)
+                .fill(PicoColors.softSurface)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        )
+        .accessibilityLabel(Text(content.title))
+    }
+}
+
+private struct OnboardingPicoErrorCrossIcon: View {
+    var body: some View {
+        PicoIcon(.xMarkRegular, size: 20)
+            .foregroundStyle(PicoColors.error)
+            .frame(width: 38, height: 38)
+            .background(PicoColors.destructiveBackground)
+            .clipShape(Circle())
+            .overlay(
+                Circle()
+                    .stroke(PicoColors.error.opacity(0.18), lineWidth: 1)
+            )
+            .accessibilityHidden(true)
     }
 }
 
@@ -1442,15 +1569,23 @@ private struct OnboardingPageIndicator: View {
     let currentIndex: Int
     let totalCount: Int
 
+    private var progress: CGFloat {
+        guard totalCount > 0 else { return 0 }
+        return CGFloat(currentIndex + 1) / CGFloat(totalCount)
+    }
+
     var body: some View {
-        HStack(spacing: 7) {
-            ForEach(0..<totalCount, id: \.self) { index in
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
-                    .fill(index == currentIndex ? PicoColors.primary : PicoColors.border)
-                    .frame(height: 6)
-                    .frame(maxWidth: .infinity)
+                    .fill(PicoColors.border)
+
+                Capsule(style: .continuous)
+                    .fill(PicoColors.primary)
+                    .frame(width: proxy.size.width * progress)
             }
         }
+        .frame(height: 6)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Onboarding step \(currentIndex + 1) of \(totalCount)"))
     }

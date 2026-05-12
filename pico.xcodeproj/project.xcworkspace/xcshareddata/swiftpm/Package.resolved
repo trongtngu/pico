@@ -1,5 +1,5 @@
 {
-  "originHash" : "200c2aacc60292ee4806da271b40bccd7220e3d9885cbdc346b98e20c348c8e6",
+  "originHash" : "47403173d796c2eabab5eaa7eab015749e2565efb8481876be24de4d9b682659",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -125,6 +125,24 @@
       "state" : {
         "revision" : "06ae7b34ec21406cbd3e643bee7a8a54206fa8f5",
         "version" : "2.44.1"
+      }
+    },
+    {
+      "identity" : "superscript-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/superwall/Superscript-iOS",
+      "state" : {
+        "revision" : "711866edcb62dbd237c24ed3e5fa39fad0db639f",
+        "version" : "1.0.13"
+      }
+    },
+    {
+      "identity" : "superwall-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/superwall/Superwall-iOS",
+      "state" : {
+        "revision" : "4850e1ade9f4e06d4ed796a3a89077de7c70fbf4",
+        "version" : "4.15.1"
       }
     },
     {

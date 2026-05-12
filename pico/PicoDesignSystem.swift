@@ -452,14 +452,21 @@ extension View {
 }
 
 struct PicoPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(PicoTypography.button)
             .foregroundStyle(PicoColors.textOnPrimary)
             .frame(maxWidth: .infinity, minHeight: 52)
             .padding(.horizontal, PicoSpacing.standard)
-            .background(PicoColors.primary.opacity(configuration.isPressed ? 0.82 : 1))
+            .background(PicoColors.primary.opacity(backgroundOpacity(isPressed: configuration.isPressed)))
             .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+    }
+
+    private func backgroundOpacity(isPressed: Bool) -> Double {
+        guard isEnabled else { return 0.42 }
+        return isPressed ? 0.82 : 1
     }
 }
 
