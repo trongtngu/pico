@@ -5,6 +5,8 @@
 //  Created by Codex on 3/5/2026.
 //
 
+import AuthenticationServices
+import CryptoKit
 import SpriteKit
 import SwiftUI
 import UIKit
@@ -147,6 +149,8 @@ private final class AuthEntryAvatarScene: SKScene {
 }
 
 struct OnboardingSequenceView: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+
     let onBackToEntry: () -> Void
     let onSignup: () -> Void
     let onLogin: () -> Void
@@ -159,6 +163,11 @@ struct OnboardingSequenceView: View {
     @State private var selectedFocusGoal: OnboardingFocusGoal?
     @State private var selectedFocusBarriers: Set<OnboardingFocusBarrier> = []
     @State private var hasTriedProductivityApps: Bool?
+    @State private var appleSignInNonce: String?
+    @State private var hasTrackedAppleSignupCompletion = false
+    @State private var hasTrackedAppleOnboardingCompletion = false
+    @State private var hasTrackedGoogleSignupCompletion = false
+    @State private var hasTrackedGoogleOnboardingCompletion = false
 
     private let onboardingVariant = "default"
 
@@ -176,7 +185,7 @@ struct OnboardingSequenceView: View {
         }
 
         if currentStep == .brokenLine {
-            return "continue"
+            return "Continue"
         }
 
         if currentStep == .whyOtherAppsFail {
@@ -192,7 +201,7 @@ struct OnboardingSequenceView: View {
             "start_fishing"
         case .whyOtherAppsFail:
             "try_pico_instead"
-        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .stayFocused, .brokenLine, .friendBonds, .authHandoff:
             "next"
         }
     }
@@ -207,7 +216,7 @@ struct OnboardingSequenceView: View {
             !selectedFocusBarriers.isEmpty
         case .productivityExperience:
             hasTriedProductivityApps != nil
-        case .phoneUsage, .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+        case .phoneUsage, .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .friendBonds, .authHandoff:
             true
         }
     }
@@ -243,6 +252,28 @@ struct OnboardingSequenceView: View {
                         }
                         .buttonStyle(PicoPrimaryButtonStyle())
                         .disabled(!isPrimaryCTAEnabled)
+                    } else if currentStep == .authHandoff {
+                        Spacer(minLength: PicoSpacing.compact)
+
+                        VStack(spacing: PicoSpacing.largeSection) {
+                            OnboardingStoryStepTitle(currentStep: currentStep)
+
+                            OnboardingStoryStepActions(
+                                currentStep: currentStep,
+                                primaryCTATitle: primaryCTATitle,
+                                handlePrimaryAction: handlePrimaryAction,
+                                handleSignupAction: handleSignupAction,
+                                handleGoogleSignIn: handleGoogleSignIn,
+                                handleAppleSignInRequest: handleAppleSignInRequest,
+                                handleAppleSignInCompletion: handleAppleSignInCompletion,
+                                onLogin: onLogin,
+                                isLoading: sessionStore.isLoading,
+                                notice: sessionStore.notice
+                            )
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        Spacer(minLength: PicoSpacing.compact)
                     } else {
                         Spacer(minLength: PicoSpacing.compact)
 
@@ -260,14 +291,8 @@ struct OnboardingSequenceView: View {
                                         showsFriend: currentStep == .brokenLine
                                     )
                                         .frame(height: visualHeight)
-                                } else if currentStep == .rareFish {
-                                    RareSeaCreaturesOnboardingVisual()
-                                        .frame(height: visualHeight)
                                 } else if currentStep == .friendBonds {
                                     FriendBondsOnboardingVisual()
-                                        .frame(height: visualHeight)
-                                } else if currentStep == .authHandoff {
-                                    OnboardingAccountAvatarVisual()
                                         .frame(height: visualHeight)
                                 } else if currentStep == .whyOtherAppsFail {
                                     OnboardingPillCardsVisual()
@@ -288,6 +313,9 @@ struct OnboardingSequenceView: View {
                             primaryCTATitle: primaryCTATitle,
                             handlePrimaryAction: handlePrimaryAction,
                             handleSignupAction: handleSignupAction,
+                            handleGoogleSignIn: handleGoogleSignIn,
+                            handleAppleSignInRequest: handleAppleSignInRequest,
+                            handleAppleSignInCompletion: handleAppleSignInCompletion,
                             onLogin: onLogin
                         )
                     }
@@ -325,6 +353,86 @@ struct OnboardingSequenceView: View {
             onboardingVariant: onboardingVariant
         ))
         onSignup()
+    }
+
+    private func handleGoogleSignIn() {
+        AnalyticsService.track(.onboardingActionTapped(
+            screenName: currentStep.analyticsName,
+            actionName: "sign_in_with_google",
+            onboardingVariant: onboardingVariant
+        ))
+
+        Task {
+            await sessionStore.signInWithGoogle()
+            if sessionStore.session != nil {
+                trackGoogleSignupCompletionIfNeeded()
+                trackGoogleOnboardingCompletionIfNeeded()
+            }
+        }
+    }
+
+    private func handleAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
+        AnalyticsService.track(.onboardingActionTapped(
+            screenName: currentStep.analyticsName,
+            actionName: "sign_in_with_apple",
+            onboardingVariant: onboardingVariant
+        ))
+
+        let nonce = AppleSignInNonce.random()
+        appleSignInNonce = nonce
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = AppleSignInNonce.sha256(nonce)
+        sessionStore.notice = nil
+    }
+
+    private func handleAppleSignInCompletion(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let idToken = String(data: tokenData, encoding: .utf8)
+            else {
+                sessionStore.notice = "Sign in with Apple did not return a valid identity token."
+                return
+            }
+
+            let nonce = appleSignInNonce
+            let fullName = credential.fullName
+            Task {
+                await sessionStore.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName)
+                if sessionStore.session != nil {
+                    trackAppleSignupCompletionIfNeeded()
+                    trackAppleOnboardingCompletionIfNeeded()
+                }
+            }
+        case .failure(let error):
+            guard (error as? ASAuthorizationError)?.code != .canceled else { return }
+            sessionStore.notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func trackAppleSignupCompletionIfNeeded() {
+        guard !hasTrackedAppleSignupCompletion else { return }
+        hasTrackedAppleSignupCompletion = true
+        AnalyticsService.track(.signupCompleted(method: "apple", entryPoint: "onboarding"))
+    }
+
+    private func trackAppleOnboardingCompletionIfNeeded() {
+        guard !hasTrackedAppleOnboardingCompletion else { return }
+        hasTrackedAppleOnboardingCompletion = true
+        AnalyticsService.track(.onboardingCompleted())
+    }
+
+    private func trackGoogleSignupCompletionIfNeeded() {
+        guard !hasTrackedGoogleSignupCompletion else { return }
+        hasTrackedGoogleSignupCompletion = true
+        AnalyticsService.track(.signupCompleted(method: "google", entryPoint: "onboarding"))
+    }
+
+    private func trackGoogleOnboardingCompletionIfNeeded() {
+        guard !hasTrackedGoogleOnboardingCompletion else { return }
+        hasTrackedGoogleOnboardingCompletion = true
+        AnalyticsService.track(.onboardingCompleted())
     }
 
     private func goForward() {
@@ -379,7 +487,6 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
     case startFishing
     case stayFocused
     case brokenLine
-    case rareFish
     case friendBonds
     case authHandoff
 
@@ -418,8 +525,6 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "Catch fish while you focus"
         case .brokenLine:
             "Focus better with friends"
-        case .rareFish:
-            "Discover rare sea creatures"
         case .friendBonds:
             "Create strong bonds with friends"
         case .authHandoff:
@@ -447,8 +552,6 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "Catch fish while you focus"
         case .brokenLine:
             "Placeholder copy for explaining that using your phone breaks the fishing line for that focus session."
-        case .rareFish:
-            ""
         case .friendBonds:
             ""
         case .authHandoff:
@@ -476,8 +579,6 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "8"
         case .brokenLine:
             "9"
-        case .rareFish:
-            "10"
         case .friendBonds:
             "11"
         case .authHandoff:
@@ -505,8 +606,6 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "stay_focused"
         case .brokenLine:
             "broken_line"
-        case .rareFish:
-            "rare_fish"
         case .friendBonds:
             "friend_bonds"
         case .authHandoff:
@@ -518,7 +617,7 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
         switch self {
         case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience:
             true
-        case .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+        case .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .friendBonds, .authHandoff:
             false
         }
     }
@@ -527,7 +626,7 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
         switch self {
         case .startFishing, .stayFocused, .brokenLine:
             true
-        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .whyOtherAppsFail, .rareFish, .friendBonds, .authHandoff:
+        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .whyOtherAppsFail, .friendBonds, .authHandoff:
             false
         }
     }
@@ -593,7 +692,7 @@ private struct OnboardingSetupStepContent: View {
                 focusBarrierContent
             case .productivityExperience:
                 productivityExperienceContent
-            case .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .rareFish, .friendBonds, .authHandoff:
+            case .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .friendBonds, .authHandoff:
                 EmptyView()
             }
         }
@@ -722,8 +821,6 @@ private struct OnboardingStoryStepTitle: View {
             if currentStep != .startFishing && currentStep != .stayFocused {
                 if currentStep == .brokenLine {
                     OnboardingBrokenLineTitle()
-                } else if currentStep == .rareFish {
-                    OnboardingRareSeaCreaturesTitle()
                 } else if currentStep == .friendBonds {
                     OnboardingFriendBondsTitle()
                 } else if currentStep == .authHandoff {
@@ -741,7 +838,7 @@ private struct OnboardingStoryStepTitle: View {
                 OnboardingStartFishingTitle()
             } else if currentStep == .stayFocused {
                 OnboardingStayFocusedTitle()
-            } else if currentStep != .brokenLine && currentStep != .rareFish && currentStep != .friendBonds && currentStep != .authHandoff && !currentStep.placeholderText.isEmpty {
+            } else if currentStep != .brokenLine && currentStep != .friendBonds && currentStep != .authHandoff && !currentStep.placeholderText.isEmpty {
                 Text(currentStep.placeholderText)
                     .font(PicoTypography.body)
                     .foregroundStyle(PicoColors.textSecondary)
@@ -757,7 +854,12 @@ private struct OnboardingStoryStepActions: View {
     let primaryCTATitle: String
     let handlePrimaryAction: () -> Void
     let handleSignupAction: () -> Void
+    let handleGoogleSignIn: () -> Void
+    let handleAppleSignInRequest: (ASAuthorizationAppleIDRequest) -> Void
+    let handleAppleSignInCompletion: (Result<ASAuthorization, Error>) -> Void
     let onLogin: () -> Void
+    var isLoading = false
+    var notice: String? = nil
 
     var body: some View {
         VStack(spacing: PicoSpacing.iconTextGap) {
@@ -766,8 +868,44 @@ private struct OnboardingStoryStepActions: View {
                     Button("Continue with email", action: handleSignupAction)
                         .buttonStyle(PicoPrimaryButtonStyle())
 
-                    Button("Already have an account? Log in", action: onLogin)
-                        .buttonStyle(PicoSecondaryButtonStyle())
+                    PicoAuthDivider()
+                        .padding(.top, PicoSpacing.compact)
+
+                    PicoGoogleSignInButton(
+                        title: "Google",
+                        isLoading: isLoading,
+                        action: handleGoogleSignIn
+                    )
+
+                    PicoAppleSignInButton(
+                        isLoading: isLoading,
+                        onRequest: handleAppleSignInRequest,
+                        onCompletion: handleAppleSignInCompletion
+                    )
+
+                    HStack(spacing: PicoSpacing.tiny) {
+                        Text("Already have an account?")
+                            .font(PicoTypography.caption)
+                            .foregroundStyle(PicoColors.textSecondary)
+
+                        Button("Log in", action: onLogin)
+                            .font(PicoTypography.captionSemibold)
+                            .foregroundStyle(PicoColors.primary)
+                            .buttonStyle(.plain)
+                    }
+
+                    if let notice {
+                        Text(notice)
+                            .font(PicoTypography.caption)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(PicoSpacing.standard)
+                            .background(
+                                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                                    .fill(PicoColors.softSurface)
+                            )
+                    }
                 }
             } else {
                 Button(action: handlePrimaryAction) {
@@ -776,6 +914,27 @@ private struct OnboardingStoryStepActions: View {
                 .buttonStyle(PicoPrimaryButtonStyle())
             }
         }
+    }
+}
+
+private enum AppleSignInNonce {
+    private static let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
+
+    static func random(length: Int = 32) -> String {
+        var bytes = [UInt8](repeating: 0, count: length)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+
+        guard status == errSecSuccess else {
+            return UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        }
+
+        return String(bytes.map { charset[Int($0) % charset.count] })
+    }
+
+    static func sha256(_ input: String) -> String {
+        let inputData = Data(input.utf8)
+        let hashedData = SHA256.hash(data: inputData)
+        return hashedData.map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -1057,61 +1216,6 @@ private struct StartFishingOnboardingVisual: View {
     }
 }
 
-private struct RareSeaCreaturesOnboardingVisual: View {
-    private let assetNames = [
-        "Fish_MarlinSwordfish",
-        "Fish_GreatWhiteShark",
-        "Fish_HammerHeadShark",
-        "Fish_Sunfish",
-        "Fish_Tuna",
-        "Fish_PufferFish",
-        "TropicalFish_LionFish",
-        "TropicalFish_ButterflyFish",
-        "SeaInvertebrate_Octopus_Orange",
-        "SeaMammal_Dolphin",
-        "Fish_Salmon",
-        "SeaShellfish_Lobster_Red"
-    ]
-
-    private let secondsPerStep: TimeInterval = 1.85
-    private let visibleSlotCount = 5
-
-    var body: some View {
-        TimelineView(.animation) { context in
-            GeometryReader { proxy in
-                let trackWidth = min(proxy.size.width, 420)
-                let itemSize = min(trackWidth * 0.68, min(proxy.size.height * 0.58, 260))
-                let spacing = itemSize * 1.16
-                let progress = context.date.timeIntervalSinceReferenceDate / secondsPerStep
-                let step = floor(progress)
-                let offset = CGFloat(progress - step) * spacing
-                let firstIndex = Int(step)
-
-                ZStack {
-                    ForEach(0..<visibleSlotCount, id: \.self) { slot in
-                        let assetName = assetNames[wrappedIndex(firstIndex + slot - 1)]
-                        let xPosition = trackWidth / 2 + CGFloat(slot - 1) * spacing - offset
-
-                        OnboardingFishSilhouette(assetName: assetName)
-                            .frame(width: itemSize, height: itemSize)
-                            .position(x: xPosition, y: itemSize / 2)
-                    }
-                }
-                .frame(width: trackWidth, height: itemSize)
-                .clipped()
-                .position(x: proxy.size.width / 2, y: proxy.size.height * 0.6)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Rare sea creature silhouettes moving from right to left"))
-    }
-
-    private func wrappedIndex(_ index: Int) -> Int {
-        let remainder = index % assetNames.count
-        return remainder >= 0 ? remainder : remainder + assetNames.count
-    }
-}
-
 private struct FriendBondsOnboardingVisual: View {
     var body: some View {
         GeometryReader { proxy in
@@ -1213,41 +1317,6 @@ private final class OnboardingFriendAvatarScene: SKScene {
             key: Self.idleActionKey
         )
         addChild(sprite)
-    }
-}
-
-private struct OnboardingFishSilhouette: View {
-    let assetName: String
-
-    var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image)
-                    .renderingMode(.template)
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-                    .foregroundStyle(Color.black)
-            } else {
-                Image(systemName: "fish")
-                    .font(PicoTypography.symbol(size: 120, weight: .semibold))
-                    .foregroundStyle(Color.black)
-            }
-        }
-    }
-
-    private var image: UIImage? {
-        [
-            "Icons/fish/\(assetName)",
-            "Icons/fish/\(assetName).png",
-            "fish/\(assetName)",
-            "fish/\(assetName).png",
-            assetName,
-            "\(assetName).png"
-        ]
-            .lazy
-            .compactMap { UIImage(named: $0) }
-            .first
     }
 }
 
@@ -1374,26 +1443,6 @@ private struct OnboardingFriendBondsTitle: View {
     }
 }
 
-private struct OnboardingRareSeaCreaturesTitle: View {
-    private let titleFont = PicoTypography.sectionTitle
-
-    var body: some View {
-        HStack(alignment: .center, spacing: PicoSpacing.tiny) {
-            Text(OnboardingStep.rareFish.title)
-                .font(titleFont)
-                .foregroundStyle(PicoColors.textPrimary)
-
-            OnboardingAnchorImage()
-                .frame(width: 34, height: 34)
-                .accessibilityHidden(true)
-        }
-        .multilineTextAlignment(.center)
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(OnboardingStep.rareFish.title))
-    }
-}
-
 private struct OnboardingAuthHandoffTitle: View {
     private let titleFont = PicoTypography.sectionTitle
 
@@ -1404,32 +1453,6 @@ private struct OnboardingAuthHandoffTitle: View {
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(Text(OnboardingStep.authHandoff.title))
-    }
-}
-
-private struct OnboardingAnchorImage: View {
-    var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image)
-                    .renderingMode(.original)
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-            }
-        }
-    }
-
-    private var image: UIImage? {
-        [
-            "Icons/Anchor",
-            "Icons/Anchor.png",
-            "Anchor",
-            "Anchor.png"
-        ]
-            .lazy
-            .compactMap { UIImage(named: $0) }
-            .first
     }
 }
 

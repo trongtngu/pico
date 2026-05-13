@@ -381,7 +381,7 @@ private struct DailySnapshotFishCountResponse: Decodable {
     let displayName: String
     let rarity: FishRarity
     let sellValue: Int
-    let assetName: String
+    let assetName: String?
     let sortOrder: Int
     let count: Int
 
@@ -391,7 +391,7 @@ private struct DailySnapshotFishCountResponse: Decodable {
             displayName: displayName,
             rarity: rarity,
             sellValue: sellValue,
-            assetName: assetName,
+            assetName: assetName ?? seaCritterId.assetName,
             sortOrder: sortOrder,
             count: count
         )

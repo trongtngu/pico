@@ -70,6 +70,17 @@ struct AppShellView: View {
                 }
                 .transition(.move(edge: .leading))
             }
+
+            if let profile = sessionStore.profile, profile.requiresProfileCompletion {
+                ProfileCompletionView(profile: profile)
+                    .zIndex(20)
+            } else if sessionStore.profile == nil, sessionStore.isProfileLoading {
+                ProgressView()
+                    .tint(PicoColors.primary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(PicoColors.appBackground)
+                    .zIndex(20)
+            }
         }
         .animation(.snappy(duration: 0.22), value: isNavigationDrawerOpen)
         .tint(PicoColors.primary)
@@ -243,6 +254,250 @@ struct AppShellView: View {
         await villageStore.loadResidents(for: sessionStore.session, force: true)
         focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
         await berryStore.loadBalance(for: sessionStore.session)
+    }
+}
+
+private struct ProfileCompletionView: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+    let profile: UserProfile
+
+    @State private var username = ""
+    @State private var displayName = ""
+
+    private var normalizedUsername: String {
+        username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var normalizedDisplayName: String {
+        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSubmit: Bool {
+        normalizedUsername.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) != nil
+            && !normalizedUsername.isGeneratedOAuthUsername
+            && (1...40).contains(normalizedDisplayName.count)
+            && !sessionStore.isProfileSaving
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: PicoSpacing.section) {
+                    VStack(spacing: PicoSpacing.compact) {
+                        Text("Finish your profile")
+                            .font(PicoTypography.sectionTitle)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .multilineTextAlignment(.center)
+
+                        Text("Choose how friends will find you.")
+                            .font(PicoTypography.body)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    VStack(spacing: PicoSpacing.standard) {
+                        AuthCompletionFieldSection(
+                            title: "Username",
+                            subtitle: "This cannot be changed later",
+                            subtitleIconName: "exclamationmark.triangle.fill",
+                            subtitleIconColor: PicoColors.warning
+                        ) {
+                            TextField(
+                                "",
+                                text: $username,
+                                prompt: Text("Username").foregroundStyle(PicoColors.textMuted)
+                            )
+                            .textInputAutocapitalization(.never)
+                            .textContentType(.username)
+                            .autocorrectionDisabled()
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .authCompletionFieldStyle()
+                            .onChange(of: username) {
+                                username = normalizedUsername
+                                sessionStore.notice = nil
+                                sessionStore.clearProfileNotice()
+                            }
+                        }
+
+                        AuthCompletionFieldSection(
+                            title: "Display name",
+                            subtitle: "You can change this later"
+                        ) {
+                            TextField(
+                                "",
+                                text: $displayName,
+                                prompt: Text("Display name").foregroundStyle(PicoColors.textMuted)
+                            )
+                            .textContentType(.name)
+                            .autocorrectionDisabled()
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .authCompletionFieldStyle()
+                            .onChange(of: displayName) {
+                                sessionStore.notice = nil
+                                sessionStore.clearProfileNotice()
+                            }
+                        }
+                    }
+
+                    if let profileNotice = sessionStore.profileNotice {
+                        ProfileNoticeCard(text: profileNotice)
+                    }
+
+                    Button {
+                        save()
+                    } label: {
+                        ZStack {
+                            Text("Continue")
+                                .frame(maxWidth: .infinity)
+
+                            if sessionStore.isProfileSaving {
+                                HStack {
+                                    Spacer()
+                                    ProgressView()
+                                        .tint(PicoColors.textOnPrimary)
+                                }
+                            }
+                        }
+                    }
+                    .buttonStyle(PicoPrimaryButtonStyle())
+                    .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.62)
+
+                    Button {
+                        sessionStore.signOut()
+                    } label: {
+                        Text("Cancel")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PicoSecondaryButtonStyle())
+                    .disabled(sessionStore.isProfileSaving)
+                }
+                .frame(maxWidth: 520)
+                .padding(.horizontal, PicoSpacing.standard)
+                .padding(.vertical, PicoSpacing.largeSection)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: proxy.size.height, alignment: .center)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .background(PicoColors.appBackground.ignoresSafeArea())
+        .onAppear(perform: syncDrafts)
+        .onChange(of: profile) {
+            syncDrafts()
+        }
+    }
+
+    private func syncDrafts() {
+        username = profile.requiresProfileCompletion ? "" : profile.username
+        displayName = profile.displayName == "Pico" || profile.displayName.hasPrefix("pico_") ? "" : profile.displayName
+    }
+
+    private func save() {
+        Task {
+            await sessionStore.updateProfile(
+                username: normalizedUsername,
+                displayName: normalizedDisplayName,
+                avatarConfig: profile.avatarConfig
+            )
+        }
+    }
+}
+
+private struct AuthCompletionFieldSection<Content: View>: View {
+    let title: String
+    let subtitle: String
+    let subtitleIconName: String?
+    let subtitleIconColor: Color
+    private let content: Content
+
+    init(
+        title: String,
+        subtitle: String,
+        subtitleIconName: String? = nil,
+        subtitleIconColor: Color = PicoColors.textSecondary,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.subtitleIconName = subtitleIconName
+        self.subtitleIconColor = subtitleIconColor
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.iconTextGap) {
+            VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+                Text(title)
+                    .font(PicoTypography.primaryLabel)
+                    .foregroundStyle(PicoColors.textPrimary)
+
+                HStack(alignment: .firstTextBaseline, spacing: PicoSpacing.compact) {
+                    if let subtitleIconName {
+                        Image(systemName: subtitleIconName)
+                            .font(PicoTypography.compactCaption)
+                            .foregroundStyle(subtitleIconColor)
+                            .accessibilityLabel(Text("Important"))
+                    }
+
+                    Text(subtitle)
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            content
+        }
+        .padding(PicoSpacing.cardPadding)
+        .background(
+            RoundedRectangle(cornerRadius: PicoRadius.large, style: .continuous)
+                .fill(PicoColors.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: PicoRadius.large, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        )
+        .shadow(
+            color: PicoShadow.raisedCardColor,
+            radius: PicoShadow.raisedCardRadius,
+            x: PicoShadow.raisedCardX,
+            y: PicoShadow.raisedCardY
+        )
+    }
+}
+
+private struct AuthCompletionFieldStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(PicoTypography.body)
+            .padding(.horizontal, PicoSpacing.standard)
+            .frame(minHeight: 52)
+            .background(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .fill(PicoColors.softSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                    .stroke(PicoColors.border.opacity(0.72), lineWidth: 1)
+            )
+    }
+}
+
+private extension View {
+    func authCompletionFieldStyle() -> some View {
+        modifier(AuthCompletionFieldStyle())
+    }
+}
+
+private extension UserProfile {
+    var requiresProfileCompletion: Bool {
+        username.isGeneratedOAuthUsername
+    }
+}
+
+private extension String {
+    var isGeneratedOAuthUsername: Bool {
+        range(of: "^pico_[0-9a-f]{19}$", options: .regularExpression) != nil
     }
 }
 
@@ -3035,10 +3290,12 @@ private struct DailySnapshotFishIcon: View {
     }
 
     private var fishImage: UIImage? {
-        fishImageResourceCandidates(named: fishCount.assetName)
-            .lazy
-            .compactMap { UIImage(named: $0) }
-            .first
+        var candidates = fishImageResourceCandidates(named: fishCount.assetName)
+        for candidate in fishImageResourceCandidates(named: fishCount.seaCritterID.assetName) {
+            candidates.appendIfMissing(candidate)
+        }
+
+        return candidates.lazy.compactMap { UIImage(named: $0) }.first
     }
 }
 
@@ -5981,14 +6238,121 @@ private func bestRarityAnalyticsValue(in catches: [FishCatch]) -> String {
 }
 
 private func fishImageResourceCandidates(named assetName: String) -> [String] {
-    [
-        "Icons/fish/\(assetName)",
-        "Icons/fish/\(assetName).png",
-        "fish/\(assetName)",
-        "fish/\(assetName).png",
-        assetName,
-        "\(assetName).png"
-    ]
+    let normalizedAssetName = normalizedFishAssetName(assetName)
+    var assetNames: [String] = []
+
+    func appendAssetNameVariants(_ name: String) {
+        assetNames.appendIfMissing(name)
+
+        let normalizedName = normalizedFishAssetName(name)
+        assetNames.appendIfMissing(normalizedName)
+
+        if let flatName = normalizedName.split(separator: "/").last.map(String.init) {
+            assetNames.appendIfMissing(flatName)
+        }
+    }
+
+    appendAssetNameVariants(assetName)
+
+    if let alias = fishImageAssetAliases[normalizedAssetName] {
+        appendAssetNameVariants(alias)
+    }
+
+    var candidates: [String] = []
+    for name in assetNames {
+        candidates.appendIfMissing("Icons/fish/\(name)")
+        candidates.appendIfMissing("Icons/fish/\(name).png")
+        candidates.appendIfMissing("fish/\(name)")
+        candidates.appendIfMissing("fish/\(name).png")
+        candidates.appendIfMissing(name)
+        candidates.appendIfMissing("\(name).png")
+    }
+
+    return candidates
+}
+
+private func normalizedFishAssetName(_ assetName: String) -> String {
+    var normalized = assetName
+
+    if normalized.hasSuffix(".png") {
+        normalized.removeLast(4)
+    }
+
+    for prefix in ["Icons/fish/", "fish/"] where normalized.hasPrefix(prefix) {
+        normalized.removeFirst(prefix.count)
+        break
+    }
+
+    return normalized
+}
+
+private func preferredFishImageAssetName(for fishID: FishID, assetName: String?) -> String {
+    let fallbackAssetName = fishID.assetName
+    guard let assetName, !assetName.isEmpty else { return fallbackAssetName }
+
+    let normalizedAssetName = normalizedFishAssetName(assetName)
+    return fishImageAssetAliases[normalizedAssetName] ?? normalizedAssetName
+}
+
+private let fishImageAssetAliases: [String: String] = [
+    "carp": "freshwater/common_carp",
+    "crucian": "freshwater/common_crucian",
+    "pale_chub": "freshwater/common_pale_chub",
+    "shad": "freshwater/common_shad",
+    "angelfish": "freshwater/rare_angelfish",
+    "leopoldi": "freshwater/rare_leopoldi",
+    "sturgeon": "freshwater/rare_sturgeon",
+    "arowana": "freshwater/super_rare_arowana",
+    "pirarucu": "freshwater/super_rare_pirarucu",
+    "anchovy": "saltwater/common_anchovy",
+    "mackerel": "saltwater/common_mackerel",
+    "sea_bass": "saltwater/common_sea_bass",
+    "trevally": "saltwater/common_trevally",
+    "blue_tang": "saltwater/rare_blue_tang",
+    "clownfish": "saltwater/rare_clownfish",
+    "pomfret": "saltwater/rare_pomfret",
+    "great_white": "saltwater/super_rare_great_white",
+    "whale_shark": "saltwater/super_rare_whale_shark",
+    "bass": "freshwater/common_carp",
+    "crab": "freshwater/common_crucian",
+    "eel": "freshwater/common_pale_chub",
+    "salmon": "freshwater/common_shad",
+    "lobster": "freshwater/rare_angelfish",
+    "pufferfish": "freshwater/rare_leopoldi",
+    "dolphin": "freshwater/rare_sturgeon",
+    "marlin": "freshwater/super_rare_arowana",
+    "octopus": "freshwater/super_rare_pirarucu",
+    "herring": "saltwater/common_anchovy",
+    "shrimp": "saltwater/common_mackerel",
+    "butterflyfish": "saltwater/common_sea_bass",
+    "lionfish": "saltwater/common_trevally",
+    "tuna": "saltwater/rare_blue_tang",
+    "hammerhead": "saltwater/rare_pomfret",
+    "sunfish": "saltwater/super_rare_whale_shark",
+    "Fish_Bass": "freshwater/common_carp",
+    "SeaShellfish_Crab_Red": "freshwater/common_crucian",
+    "Fish_Eel": "freshwater/common_pale_chub",
+    "Fish_Salmon": "freshwater/common_shad",
+    "SeaShellfish_Lobster_Red": "freshwater/rare_angelfish",
+    "Fish_PufferFish": "freshwater/rare_leopoldi",
+    "SeaMammal_Dolphin": "freshwater/rare_sturgeon",
+    "Fish_MarlinSwordfish": "freshwater/super_rare_arowana",
+    "SeaInvertebrate_Octopus_Orange": "freshwater/super_rare_pirarucu",
+    "Fish_Herring": "saltwater/common_anchovy",
+    "SeaShellfish_Shrimp_Pink": "saltwater/common_mackerel",
+    "TropicalFish_ButterflyFish": "saltwater/common_sea_bass",
+    "TropicalFish_LionFish": "saltwater/common_trevally",
+    "Fish_Tuna": "saltwater/rare_blue_tang",
+    "Fish_GreatWhiteShark": "saltwater/super_rare_great_white",
+    "Fish_HammerHeadShark": "saltwater/rare_pomfret",
+    "Fish_Sunfish": "saltwater/super_rare_whale_shark"
+]
+
+private extension Array where Element == String {
+    mutating func appendIfMissing(_ value: String) {
+        guard !contains(value) else { return }
+        append(value)
+    }
 }
 
 private struct FishingCatalogFish: Identifiable {
@@ -6564,12 +6928,16 @@ private struct StoreFishGroup: Identifiable {
                 let catalogItem = catalogByID[seaCritterID]
                 let countItem = inventoryCountByID[seaCritterID]
                 let firstCatch = catches.first
+                let assetName = preferredFishImageAssetName(
+                    for: seaCritterID,
+                    assetName: catalogItem?.assetName ?? countItem?.assetName
+                )
 
                 return StoreFishGroup(
                     seaCritterID: seaCritterID,
                     displayName: catalogItem?.displayName ?? countItem?.displayName ?? seaCritterID.displayName,
                     rarity: catalogItem?.rarity ?? countItem?.rarity ?? firstCatch?.rarity ?? .common,
-                    assetName: catalogItem?.assetName ?? countItem?.assetName ?? seaCritterID.assetName,
+                    assetName: assetName,
                     sortOrder: catalogItem?.sortOrder ?? countItem?.sortOrder ?? Int.max,
                     unitValue: catalogItem?.sellValue ?? countItem?.sellValue ?? firstCatch?.sellValue ?? seaCritterID.sellValue,
                     inventoryCount: countItem?.count,
@@ -7748,6 +8116,7 @@ private struct StoreBuyButtonStyle: ButtonStyle {
 private struct ProfilePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     let openStore: () -> Void
+    @State private var username = ""
     @State private var displayName = ""
     @State private var draftDisplayName = ""
     @State private var avatarConfig = AvatarCatalog.defaultConfig
@@ -7812,7 +8181,7 @@ private struct ProfilePage: View {
                 } cancel: {
                     isNameEditorPresented = false
                 }
-                .presentationDetents([.height(280)])
+                .presentationDetents([.height(300)])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(PicoColors.appBackground)
                 .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
@@ -7827,7 +8196,12 @@ private struct ProfilePage: View {
                 draftDisplayName = displayName
                 isNameEditorPresented = true
             } label: {
-                ProfileCardView(profile: profile, displayName: displayName, avatarConfig: avatarConfig)
+                ProfileCardView(
+                    profile: profile,
+                    username: username,
+                    displayName: displayName,
+                    avatarConfig: avatarConfig
+                )
             }
             .buttonStyle(.plain)
         } else if sessionStore.isProfileLoading {
@@ -7860,7 +8234,8 @@ private struct ProfilePage: View {
     private var hasProfileChanges: Bool {
         guard let profile = sessionStore.profile else { return false }
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalizedDisplayName != profile.displayName || avatarConfig != profile.avatarConfig
+        return normalizedDisplayName != profile.displayName
+            || avatarConfig != profile.avatarConfig
     }
 
     private var availableHats: [AvatarHat] {
@@ -7869,6 +8244,7 @@ private struct ProfilePage: View {
 
     private func syncEditableProfile() {
         guard let profile = sessionStore.profile else { return }
+        username = profile.username
         displayName = profile.displayName
         draftDisplayName = profile.displayName
         avatarConfig = profile.avatarConfig
@@ -8079,6 +8455,7 @@ private final class UserAvatarScene: SKScene {
 
 private struct ProfileCardView: View {
     let profile: UserProfile
+    let username: String
     let displayName: String
     let avatarConfig: AvatarConfig
 
@@ -8092,7 +8469,7 @@ private struct ProfileCardView: View {
                     .foregroundStyle(PicoColors.textPrimary)
                     .lineLimit(1)
 
-                Text("@\(profile.username)")
+                Text("@\(username)")
                     .font(PicoTypography.caption)
                     .foregroundStyle(PicoColors.textSecondary)
                     .lineLimit(1)
@@ -8106,7 +8483,7 @@ private struct ProfileCardView: View {
             showsShadow: false,
             padding: PicoCreamCardStyle.contentPadding
         )
-        .accessibilityLabel(Text("\(displayName), @\(profile.username), edit display name"))
+        .accessibilityLabel(Text("\(displayName), @\(username), edit profile"))
     }
 }
 
@@ -8433,7 +8810,7 @@ private struct AvatarDirectionScrubRail: View {
                     let isActive = railDirection == direction
 
                     Circle()
-                        .fill(isActive ? PicoColors.primary.opacity(0.18) : PicoColors.border)
+                        .fill(isActive ? PicoColors.border : PicoColors.border.opacity(0.72))
                         .frame(width: isActive ? 10 : 6, height: isActive ? 10 : 6)
                         .position(
                             x: xPosition(for: railDirection.rawValue, width: width),
@@ -8442,9 +8819,13 @@ private struct AvatarDirectionScrubRail: View {
                 }
 
                 Circle()
-                    .fill(PicoColors.primary)
+                    .fill(PicoColors.border)
                     .frame(width: thumbSize, height: thumbSize)
-                    .shadow(color: PicoColors.primary.opacity(0.22), radius: 6, x: 0, y: 3)
+                    .overlay {
+                        Circle()
+                            .stroke(PicoColors.textMuted.opacity(0.38), lineWidth: 1)
+                    }
+                    .shadow(color: PicoColors.textMuted.opacity(0.22), radius: 6, x: 0, y: 3)
                     .position(x: activeX, y: centerY)
             }
             .frame(width: width, height: hitHeight)

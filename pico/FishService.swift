@@ -37,7 +37,80 @@ struct FishID: RawRepresentable, Codable, Equatable, Hashable {
     }
 
     var assetName: String {
-        rawValue
+        switch rawValue {
+        case "carp":
+            "freshwater/common_carp"
+        case "crucian":
+            "freshwater/common_crucian"
+        case "pale_chub":
+            "freshwater/common_pale_chub"
+        case "shad":
+            "freshwater/common_shad"
+        case "angelfish":
+            "freshwater/rare_angelfish"
+        case "leopoldi":
+            "freshwater/rare_leopoldi"
+        case "sturgeon":
+            "freshwater/rare_sturgeon"
+        case "arowana":
+            "freshwater/super_rare_arowana"
+        case "pirarucu":
+            "freshwater/super_rare_pirarucu"
+        case "anchovy":
+            "saltwater/common_anchovy"
+        case "mackerel":
+            "saltwater/common_mackerel"
+        case "sea_bass":
+            "saltwater/common_sea_bass"
+        case "trevally":
+            "saltwater/common_trevally"
+        case "blue_tang":
+            "saltwater/rare_blue_tang"
+        case "clownfish":
+            "saltwater/rare_clownfish"
+        case "pomfret":
+            "saltwater/rare_pomfret"
+        case "great_white":
+            "saltwater/super_rare_great_white"
+        case "whale_shark":
+            "saltwater/super_rare_whale_shark"
+        case "bass":
+            "freshwater/common_carp"
+        case "crab":
+            "freshwater/common_crucian"
+        case "eel":
+            "freshwater/common_pale_chub"
+        case "salmon":
+            "freshwater/common_shad"
+        case "lobster":
+            "freshwater/rare_angelfish"
+        case "pufferfish":
+            "freshwater/rare_leopoldi"
+        case "dolphin":
+            "freshwater/rare_sturgeon"
+        case "marlin":
+            "freshwater/super_rare_arowana"
+        case "octopus":
+            "freshwater/super_rare_pirarucu"
+        case "herring":
+            "saltwater/common_anchovy"
+        case "shrimp":
+            "saltwater/common_mackerel"
+        case "butterflyfish":
+            "saltwater/common_sea_bass"
+        case "lionfish":
+            "saltwater/common_trevally"
+        case "tuna":
+            "saltwater/rare_blue_tang"
+        case "hammerhead", "anglerfish":
+            "saltwater/rare_pomfret"
+        case "sunfish", "blue_lobster":
+            "saltwater/super_rare_whale_shark"
+        case "koi":
+            "freshwater/common_carp"
+        default:
+            rawValue
+        }
     }
 }
 

@@ -60,6 +60,30 @@ final class AuthSessionStore: ObservableObject {
         }
     }
 
+    func signInWithApple(idToken: String, nonce: String?, fullName: PersonNameComponents?) async {
+        await authenticate {
+            try await authService.signInWithApple(idToken: idToken, nonce: nonce)
+        }
+
+        await applyOAuthDisplayNameIfNeeded(Self.normalizedDisplayName(from: fullName))
+    }
+
+    func signInWithGoogle() async {
+        var displayName: String?
+
+        await authenticate {
+            let tokens = try await GoogleSignInClient.signIn()
+            displayName = tokens.displayName
+            return try await authService.signInWithGoogle(
+                idToken: tokens.idToken,
+                accessToken: tokens.accessToken,
+                nonce: tokens.nonce
+            )
+        }
+
+        await applyOAuthDisplayNameIfNeeded(displayName)
+    }
+
     func validateEmailAvailability(_ email: String) async -> Bool {
         guard !isLoading else { return false }
 
@@ -136,10 +160,16 @@ final class AuthSessionStore: ObservableObject {
         }
     }
 
-    func updateProfile(displayName: String, avatarConfig: AvatarConfig) async {
+    func updateProfile(username: String, displayName: String, avatarConfig: AvatarConfig) async {
         guard let session, !isProfileSaving else { return }
         guard avatarConfig.selectedHat.isOwned(in: ownedHats) else {
             profileNotice = "You do not own that hat."
+            return
+        }
+
+        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedUsername.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) != nil else {
+            profileNotice = "That username is not available."
             return
         }
 
@@ -149,7 +179,15 @@ final class AuthSessionStore: ObservableObject {
         defer { isProfileSaving = false }
 
         do {
+            if previousProfile?.username != normalizedUsername {
+                let isUsernameAvailable = try await authService.isUsernameAvailable(normalizedUsername)
+                if !isUsernameAvailable {
+                    throw AuthServiceError.usernameUnavailable
+                }
+            }
+
             profile = try await authService.updateProfile(
+                username: normalizedUsername,
                 displayName: displayName,
                 avatarConfig: avatarConfig,
                 for: session
@@ -157,6 +195,38 @@ final class AuthSessionStore: ObservableObject {
             hasLoadedProfile = true
         } catch {
             profile = previousProfile
+            profileNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    func updateProfile(displayName: String, avatarConfig: AvatarConfig) async {
+        guard let username = profile?.username else { return }
+        await updateProfile(username: username, displayName: displayName, avatarConfig: avatarConfig)
+    }
+
+    func clearProfileNotice() {
+        profileNotice = nil
+    }
+
+    private func applyOAuthDisplayNameIfNeeded(_ displayName: String?) async {
+        guard let session, let currentProfile = profile else { return }
+
+        let oauthDisplayName = String((displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        guard !oauthDisplayName.isEmpty else { return }
+
+        let shouldReplaceDisplayName = currentProfile.displayName == "Pico"
+            || currentProfile.displayName.hasPrefix("pico_")
+        guard shouldReplaceDisplayName else { return }
+
+        do {
+            profile = try await authService.updateProfile(
+                username: currentProfile.username,
+                displayName: oauthDisplayName,
+                avatarConfig: currentProfile.avatarConfig,
+                for: session
+            )
+            hasLoadedProfile = true
+        } catch {
             profileNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -206,6 +276,7 @@ final class AuthSessionStore: ObservableObject {
                 resetProfile()
             }
         } catch {
+            guard !error.isCancellation else { return }
             notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -308,6 +379,13 @@ final class AuthSessionStore: ObservableObject {
 
         return Set(storeIslands).union([PicoIsland.original.backendID])
     }
+
+    private static func normalizedDisplayName(from fullName: PersonNameComponents?) -> String {
+        guard let fullName else { return "" }
+        let formattedName = PersonNameComponentsFormatter.localizedString(from: fullName, style: .medium)
+        return String(formattedName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+    }
+
 }
 
 private extension StoreItem {

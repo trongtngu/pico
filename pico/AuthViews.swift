@@ -5,6 +5,8 @@
 //  Created by Codex on 25/4/2026.
 //
 
+import AuthenticationServices
+import CryptoKit
 import SwiftUI
 
 struct AuthGateView: View {
@@ -35,6 +37,7 @@ private struct AuthRootView: View {
     @State private var route: AuthRoute = .entry
     @State private var loginReturnRoute: AuthRoute = .entry
     @State private var signupReturnRoute: AuthRoute = .onboarding
+    @State private var signupEntryPoint: AuthRoute = .onboarding
 
     var body: some View {
         NavigationStack {
@@ -58,6 +61,7 @@ private struct AuthRootView: View {
                         },
                         onSignup: {
                             AnalyticsService.track(.signupStarted(method: "email", entryPoint: "onboarding"))
+                            signupEntryPoint = .onboarding
                             signupReturnRoute = .onboarding
                             route = .signup
                         },
@@ -69,9 +73,9 @@ private struct AuthRootView: View {
                     .navigationBarHidden(true)
                 case .login:
                     LoginView {
-                        AnalyticsService.track(.signupStarted(method: "email", entryPoint: "login"))
+                        signupEntryPoint = .login
                         signupReturnRoute = .login
-                        route = .signup
+                        route = .signupOptions
                     }
                     .navigationTitle("")
                     .navigationBarTitleDisplayMode(.inline)
@@ -87,6 +91,26 @@ private struct AuthRootView: View {
                         }
                     }
                     .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
+                case .signupOptions:
+                    SignupOptionsView(
+                        entryPoint: signupEntryPoint.analyticsEntryPoint,
+                        onBack: {
+                            route = signupReturnRoute
+                        },
+                        onEmailSignup: {
+                            AnalyticsService.track(.signupStarted(
+                                method: "email",
+                                entryPoint: signupEntryPoint.analyticsEntryPoint
+                            ))
+                            signupReturnRoute = .signupOptions
+                            route = .signup
+                        },
+                        onLogin: {
+                            loginReturnRoute = .signupOptions
+                            route = .login
+                        }
+                    )
+                    .navigationBarHidden(true)
                 case .signup:
                     SignupFlowView(
                         onBackToStart: {
@@ -96,7 +120,7 @@ private struct AuthRootView: View {
                             loginReturnRoute = .signup
                             route = .login
                         },
-                        entryPoint: signupReturnRoute.analyticsEntryPoint,
+                        entryPoint: signupEntryPoint.analyticsEntryPoint,
                         completesOnboarding: signupReturnRoute == .onboarding
                     )
                     .navigationBarHidden(true)
@@ -112,6 +136,7 @@ private enum AuthRoute {
     case entry
     case onboarding
     case login
+    case signupOptions
     case signup
 
     var analyticsEntryPoint: String {
@@ -122,8 +147,144 @@ private enum AuthRoute {
             "login"
         case .entry:
             "entry"
+        case .signupOptions:
+            "signup"
         case .signup:
             "signup"
+        }
+    }
+}
+
+struct SignupOptionsView: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+
+    let entryPoint: String
+    let onBack: () -> Void
+    let onEmailSignup: () -> Void
+    let onLogin: () -> Void
+
+    @State private var appleSignInNonce: String?
+
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                HStack {
+                    Button(action: onBack) {
+                        PicoIcon(.chevronLeftRegular, size: 22)
+                            .foregroundStyle(PicoColors.textPrimary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("Back"))
+
+                    Spacer()
+                }
+                .padding(.horizontal, PicoSpacing.standard)
+                .padding(.top, max(0, proxy.safeAreaInsets.top))
+                .frame(height: proxy.safeAreaInsets.top + 56, alignment: .top)
+                .background(PicoColors.appBackground)
+
+                Spacer(minLength: PicoSpacing.compact)
+
+                VStack(spacing: PicoSpacing.largeSection) {
+                    Text("Create an account")
+                        .font(PicoTypography.sectionTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .multilineTextAlignment(.center)
+
+                    VStack(spacing: PicoSpacing.iconTextGap) {
+                        Button("Continue with email", action: onEmailSignup)
+                            .buttonStyle(PicoPrimaryButtonStyle())
+
+                        PicoAuthDivider()
+                            .padding(.top, PicoSpacing.compact)
+
+                        PicoGoogleSignInButton(
+                            title: "Google",
+                            isLoading: sessionStore.isLoading
+                        ) {
+                            AnalyticsService.track(.signupStarted(method: "google", entryPoint: entryPoint))
+                            Task {
+                                await sessionStore.signInWithGoogle()
+                            }
+                        }
+
+                        PicoAppleSignInButton(
+                            isLoading: sessionStore.isLoading,
+                            onRequest: handleAppleSignInRequest,
+                            onCompletion: handleAppleSignInCompletion
+                        )
+
+                        HStack(spacing: PicoSpacing.tiny) {
+                            Text("Already have an account?")
+                                .font(PicoTypography.caption)
+                                .foregroundStyle(PicoColors.textSecondary)
+
+                            Button("Log in", action: onLogin)
+                                .font(PicoTypography.captionSemibold)
+                                .foregroundStyle(PicoColors.primary)
+                                .buttonStyle(.plain)
+                        }
+
+                        if let notice = sessionStore.notice {
+                            Text(notice)
+                                .font(PicoTypography.caption)
+                                .foregroundStyle(PicoColors.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+                                .padding(PicoSpacing.standard)
+                                .background(
+                                    RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                                        .fill(PicoColors.softSurface)
+                                )
+                        }
+                    }
+                }
+                .frame(maxWidth: 520)
+                .padding(.horizontal, PicoSpacing.standard)
+                .frame(maxWidth: .infinity)
+
+                Spacer(minLength: PicoSpacing.compact)
+            }
+        }
+        .background(PicoColors.appBackground.ignoresSafeArea())
+        .preferredColorScheme(.light)
+        .onAppear {
+            sessionStore.notice = nil
+        }
+        .onDisappear {
+            sessionStore.notice = nil
+        }
+    }
+
+    private func handleAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
+        AnalyticsService.track(.signupStarted(method: "apple", entryPoint: entryPoint))
+
+        let nonce = LoginAppleSignInNonce.random()
+        appleSignInNonce = nonce
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = LoginAppleSignInNonce.sha256(nonce)
+        sessionStore.notice = nil
+    }
+
+    private func handleAppleSignInCompletion(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let idToken = String(data: tokenData, encoding: .utf8)
+            else {
+                sessionStore.notice = "Sign in with Apple did not return a valid identity token."
+                return
+            }
+
+            let nonce = appleSignInNonce
+            let fullName = credential.fullName
+            Task {
+                await sessionStore.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName)
+            }
+        case .failure(let error):
+            guard (error as? ASAuthorizationError)?.code != .canceled else { return }
+            sessionStore.notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 }
@@ -135,6 +296,7 @@ struct LoginView: View {
 
     @State private var email = ""
     @State private var password = ""
+    @State private var appleSignInNonce: String?
 
     private var normalizedEmail: String {
         email.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -227,6 +389,24 @@ struct LoginView: View {
                         .disabled(!canSubmit)
                         .opacity(canSubmit ? 1 : 0.62)
                         .buttonStyle(PicoPrimaryButtonStyle())
+
+                        PicoAuthDivider()
+                            .padding(.top, PicoSpacing.compact)
+
+                        PicoGoogleSignInButton(
+                            title: "Google",
+                            isLoading: sessionStore.isLoading
+                        ) {
+                            Task {
+                                await sessionStore.signInWithGoogle()
+                            }
+                        }
+
+                        PicoAppleSignInButton(
+                            isLoading: sessionStore.isLoading,
+                            onRequest: handleAppleSignInRequest,
+                            onCompletion: handleAppleSignInCompletion
+                        )
                     }
 
                     HStack(spacing: PicoSpacing.tiny) {
@@ -263,6 +443,36 @@ struct LoginView: View {
         guard canSubmit else { return }
 
         await sessionStore.signIn(email: normalizedEmail, password: password)
+    }
+
+    private func handleAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
+        let nonce = LoginAppleSignInNonce.random()
+        appleSignInNonce = nonce
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = LoginAppleSignInNonce.sha256(nonce)
+        sessionStore.notice = nil
+    }
+
+    private func handleAppleSignInCompletion(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let idToken = String(data: tokenData, encoding: .utf8)
+            else {
+                sessionStore.notice = "Sign in with Apple did not return a valid identity token."
+                return
+            }
+
+            let nonce = appleSignInNonce
+            let fullName = credential.fullName
+            Task {
+                await sessionStore.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName)
+            }
+        case .failure(let error):
+            guard (error as? ASAuthorizationError)?.code != .canceled else { return }
+            sessionStore.notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
     }
 }
 
@@ -689,6 +899,27 @@ private struct AuthFieldStyle: ViewModifier {
                 RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
                     .fill(PicoColors.softSurface)
             )
+    }
+}
+
+private enum LoginAppleSignInNonce {
+    private static let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
+
+    static func random(length: Int = 32) -> String {
+        var bytes = [UInt8](repeating: 0, count: length)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+
+        guard status == errSecSuccess else {
+            return UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        }
+
+        return String(bytes.map { charset[Int($0) % charset.count] })
+    }
+
+    static func sha256(_ input: String) -> String {
+        let inputData = Data(input.utf8)
+        let hashedData = SHA256.hash(data: inputData)
+        return hashedData.map { String(format: "%02x", $0) }.joined()
     }
 }
 

@@ -18,6 +18,10 @@ extension Error {
         }
 
         let nsError = self as NSError
-        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        return nsError.domain == "com.google.GIDSignIn" && nsError.code == -5
     }
 }

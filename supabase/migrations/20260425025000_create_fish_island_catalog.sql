@@ -128,27 +128,24 @@ insert into public.sea_critters (
     is_enabled
 )
 values
-    ('bass', 'Bass', 'common', 1, 'Fish_Bass', 1, 100, true),
-    ('crab', 'Crab', 'common', 1, 'SeaShellfish_Crab_Red', 2, 100, true),
-    ('herring', 'Herring', 'common', 1, 'Fish_Herring', 3, 100, true),
-    ('shrimp', 'Shrimp', 'common', 1, 'SeaShellfish_Shrimp_Pink', 4, 100, true),
-    ('eel', 'Eel', 'rare', 2, 'Fish_Eel', 5, 25, true),
-    ('salmon', 'Salmon', 'rare', 2, 'Fish_Salmon', 6, 25, true),
-    ('lobster', 'Lobster', 'rare', 2, 'SeaShellfish_Lobster_Red', 7, 25, true),
-    ('pufferfish', 'Pufferfish', 'rare', 2, 'Fish_PufferFish', 8, 25, true),
-    ('butterflyfish', 'Butterflyfish', 'rare', 2, 'TropicalFish_ButterflyFish', 9, 25, true),
-    ('lionfish', 'Lionfish', 'rare', 2, 'TropicalFish_LionFish', 10, 25, true),
-    ('tuna', 'Tuna', 'rare', 3, 'Fish_Tuna', 11, 25, true),
-    ('dolphin', 'Dolphin', 'ultra_rare', 5, 'SeaMammal_Dolphin', 12, 5, true),
-    ('marlin', 'Marlin', 'ultra_rare', 5, 'Fish_MarlinSwordfish', 13, 5, true),
-    ('octopus', 'Octopus', 'ultra_rare', 5, 'SeaInvertebrate_Octopus_Orange', 14, 5, true),
-    ('great_white', 'Great White', 'ultra_rare', 5, 'Fish_GreatWhiteShark', 15, 5, true),
-    ('hammerhead', 'Hammerhead', 'ultra_rare', 5, 'Fish_HammerHeadShark', 16, 5, true),
-    ('sunfish', 'Sunfish', 'ultra_rare', 5, 'Fish_Sunfish', 17, 5, true),
-    ('clownfish', 'Clownfish', 'common', 1, 'TropicalFish_ClownFish', 18, 100, false),
-    ('koi', 'Koi', 'rare', 2, 'Fish_Koi', 19, 25, false),
-    ('anglerfish', 'Anglerfish', 'rare', 2, 'DeepSeaFish_Anglerfish', 20, 25, false),
-    ('blue_lobster', 'Blue Lobster', 'ultra_rare', 5, 'SeaShellfish_Lobster_Blue', 21, 5, false);
+    ('carp', 'Carp', 'common', 1, 'freshwater/common_carp', 1, 100, true),
+    ('crucian', 'Crucian', 'common', 1, 'freshwater/common_crucian', 2, 100, true),
+    ('pale_chub', 'Pale Chub', 'common', 1, 'freshwater/common_pale_chub', 3, 100, true),
+    ('shad', 'Shad', 'common', 1, 'freshwater/common_shad', 4, 100, true),
+    ('angelfish', 'Angelfish', 'rare', 3, 'freshwater/rare_angelfish', 5, 25, true),
+    ('leopoldi', 'Leopoldi', 'rare', 3, 'freshwater/rare_leopoldi', 6, 25, true),
+    ('sturgeon', 'Sturgeon', 'rare', 3, 'freshwater/rare_sturgeon', 7, 25, true),
+    ('arowana', 'Arowana', 'ultra_rare', 8, 'freshwater/super_rare_arowana', 8, 5, true),
+    ('pirarucu', 'Pirarucu', 'ultra_rare', 8, 'freshwater/super_rare_pirarucu', 9, 5, true),
+    ('anchovy', 'Anchovy', 'common', 1, 'saltwater/common_anchovy', 10, 100, true),
+    ('mackerel', 'Mackerel', 'common', 1, 'saltwater/common_mackerel', 11, 100, true),
+    ('sea_bass', 'Sea Bass', 'common', 1, 'saltwater/common_sea_bass', 12, 100, true),
+    ('trevally', 'Trevally', 'common', 1, 'saltwater/common_trevally', 13, 100, true),
+    ('blue_tang', 'Blue Tang', 'rare', 3, 'saltwater/rare_blue_tang', 14, 25, true),
+    ('clownfish', 'Clownfish', 'rare', 3, 'saltwater/rare_clownfish', 15, 25, true),
+    ('pomfret', 'Pomfret', 'rare', 3, 'saltwater/rare_pomfret', 16, 25, true),
+    ('great_white', 'Great White', 'ultra_rare', 8, 'saltwater/super_rare_great_white', 17, 5, true),
+    ('whale_shark', 'Whale Shark', 'ultra_rare', 8, 'saltwater/super_rare_whale_shark', 18, 5, true);
 
 insert into public.islands (id, display_name, sort_order, is_enabled)
 values
@@ -157,23 +154,24 @@ values
 
 insert into public.island_sea_critters (island_id, sea_critter_id, is_enabled)
 values
-    ('default', 'bass', true),
-    ('default', 'crab', true),
-    ('default', 'eel', true),
-    ('default', 'salmon', true),
-    ('default', 'lobster', true),
-    ('default', 'pufferfish', true),
-    ('default', 'dolphin', true),
-    ('default', 'marlin', true),
-    ('default', 'octopus', true),
-    ('sand', 'herring', true),
-    ('sand', 'shrimp', true),
-    ('sand', 'butterflyfish', true),
-    ('sand', 'lionfish', true),
-    ('sand', 'tuna', true),
+    ('default', 'carp', true),
+    ('default', 'crucian', true),
+    ('default', 'pale_chub', true),
+    ('default', 'shad', true),
+    ('default', 'angelfish', true),
+    ('default', 'leopoldi', true),
+    ('default', 'sturgeon', true),
+    ('default', 'arowana', true),
+    ('default', 'pirarucu', true),
+    ('sand', 'anchovy', true),
+    ('sand', 'mackerel', true),
+    ('sand', 'sea_bass', true),
+    ('sand', 'trevally', true),
+    ('sand', 'blue_tang', true),
+    ('sand', 'clownfish', true),
+    ('sand', 'pomfret', true),
     ('sand', 'great_white', true),
-    ('sand', 'hammerhead', true),
-    ('sand', 'sunfish', true);
+    ('sand', 'whale_shark', true);
 
 create function public.validate_enabled_island_sea_critter()
 returns trigger
@@ -252,44 +250,46 @@ revoke all on function public.prevent_disabling_enabled_island_sea_critter() fro
 do $$
 declare
     default_fish_ids text[] := array[
-        'bass',
-        'crab',
-        'eel',
-        'salmon',
-        'lobster',
-        'pufferfish',
-        'dolphin',
-        'marlin',
-        'octopus'
+        'carp',
+        'crucian',
+        'pale_chub',
+        'shad',
+        'angelfish',
+        'leopoldi',
+        'sturgeon',
+        'arowana',
+        'pirarucu'
     ];
     sand_fish_ids text[] := array[
-        'herring',
-        'shrimp',
-        'butterflyfish',
-        'lionfish',
-        'tuna',
+        'anchovy',
+        'mackerel',
+        'sea_bass',
+        'trevally',
+        'blue_tang',
+        'clownfish',
+        'pomfret',
         'great_white',
-        'hammerhead',
-        'sunfish'
+        'whale_shark'
     ];
     approved_fish_ids text[] := array[
-        'bass',
-        'crab',
-        'eel',
-        'salmon',
-        'lobster',
-        'pufferfish',
-        'dolphin',
-        'marlin',
-        'octopus',
-        'herring',
-        'shrimp',
-        'butterflyfish',
-        'lionfish',
-        'tuna',
+        'carp',
+        'crucian',
+        'pale_chub',
+        'shad',
+        'angelfish',
+        'leopoldi',
+        'sturgeon',
+        'arowana',
+        'pirarucu',
+        'anchovy',
+        'mackerel',
+        'sea_bass',
+        'trevally',
+        'blue_tang',
+        'clownfish',
+        'pomfret',
         'great_white',
-        'hammerhead',
-        'sunfish'
+        'whale_shark'
     ];
     actual_fish_ids text[];
     invalid_count integer;
@@ -324,8 +324,8 @@ begin
     where island_id = 'sand'
         and is_enabled;
 
-    if invalid_count <> 8 then
-        raise exception 'Tropical island must have exactly 8 enabled fish, found %.', invalid_count;
+    if invalid_count <> 9 then
+        raise exception 'Tropical island must have exactly 9 enabled fish, found %.', invalid_count;
     end if;
 
     select coalesce(array_agg(sea_critter_id order by sea_critter_id), array[]::text[])

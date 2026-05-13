@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		65C07C552FB31D44000AA6AB /* SuperwallKit in Frameworks */ = {isa = PBXBuildFile; productRef = 65C07C542FB31D44000AA6AB /* SuperwallKit */; };
 		65D53AE92FAEA13800997E66 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 65D53AE82FAEA13800997E66 /* FirebaseAnalytics */; };
+		65E000012FB4D00000000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 65E000022FB4D00000000001 /* GoogleSignIn */; };
 		C0D000000000000000000001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = C0D000000000000000000002 /* Supabase */; };
 /* End PBXBuildFile section */
 
@@ -16,9 +17,22 @@
 		65403AED2F9C237800C650A9 /* Pico: Focus Together.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Pico: Focus Together.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		65E000042FB4D00000000001 /* Exceptions for "pico" folder in "pico" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 65403AEC2F9C237800C650A9 /* pico */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		65403AEF2F9C237800C650A9 /* pico */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				65E000042FB4D00000000001 /* Exceptions for "pico" folder in "pico" target */,
+			);
 			path = pico;
 			sourceTree = "<group>";
 		};
@@ -30,6 +44,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				65D53AE92FAEA13800997E66 /* FirebaseAnalytics in Frameworks */,
+				65E000012FB4D00000000001 /* GoogleSignIn in Frameworks */,
 				C0D000000000000000000001 /* Supabase in Frameworks */,
 				65C07C552FB31D44000AA6AB /* SuperwallKit in Frameworks */,
 			);
@@ -85,6 +100,7 @@
 				C0D000000000000000000002 /* Supabase */,
 				65D53AE82FAEA13800997E66 /* FirebaseAnalytics */,
 				65C07C542FB31D44000AA6AB /* SuperwallKit */,
+				65E000022FB4D00000000001 /* GoogleSignIn */,
 			);
 			productName = pico;
 			productReference = 65403AED2F9C237800C650A9 /* Pico: Focus Together.app */;
@@ -118,6 +134,7 @@
 				C0D000000000000000000003 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				65D53AE62FAE9EB000997E66 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				65C07C532FB31D44000AA6AB /* XCRemoteSwiftPackageReference "Superwall-iOS" */,
+				65E000032FB4D00000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 65403AEE2F9C237800C650A9 /* Products */;
@@ -276,6 +293,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = pico/pico.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1.3;
 				DEVELOPMENT_TEAM = 78H87N96V2;
@@ -283,10 +301,12 @@
 				EXCLUDED_SOURCE_FILE_NAMES = (
 					README.md,
 					OFL.txt,
+					Info.plist,
 					"Quicksand-Variable.ttf",
 					"SplineSans-Variable.ttf",
 				);
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = pico/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -315,6 +335,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = pico/pico.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1.3;
 				DEVELOPMENT_TEAM = 78H87N96V2;
@@ -322,10 +343,12 @@
 				EXCLUDED_SOURCE_FILE_NAMES = (
 					README.md,
 					OFL.txt,
+					Info.plist,
 					"Quicksand-Variable.ttf",
 					"SplineSans-Variable.ttf",
 				);
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = pico/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -389,6 +412,14 @@
 				minimumVersion = 12.13.0;
 			};
 		};
+		65E000032FB4D00000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.1.0;
+			};
+		};
 		C0D000000000000000000003 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/supabase/supabase-swift.git";
@@ -409,6 +440,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 65D53AE62FAE9EB000997E66 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAnalytics;
+		};
+		65E000022FB4D00000000001 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 65E000032FB4D00000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
 		};
 		C0D000000000000000000002 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -195,6 +195,47 @@ final class AuthService {
         }
     }
 
+    func signInWithApple(idToken: String, nonce: String?) async throws -> AuthResult {
+        guard let client else {
+            throw AuthServiceError.missingConfiguration
+        }
+
+        do {
+            let session = try await client.auth.signInWithIdToken(
+                credentials: OpenIDConnectCredentials(
+                    provider: .apple,
+                    idToken: idToken,
+                    nonce: nonce
+                )
+            )
+
+            return AuthResult(session: AuthSession(supabaseSession: session), message: nil)
+        } catch {
+            throw AuthServiceError.requestFailed(friendlyMessage(from: error))
+        }
+    }
+
+    func signInWithGoogle(idToken: String, accessToken: String?, nonce: String?) async throws -> AuthResult {
+        guard let client else {
+            throw AuthServiceError.missingConfiguration
+        }
+
+        do {
+            let session = try await client.auth.signInWithIdToken(
+                credentials: OpenIDConnectCredentials(
+                    provider: .google,
+                    idToken: idToken,
+                    accessToken: accessToken,
+                    nonce: nonce
+                )
+            )
+
+            return AuthResult(session: AuthSession(supabaseSession: session), message: nil)
+        } catch {
+            throw AuthServiceError.requestFailed(friendlyMessage(from: error))
+        }
+    }
+
     func restoreSession() async throws -> AuthSession? {
         guard let client else {
             throw AuthServiceError.missingConfiguration
@@ -273,6 +314,7 @@ final class AuthService {
     }
 
     func updateProfile(
+        username: String,
         displayName: String,
         avatarConfig: AvatarConfig,
         for authSession: AuthSession
@@ -285,6 +327,7 @@ final class AuthService {
             path: "/rest/v1/user_profiles?select=user_id,username,display_name,avatar_config&user_id=eq.\(userID.uuidString)",
             method: "PATCH",
             body: UserProfileUpdate(
+                username: username.normalizedUsername,
                 displayName: displayName.normalizedDisplayName,
                 avatarConfig: avatarConfig
             ),
@@ -541,6 +584,7 @@ private struct UserProfileResponse: Decodable {
 }
 
 private struct UserProfileUpdate: Encodable {
+    let username: String
     let displayName: String
     let avatarConfig: AvatarConfig
 }

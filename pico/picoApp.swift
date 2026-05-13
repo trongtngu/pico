@@ -14,6 +14,7 @@ struct picoApp: App {
         if FirebaseApp.app() == nil {
             FirebaseApp.configure()
         }
+        GoogleSignInClient.configure()
 
         #if canImport(UIKit)
         PicoSegmentedControlAppearance.configure()
@@ -24,6 +25,9 @@ struct picoApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onOpenURL { url in
+                    _ = GoogleSignInClient.handleOpenURL(url)
+                }
         }
     }
 }
