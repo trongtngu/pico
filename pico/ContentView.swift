@@ -3397,6 +3397,7 @@ private struct StartFocusCTA: View {
         case viewFish
     }
 
+    @StateObject private var reelHaptics = ReelHaptics()
     @State private var isReeling = false
     @State private var reelProgress: CGFloat = 0
 
@@ -3417,24 +3418,29 @@ private struct StartFocusCTA: View {
     }
 
     var body: some View {
-        if mode == .viewFish {
-            ctaLabel
-                .contentShape(Capsule(style: .continuous))
-                .onLongPressGesture(
-                    minimumDuration: reelFillDuration,
-                    maximumDistance: 48,
-                    pressing: updateReelingState,
-                    perform: completeReel
-                )
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction {
-                    action()
-                }
-        } else {
-            Button(action: action) {
+        Group {
+            if mode == .viewFish {
                 ctaLabel
+                    .contentShape(Capsule(style: .continuous))
+                    .onLongPressGesture(
+                        minimumDuration: reelFillDuration,
+                        maximumDistance: 48,
+                        pressing: updateReelingState,
+                        perform: completeReel
+                    )
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction {
+                        action()
+                    }
+            } else {
+                Button(action: action) {
+                    ctaLabel
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+        }
+        .onDisappear {
+            stopReelingHaptics()
         }
     }
 
@@ -3492,6 +3498,11 @@ private struct StartFocusCTA: View {
 
     private func updateReelingState(_ isPressing: Bool) {
         isReeling = isPressing
+        if isPressing {
+            reelHaptics.start()
+        } else {
+            stopReelingHaptics()
+        }
 
         withAnimation(isPressing ? .linear(duration: reelFillDuration) : .easeOut(duration: 0.22)) {
             reelProgress = isPressing ? 1 : 0
@@ -3500,11 +3511,16 @@ private struct StartFocusCTA: View {
 
     private func completeReel() {
         action()
+        stopReelingHaptics()
 
         withAnimation(.easeOut(duration: 0.18)) {
             reelProgress = 0
             isReeling = false
         }
+    }
+
+    private func stopReelingHaptics() {
+        reelHaptics.stop()
     }
 
     private var foregroundColor: Color {
@@ -7728,10 +7744,31 @@ private struct StoreIslandSpeciesGrid: View {
     let catalog: [FishCatalogItem]
     let isLoading: Bool
 
-    private let columns = Array(
-        repeating: GridItem(.flexible(), spacing: PicoSpacing.compact),
-        count: 3
-    )
+    @State private var availableWidth: CGFloat = 0
+
+    private enum Layout {
+        static let columnCount = 3
+        static let cardSpacing = PicoSpacing.compact
+        static let fallbackCardSide: CGFloat = 96
+        static let maxCardSide: CGFloat = 112
+    }
+
+    private var cardSide: CGFloat {
+        guard availableWidth > 0 else { return Layout.fallbackCardSide }
+
+        let totalSpacing = CGFloat(Layout.columnCount - 1) * Layout.cardSpacing
+        return min(
+            Layout.maxCardSide,
+            max(0, (availableWidth - totalSpacing) / CGFloat(Layout.columnCount))
+        )
+    }
+
+    private var columns: [GridItem] {
+        Array(
+            repeating: GridItem(.fixed(cardSide), spacing: Layout.cardSpacing),
+            count: Layout.columnCount
+        )
+    }
 
     var body: some View {
         VStack(alignment: .center, spacing: PicoSpacing.standard) {
@@ -7745,12 +7782,28 @@ private struct StoreIslandSpeciesGrid: View {
             if catalog.isEmpty {
                 placeholder
             } else {
-                LazyVGrid(columns: columns, spacing: PicoSpacing.compact) {
+                LazyVGrid(columns: columns, alignment: .center, spacing: Layout.cardSpacing) {
                     ForEach(catalog) { item in
-                        StoreIslandSpeciesSilhouette(item: item)
+                        StoreIslandSpeciesSilhouette(
+                            item: item,
+                            sideLength: cardSide
+                        )
                     }
                 }
             }
+        }
+        .frame(maxWidth: .infinity)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: StoreIslandSpeciesGridWidthKey.self,
+                        value: proxy.size.width
+                    )
+            }
+        )
+        .onPreferenceChange(StoreIslandSpeciesGridWidthKey.self) { width in
+            availableWidth = width
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Available species silhouettes"))
@@ -7764,11 +7817,11 @@ private struct StoreIslandSpeciesGrid: View {
     @ViewBuilder
     private var placeholder: some View {
         if isLoading {
-            LazyVGrid(columns: columns, spacing: PicoSpacing.compact) {
+            LazyVGrid(columns: columns, alignment: .center, spacing: Layout.cardSpacing) {
                 ForEach(0..<6, id: \.self) { _ in
                     RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
                         .fill(PicoColors.softSurface)
-                        .aspectRatio(1, contentMode: .fit)
+                        .frame(width: cardSide, height: cardSide)
                         .overlay {
                             ProgressView()
                                 .controlSize(.mini)
@@ -7785,8 +7838,17 @@ private struct StoreIslandSpeciesGrid: View {
     }
 }
 
+private struct StoreIslandSpeciesGridWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 private struct StoreIslandSpeciesSilhouette: View {
     let item: FishCatalogItem
+    let sideLength: CGFloat
 
     var body: some View {
         Group {
@@ -7804,8 +7866,7 @@ private struct StoreIslandSpeciesSilhouette: View {
             }
         }
         .padding(PicoSpacing.standard)
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1, contentMode: .fit)
+        .frame(width: sideLength, height: sideLength)
         .background(item.rarity.picoStyle.rowBackgroundColor)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
         .overlay(

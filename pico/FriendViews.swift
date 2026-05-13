@@ -266,9 +266,18 @@ private struct IncomingRequestsPage: View {
 }
 
 private struct FriendProfilePage: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @State private var isConfirmingUnfriend = false
 
     let profile: UserProfile
+
+    private var isUnfriending: Bool {
+        friendStore.activeUnfriendUserID == profile.userID
+    }
 
     var body: some View {
         ScrollView {
@@ -296,6 +305,25 @@ private struct FriendProfilePage: View {
                 .frame(maxWidth: .infinity)
                 .picoCreamCard(padding: PicoSpacing.section)
 
+                Button(role: .destructive) {
+                    isConfirmingUnfriend = true
+                } label: {
+                    HStack(spacing: PicoSpacing.tiny) {
+                        Text("Unfriend")
+
+                        if isUnfriending {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(PicoColors.error)
+                        }
+                    }
+                }
+                .buttonStyle(FriendCompactCardButtonStyle(foreground: PicoColors.error))
+                .disabled(friendStore.activeUnfriendUserID != nil)
+
+                if let notice = friendStore.notice {
+                    FriendNoticeCard(text: notice)
+                }
             }
             .padding(PicoSpacing.standard)
         }
@@ -303,6 +331,23 @@ private struct FriendProfilePage: View {
         .navigationTitle(profile.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
+        .alert("Unfriend \(profile.displayName)?", isPresented: $isConfirmingUnfriend) {
+            Button("Cancel", role: .cancel) {}
+            Button("Unfriend", role: .destructive) {
+                Task {
+                    if await friendStore.unfriend(profile, session: sessionStore.session) {
+                        bondRewardClaimStore.resetClaims(
+                            ownerID: sessionStore.profile?.userID,
+                            residentID: profile.userID
+                        )
+                        await villageStore.loadResidents(for: sessionStore.session)
+                        dismiss()
+                    }
+                }
+            }
+        } message: {
+            Text("This will break your bond with \(profile.displayName). If you become friends again later, your bond progress will start over.")
+        }
     }
 }
 

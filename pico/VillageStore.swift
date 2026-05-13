@@ -135,6 +135,13 @@ final class BondRewardClaimStore: ObservableObject {
         save()
     }
 
+    func resetClaims(ownerID: UUID?, residentID: UUID) {
+        guard let ownerID else { return }
+
+        claimedLevels.removeValue(forKey: key(ownerID: ownerID, residentID: residentID))
+        save()
+    }
+
     private func key(ownerID: UUID, residentID: UUID) -> String {
         "\(ownerID.uuidString):\(residentID.uuidString)"
     }

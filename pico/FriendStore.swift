@@ -20,6 +20,7 @@ final class FriendStore: ObservableObject {
     @Published private(set) var isSendingRequest = false
     @Published private(set) var activeRequestID: UUID?
     @Published private(set) var activeRequestUserID: UUID?
+    @Published private(set) var activeUnfriendUserID: UUID?
     @Published var notice: String?
     @Published var searchNotice: String?
 
@@ -174,6 +175,25 @@ final class FriendStore: ObservableObject {
             incomingRequests.removeAll { $0.id == request.id }
         } catch {
             notice = displayMessage(for: error)
+        }
+    }
+
+    @discardableResult
+    func unfriend(_ profile: UserProfile, session: AuthSession?) async -> Bool {
+        guard let session, activeUnfriendUserID == nil else { return false }
+
+        activeUnfriendUserID = profile.userID
+        notice = nil
+        defer { activeUnfriendUserID = nil }
+
+        do {
+            try await friendService.unfriend(profile.userID, for: session)
+            friends.removeAll { $0.userID == profile.userID }
+            notice = "You unfriended @\(profile.username)."
+            return true
+        } catch {
+            notice = displayMessage(for: error)
+            return false
         }
     }
 

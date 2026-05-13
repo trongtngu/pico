@@ -134,6 +134,15 @@ final class FriendService {
         return response.map(\.userProfile)
     }
 
+    func unfriend(_ userID: UUID, for authSession: AuthSession) async throws {
+        let _: FriendRPCResponse = try await send(
+            path: "/rest/v1/rpc/unfriend_user",
+            method: "POST",
+            body: UnfriendUserRequest(friendUserId: userID),
+            accessToken: authSession.accessToken
+        )
+    }
+
     private func send<RequestBody: Encodable, ResponseBody: Decodable>(
         path: String,
         method: String,
@@ -232,6 +241,10 @@ private struct SendFriendRequest: Encodable {
 
 private struct FriendRequestAction: Encodable {
     let requestId: UUID
+}
+
+private struct UnfriendUserRequest: Encodable {
+    let friendUserId: UUID
 }
 
 private struct FriendRPCResponse: Decodable {

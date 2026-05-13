@@ -293,9 +293,10 @@ private final class VillageScene: SKScene {
         }
     )
     private static let sandIslandPalmTreeTiles: Set<TileCoordinate> = [
-        TileCoordinate(row: 1, column: 1),
-        TileCoordinate(row: 1, column: 3),
-        TileCoordinate(row: 1, column: 5)
+        TileCoordinate(row: 1, column: 0),
+        TileCoordinate(row: 1, column: 2),
+        TileCoordinate(row: 1, column: 4),
+        TileCoordinate(row: 1, column: 6)
     ]
     private static var sandIslandObstacleTiles: Set<TileCoordinate> {
         sandIslandPalmTreeTiles
