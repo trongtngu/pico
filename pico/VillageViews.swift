@@ -16,6 +16,7 @@ enum VillageMapStyle: String {
 
 enum VillageHappyIdlePlacement: Equatable {
     case standard
+    case center
     case spreadOut
 }
 
@@ -822,11 +823,18 @@ private final class VillageScene: SKScene {
         switch happyIdlePlacement {
         case .standard:
             return startingTile(for: index, in: tiles)
+        case .center:
+            let centerTile = TileCoordinate(row: 3, column: 2)
+            guard isWalkableTile(centerTile) else {
+                return startingTile(for: index, in: tiles)
+            }
+            return centerTile
         case .spreadOut:
             let spreadTiles = [
                 TileCoordinate(row: 3, column: 2),
-                TileCoordinate(row: 1, column: 1),
-                TileCoordinate(row: 5, column: 4)
+                TileCoordinate(row: 1, column: 0),
+                TileCoordinate(row: 5, column: 5),
+                TileCoordinate(row: 1, column: 2)
             ].filter { isWalkableTile($0) }
             guard !spreadTiles.isEmpty else {
                 return startingTile(for: index, in: tiles)

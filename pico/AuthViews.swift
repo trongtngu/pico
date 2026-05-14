@@ -40,6 +40,7 @@ private struct AuthRootView: View {
     @State private var signupEntryPoint: AuthRoute = .onboarding
     @State private var signupCompletesOnboarding = false
     @State private var onboardingDisplayName = ""
+    @State private var onboardingInitialStep: OnboardingStep = .welcome
 
     var body: some View {
         NavigationStack {
@@ -49,6 +50,7 @@ private struct AuthRootView: View {
                     AuthEntryView(
                         onGetStarted: {
                             onboardingDisplayName = ""
+                            onboardingInitialStep = .welcome
                             route = .onboarding
                         },
                         onLogin: {
@@ -59,7 +61,10 @@ private struct AuthRootView: View {
                     .navigationBarHidden(true)
                 case .onboarding:
                     OnboardingSequenceView(
+                        initialStep: onboardingInitialStep,
+                        initialDisplayName: onboardingDisplayName,
                         onBackToEntry: {
+                            onboardingInitialStep = .welcome
                             route = .entry
                         },
                         onSignup: { displayName in
@@ -118,6 +123,9 @@ private struct AuthRootView: View {
                         onBackToStart: {
                             if let returnRoute = signupReturnPolicy.returnRoute {
                                 route = returnRoute
+                            } else if signupReturnPolicy.isLockedAfterOnboarding {
+                                onboardingInitialStep = .authHandoff
+                                route = .onboarding
                             }
                         },
                         onLogin: {
@@ -125,7 +133,7 @@ private struct AuthRootView: View {
                             route = .login
                         },
                         entryPoint: signupEntryPoint.analyticsEntryPoint,
-                        canBackToStart: signupReturnPolicy.returnRoute != nil,
+                        canBackToStart: signupReturnPolicy.returnRoute != nil || signupReturnPolicy.isLockedAfterOnboarding,
                         initialDisplayName: signupCompletesOnboarding ? onboardingDisplayName : "",
                         completesOnboarding: signupCompletesOnboarding
                     )
