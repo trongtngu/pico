@@ -14,6 +14,11 @@ enum VillageMapStyle: String {
     case sandIsland
 }
 
+enum VillageHappyIdlePlacement: Equatable {
+    case standard
+    case spreadOut
+}
+
 struct VillagePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
@@ -61,6 +66,8 @@ struct VillageView: View {
     let currentUserProfile: UserProfile?
     var participants: [IslandParticipant]? = nil
     var isFishingMode = false
+    var usesHappyIdleAvatars = false
+    var happyIdlePlacement: VillageHappyIdlePlacement = .standard
     var mapStyle: VillageMapStyle = .originalIsland
     var maxTileWidth: CGFloat = 72
     var mapYOffset: CGFloat = 0
@@ -97,6 +104,8 @@ struct VillageView: View {
                 participants: gridParticipants,
                 rewardSeed: rewardSeed,
                 isFishingMode: isFishingMode,
+                usesHappyIdleAvatars: usesHappyIdleAvatars,
+                happyIdlePlacement: happyIdlePlacement,
                 mapStyle: mapStyle,
                 maxTileWidth: maxTileWidth,
                 mapYOffset: mapYOffset
@@ -114,6 +123,8 @@ private struct VillageSpriteView: UIViewRepresentable {
     let participants: [IslandParticipant]
     let rewardSeed: String
     let isFishingMode: Bool
+    let usesHappyIdleAvatars: Bool
+    let happyIdlePlacement: VillageHappyIdlePlacement
     let mapStyle: VillageMapStyle
     let maxTileWidth: CGFloat
     let mapYOffset: CGFloat
@@ -137,6 +148,8 @@ private struct VillageSpriteView: UIViewRepresentable {
             participants: participants,
             rewardSeed: rewardSeed,
             isFishingMode: isFishingMode,
+            usesHappyIdleAvatars: usesHappyIdleAvatars,
+            happyIdlePlacement: happyIdlePlacement,
             mapStyle: mapStyle,
             maxTileWidth: maxTileWidth,
             mapYOffset: mapYOffset
@@ -245,6 +258,8 @@ private struct VillagerRenderConfig: Equatable {
     let gridConfig: GridRenderConfig
     let participantKey: String
     let isFishingMode: Bool
+    let usesHappyIdleAvatars: Bool
+    let happyIdlePlacement: VillageHappyIdlePlacement
     let rewardSeed: String
 }
 
@@ -328,6 +343,8 @@ private final class VillageScene: SKScene {
     private var participants: [IslandParticipant] = []
     private var rewardSeed = ""
     private var isFishingMode = false
+    private var usesHappyIdleAvatars = false
+    private var happyIdlePlacement: VillageHappyIdlePlacement = .standard
     private var mapStyle: VillageMapStyle = .originalIsland
     private var maxTileWidth: CGFloat = 72
     private var mapYOffset: CGFloat = 0
@@ -364,6 +381,8 @@ private final class VillageScene: SKScene {
         participants: [IslandParticipant],
         rewardSeed: String,
         isFishingMode: Bool,
+        usesHappyIdleAvatars: Bool,
+        happyIdlePlacement: VillageHappyIdlePlacement,
         mapStyle: VillageMapStyle,
         maxTileWidth: CGFloat,
         mapYOffset: CGFloat
@@ -372,6 +391,8 @@ private final class VillageScene: SKScene {
         self.participants = Array(participants.prefix(gridSize * gridSize))
         self.rewardSeed = rewardSeed
         self.isFishingMode = isFishingMode
+        self.usesHappyIdleAvatars = usesHappyIdleAvatars
+        self.happyIdlePlacement = happyIdlePlacement
         self.mapStyle = mapStyle
         self.maxTileWidth = maxTileWidth
         self.mapYOffset = mapYOffset
@@ -402,6 +423,8 @@ private final class VillageScene: SKScene {
             gridConfig: nextGridConfig,
             participantKey: Self.participantKey(for: participants),
             isFishingMode: isFishingMode,
+            usesHappyIdleAvatars: usesHappyIdleAvatars,
+            happyIdlePlacement: happyIdlePlacement,
             rewardSeed: rewardSeed
         )
         if forceVillagers || shouldRenderGrid || nextVillagerConfig != renderedVillagerConfig {
@@ -729,26 +752,29 @@ private final class VillageScene: SKScene {
 
         for (index, participant) in visibleParticipants.enumerated() {
             let fishingSpot = isFishingMode ? spots[index] : nil
-            let tile = fishingSpot?.tile ?? startingTile(for: index, in: normalTiles)
+            let tile = fishingSpot?.tile ?? happyIdleTile(for: index, in: normalTiles)
             let startPosition = layout.characterPosition(for: tile, rowOffset: fishingSpot?.rowOffset ?? 0)
             let selectedHat = participant.profile.avatarConfig.selectedHat
             let scarf = AvatarScarf(bondLevel: participant.bondLevel)
             let idleFrames = AvatarIdleFrames(hat: selectedHat, scarf: scarf)
+            let happyIdleFrames = AvatarHappyIdleFrames(hat: selectedHat, scarf: scarf)
             let walkFrames = VillagerWalkFrames(hat: selectedHat, scarf: scarf)
             let fishingFrames = AvatarFishingFrames(hat: selectedHat, scarf: scarf, filteringMode: .linear)
             let villager = VillagerNode(
                 currentPosition: startPosition,
                 walkFrames: walkFrames,
                 idleFrames: idleFrames,
+                happyIdleFrames: happyIdleFrames,
                 fishingFrames: fishingFrames,
                 isFishingMode: isFishingMode,
+                usesHappyIdle: usesHappyIdleAvatars,
                 fishingAnimationRow: fishingSpot?.animationRow ?? 1,
                 fishingIsFlipped: fishingSpot?.isFlipped ?? true,
                 characterSize: layout.characterSize,
                 speed: layout.characterSpeed
             )
             addChild(villager)
-            if !isFishingMode {
+            if !isFishingMode && !usesHappyIdleAvatars {
                 villager.scheduleInitialTarget()
             }
             villagers.append(villager)
@@ -787,6 +813,27 @@ private final class VillageScene: SKScene {
         let tileIndex = (index + gridSize * 2 + 3) % tiles.count
         return tiles[tileIndex]
     }
+
+    private func happyIdleTile(for index: Int, in tiles: [TileCoordinate]) -> TileCoordinate {
+        guard usesHappyIdleAvatars else {
+            return startingTile(for: index, in: tiles)
+        }
+
+        switch happyIdlePlacement {
+        case .standard:
+            return startingTile(for: index, in: tiles)
+        case .spreadOut:
+            let spreadTiles = [
+                TileCoordinate(row: 3, column: 2),
+                TileCoordinate(row: 1, column: 1),
+                TileCoordinate(row: 5, column: 4)
+            ].filter { isWalkableTile($0) }
+            guard !spreadTiles.isEmpty else {
+                return startingTile(for: index, in: tiles)
+            }
+            return spreadTiles[index % spreadTiles.count]
+        }
+    }
 }
 
 private final class VillagerNode: SKNode {
@@ -796,8 +843,10 @@ private final class VillagerNode: SKNode {
     private let sprite: AvatarLayeredSpriteNode
     private let walkFrames: VillagerWalkFrames
     private let idleFrames: AvatarIdleFrames
+    private let happyIdleFrames: AvatarHappyIdleFrames
     private let fishingFrames: AvatarFishingFrames
     private let isFishingMode: Bool
+    private let usesHappyIdle: Bool
     private let fishingAnimationRow: Int
     private let fishingIsFlipped: Bool
     private var currentAnimationDirection: VillagerWalkDirection?
@@ -813,8 +862,10 @@ private final class VillagerNode: SKNode {
         currentPosition: CGPoint,
         walkFrames: VillagerWalkFrames,
         idleFrames: AvatarIdleFrames,
+        happyIdleFrames: AvatarHappyIdleFrames,
         fishingFrames: AvatarFishingFrames,
         isFishingMode: Bool,
+        usesHappyIdle: Bool,
         fishingAnimationRow: Int,
         fishingIsFlipped: Bool,
         characterSize: CGFloat,
@@ -824,11 +875,19 @@ private final class VillagerNode: SKNode {
         self.targetPosition = currentPosition
         self.walkFrames = walkFrames
         self.idleFrames = idleFrames
+        self.happyIdleFrames = happyIdleFrames
         self.fishingFrames = fishingFrames
         self.isFishingMode = isFishingMode
+        self.usesHappyIdle = usesHappyIdle
         self.fishingAnimationRow = fishingAnimationRow
         self.fishingIsFlipped = fishingIsFlipped
-        self.sprite = AvatarLayeredSpriteNode(frames: isFishingMode ? fishingFrames.layeredFrames : idleFrames.layeredFrames)
+        self.sprite = AvatarLayeredSpriteNode(frames: Self.initialFrames(
+            isFishingMode: isFishingMode,
+            usesHappyIdle: usesHappyIdle,
+            idleFrames: idleFrames,
+            happyIdleFrames: happyIdleFrames,
+            fishingFrames: fishingFrames
+        ))
         self.movementSpeed = speed
         super.init()
 
@@ -839,6 +898,8 @@ private final class VillagerNode: SKNode {
         addChild(sprite)
         if isFishingMode {
             startFishing()
+        } else if usesHappyIdle {
+            startHappyIdle()
         } else {
             startIdle()
         }
@@ -858,7 +919,7 @@ private final class VillagerNode: SKNode {
         layout: VillageSceneLayout,
         walkableTiles: [TileCoordinate]
     ) {
-        guard !isFishingMode else { return }
+        guard !isFishingMode, !usesHappyIdle else { return }
 
         if nextTargetTime == 0 {
             nextTargetTime = currentTime + TimeInterval.random(in: 0.2...1.0)
@@ -957,6 +1018,16 @@ private final class VillagerNode: SKNode {
         )
     }
 
+    private func startHappyIdle() {
+        guard !sprite.hasAnimation(forKey: Self.idleActionKey) else { return }
+        sprite.runAnimation(
+            with: happyIdleFrames.layeredFrames,
+            row: 0,
+            timePerFrame: 0.10,
+            key: Self.idleActionKey
+        )
+    }
+
     private func stopIdle() {
         sprite.removeAnimation(forKey: Self.idleActionKey)
     }
@@ -971,6 +1042,24 @@ private final class VillagerNode: SKNode {
             key: Self.idleActionKey,
             delayBetweenCycles: 3.0
         )
+    }
+
+    private static func initialFrames(
+        isFishingMode: Bool,
+        usesHappyIdle: Bool,
+        idleFrames: AvatarIdleFrames,
+        happyIdleFrames: AvatarHappyIdleFrames,
+        fishingFrames: AvatarFishingFrames
+    ) -> AvatarLayeredFrames {
+        if isFishingMode {
+            return fishingFrames.layeredFrames
+        }
+
+        if usesHappyIdle {
+            return happyIdleFrames.layeredFrames
+        }
+
+        return idleFrames.layeredFrames
     }
 }
 

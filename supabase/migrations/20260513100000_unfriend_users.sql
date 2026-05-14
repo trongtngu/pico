@@ -36,6 +36,20 @@ begin
     where user_one_id = user_one
         and user_two_id = user_two;
 
+    delete from public.village_residents
+    using public.villages
+    where village_residents.village_id = villages.id
+        and (
+            (
+                villages.owner_id = requester
+                and village_residents.resident_user_id = friend_user_id
+            )
+            or (
+                villages.owner_id = friend_user_id
+                and village_residents.resident_user_id = requester
+            )
+        );
+
     return jsonb_build_object('id', friend_user_id);
 end;
 $$;

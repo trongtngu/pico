@@ -340,7 +340,8 @@ private struct FriendProfilePage: View {
                             ownerID: sessionStore.profile?.userID,
                             residentID: profile.userID
                         )
-                        await villageStore.loadResidents(for: sessionStore.session)
+                        villageStore.removeResident(userID: profile.userID)
+                        await villageStore.loadResidents(for: sessionStore.session, force: true)
                         dismiss()
                     }
                 }

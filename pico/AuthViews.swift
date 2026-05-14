@@ -35,9 +35,11 @@ struct AuthGateView: View {
 
 private struct AuthRootView: View {
     @State private var route: AuthRoute = .entry
-    @State private var loginReturnRoute: AuthRoute = .entry
-    @State private var signupReturnRoute: AuthRoute = .onboarding
+    @State private var loginReturnPolicy: AuthReturnPolicy = .route(.entry)
+    @State private var signupReturnPolicy: AuthReturnPolicy = .lockedAfterOnboarding
     @State private var signupEntryPoint: AuthRoute = .onboarding
+    @State private var signupCompletesOnboarding = false
+    @State private var onboardingDisplayName = ""
 
     var body: some View {
         NavigationStack {
@@ -46,10 +48,11 @@ private struct AuthRootView: View {
                 case .entry:
                     AuthEntryView(
                         onGetStarted: {
+                            onboardingDisplayName = ""
                             route = .onboarding
                         },
                         onLogin: {
-                            loginReturnRoute = .entry
+                            loginReturnPolicy = .route(.entry)
                             route = .login
                         }
                     )
@@ -59,54 +62,53 @@ private struct AuthRootView: View {
                         onBackToEntry: {
                             route = .entry
                         },
-                        onSignup: {
+                        onSignup: { displayName in
+                            onboardingDisplayName = displayName
                             AnalyticsService.track(.signupStarted(method: "email", entryPoint: "onboarding"))
                             signupEntryPoint = .onboarding
-                            signupReturnRoute = .onboarding
+                            signupReturnPolicy = .lockedAfterOnboarding
+                            signupCompletesOnboarding = true
                             route = .signup
                         },
-                        onLogin: {
-                            loginReturnRoute = .onboarding
+                        onLogin: { displayName in
+                            onboardingDisplayName = displayName
+                            loginReturnPolicy = .lockedAfterOnboarding
                             route = .login
                         }
                     )
                     .navigationBarHidden(true)
                 case .login:
-                    LoginView {
-                        signupEntryPoint = .login
-                        signupReturnRoute = .login
-                        route = .signupOptions
-                    }
-                    .navigationTitle("")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button {
-                                route = loginReturnRoute
-                            } label: {
-                                PicoIcon(.chevronLeftRegular, size: 22)
-                                    .foregroundStyle(PicoColors.textPrimary)
-                            }
-                            .accessibilityLabel(Text("Back"))
+                    LoginView(
+                        onBack: loginReturnPolicy.returnRoute.map { returnRoute in
+                            { route = returnRoute }
+                        },
+                        onSignup: {
+                            let isLockedAfterOnboarding = loginReturnPolicy.isLockedAfterOnboarding
+                            signupEntryPoint = isLockedAfterOnboarding ? .onboarding : .login
+                            signupReturnPolicy = .route(.login)
+                            signupCompletesOnboarding = isLockedAfterOnboarding
+                            route = .signupOptions
                         }
-                    }
-                    .toolbarBackground(PicoColors.appBackground, for: .navigationBar)
+                    )
+                    .navigationBarHidden(true)
                 case .signupOptions:
                     SignupOptionsView(
                         entryPoint: signupEntryPoint.analyticsEntryPoint,
                         onBack: {
-                            route = signupReturnRoute
+                            if let returnRoute = signupReturnPolicy.returnRoute {
+                                route = returnRoute
+                            }
                         },
                         onEmailSignup: {
                             AnalyticsService.track(.signupStarted(
                                 method: "email",
                                 entryPoint: signupEntryPoint.analyticsEntryPoint
                             ))
-                            signupReturnRoute = .signupOptions
+                            signupReturnPolicy = .route(.signupOptions)
                             route = .signup
                         },
                         onLogin: {
-                            loginReturnRoute = .signupOptions
+                            loginReturnPolicy = .route(.signupOptions)
                             route = .login
                         }
                     )
@@ -114,14 +116,18 @@ private struct AuthRootView: View {
                 case .signup:
                     SignupFlowView(
                         onBackToStart: {
-                            route = signupReturnRoute
+                            if let returnRoute = signupReturnPolicy.returnRoute {
+                                route = returnRoute
+                            }
                         },
                         onLogin: {
-                            loginReturnRoute = .signup
+                            loginReturnPolicy = .route(.signup)
                             route = .login
                         },
                         entryPoint: signupEntryPoint.analyticsEntryPoint,
-                        completesOnboarding: signupReturnRoute == .onboarding
+                        canBackToStart: signupReturnPolicy.returnRoute != nil,
+                        initialDisplayName: signupCompletesOnboarding ? onboardingDisplayName : "",
+                        completesOnboarding: signupCompletesOnboarding
                     )
                     .navigationBarHidden(true)
                 }
@@ -132,7 +138,7 @@ private struct AuthRootView: View {
     }
 }
 
-private enum AuthRoute {
+private enum AuthRoute: Equatable {
     case entry
     case onboarding
     case login
@@ -155,6 +161,24 @@ private enum AuthRoute {
     }
 }
 
+private enum AuthReturnPolicy: Equatable {
+    case route(AuthRoute)
+    case lockedAfterOnboarding
+
+    var returnRoute: AuthRoute? {
+        switch self {
+        case .route(let route):
+            route
+        case .lockedAfterOnboarding:
+            nil
+        }
+    }
+
+    var isLockedAfterOnboarding: Bool {
+        self == .lockedAfterOnboarding
+    }
+}
+
 struct SignupOptionsView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
 
@@ -167,83 +191,66 @@ struct SignupOptionsView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
-                HStack {
-                    Button(action: onBack) {
-                        PicoIcon(.chevronLeftRegular, size: 22)
+            ZStack(alignment: .topLeading) {
+                ScrollView {
+                    VStack(spacing: PicoSpacing.largeSection) {
+                        Text("Create an account")
+                            .font(PicoTypography.sectionTitle)
                             .foregroundStyle(PicoColors.textPrimary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text("Back"))
+                            .multilineTextAlignment(.center)
 
-                    Spacer()
-                }
-                .padding(.horizontal, PicoSpacing.standard)
-                .padding(.top, max(0, proxy.safeAreaInsets.top))
-                .frame(height: proxy.safeAreaInsets.top + 56, alignment: .top)
-                .background(PicoColors.appBackground)
+                        VStack(spacing: PicoSpacing.iconTextGap) {
+                            Button("Continue with email", action: onEmailSignup)
+                                .buttonStyle(PicoPrimaryButtonStyle())
 
-                Spacer(minLength: PicoSpacing.compact)
+                            PicoAuthDivider()
+                                .padding(.top, PicoSpacing.compact)
 
-                VStack(spacing: PicoSpacing.largeSection) {
-                    Text("Create an account")
-                        .font(PicoTypography.sectionTitle)
-                        .foregroundStyle(PicoColors.textPrimary)
-                        .multilineTextAlignment(.center)
+                            PicoGoogleSignInButton(
+                                title: "Google",
+                                isLoading: sessionStore.isLoading
+                            ) {
+                                AnalyticsService.track(.signupStarted(method: "google", entryPoint: entryPoint))
+                                Task {
+                                    await sessionStore.signInWithGoogle()
+                                }
+                            }
 
-                    VStack(spacing: PicoSpacing.iconTextGap) {
-                        Button("Continue with email", action: onEmailSignup)
-                            .buttonStyle(PicoPrimaryButtonStyle())
+                            PicoAppleSignInButton(
+                                isLoading: sessionStore.isLoading,
+                                onRequest: handleAppleSignInRequest,
+                                onCompletion: handleAppleSignInCompletion
+                            )
 
-                        PicoAuthDivider()
-                            .padding(.top, PicoSpacing.compact)
+                            HStack(spacing: PicoSpacing.tiny) {
+                                Text("Already have an account?")
+                                    .font(PicoTypography.caption)
+                                    .foregroundStyle(PicoColors.textSecondary)
 
-                        PicoGoogleSignInButton(
-                            title: "Google",
-                            isLoading: sessionStore.isLoading
-                        ) {
-                            AnalyticsService.track(.signupStarted(method: "google", entryPoint: entryPoint))
-                            Task {
-                                await sessionStore.signInWithGoogle()
+                                Button("Log in", action: onLogin)
+                                    .font(PicoTypography.captionSemibold)
+                                    .foregroundStyle(PicoColors.primary)
+                                    .buttonStyle(.plain)
                             }
                         }
-
-                        PicoAppleSignInButton(
-                            isLoading: sessionStore.isLoading,
-                            onRequest: handleAppleSignInRequest,
-                            onCompletion: handleAppleSignInCompletion
-                        )
-
-                        HStack(spacing: PicoSpacing.tiny) {
-                            Text("Already have an account?")
-                                .font(PicoTypography.caption)
-                                .foregroundStyle(PicoColors.textSecondary)
-
-                            Button("Log in", action: onLogin)
-                                .font(PicoTypography.captionSemibold)
-                                .foregroundStyle(PicoColors.primary)
-                                .buttonStyle(.plain)
-                        }
-
-                        if let notice = sessionStore.notice {
-                            Text(notice)
-                                .font(PicoTypography.caption)
-                                .foregroundStyle(PicoColors.textSecondary)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: .infinity)
-                                .padding(PicoSpacing.standard)
-                                .background(
-                                    RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                                        .fill(PicoColors.softSurface)
-                                )
-                        }
                     }
+                    .frame(maxWidth: 520)
+                    .padding(.horizontal, PicoSpacing.standard)
+                    .padding(.vertical, PicoSpacing.largeSection)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: proxy.size.height, alignment: .center)
                 }
-                .frame(maxWidth: 520)
-                .padding(.horizontal, PicoSpacing.standard)
-                .frame(maxWidth: .infinity)
+                .scrollIndicators(.hidden)
 
-                Spacer(minLength: PicoSpacing.compact)
+                Button(action: onBack) {
+                    PicoIcon(.chevronLeftRegular, size: 22)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 48, height: 48)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Back"))
+                .padding(.leading, PicoSpacing.standard)
+                .padding(.top, max(0, proxy.safeAreaInsets.top))
             }
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
@@ -284,7 +291,7 @@ struct SignupOptionsView: View {
             }
         case .failure(let error):
             guard (error as? ASAuthorizationError)?.code != .canceled else { return }
-            sessionStore.notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            sessionStore.notice = nil
         }
     }
 }
@@ -292,6 +299,7 @@ struct SignupOptionsView: View {
 struct LoginView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
 
+    let onBack: (() -> Void)?
     let onSignup: () -> Void
 
     @State private var email = ""
@@ -310,123 +318,125 @@ struct LoginView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView {
-                VStack(spacing: PicoSpacing.section) {
-                    Text("Welcome back")
-                    .font(PicoTypography.sectionTitle)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .multilineTextAlignment(.center)
+            ZStack(alignment: .topLeading) {
+                ScrollView {
+                    VStack(spacing: PicoSpacing.section) {
+                        Text("Welcome back")
+                            .font(PicoTypography.sectionTitle)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .multilineTextAlignment(.center)
 
-                    VStack(spacing: PicoSpacing.iconTextGap) {
-                        TextField(
-                            "",
-                            text: $email,
-                            prompt: Text("Email").foregroundStyle(PicoColors.textMuted)
-                        )
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                        .textContentType(.emailAddress)
-                        .autocorrectionDisabled()
-                        .submitLabel(.next)
-                        .foregroundStyle(PicoColors.textPrimary)
-                        .authFieldStyle()
-                        .onChange(of: email) {
-                            sessionStore.notice = nil
-                        }
-
-                        SecureField(
-                            "",
-                            text: $password,
-                            prompt: Text("Password").foregroundStyle(PicoColors.textMuted)
-                        )
-                        .textContentType(.password)
-                        .submitLabel(.go)
-                        .onSubmit {
-                            guard canSubmit else { return }
-
-                            Task {
-                                await submit()
+                        VStack(spacing: PicoSpacing.iconTextGap) {
+                            TextField(
+                                "",
+                                text: $email,
+                                prompt: Text("Email").foregroundStyle(PicoColors.textMuted)
+                            )
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            .textContentType(.emailAddress)
+                            .autocorrectionDisabled()
+                            .submitLabel(.next)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .authFieldStyle()
+                            .onChange(of: email) {
+                                sessionStore.notice = nil
                             }
-                        }
-                        .foregroundStyle(PicoColors.textPrimary)
-                        .authFieldStyle()
-                        .onChange(of: password) {
-                            sessionStore.notice = nil
-                        }
 
-                        if let notice = sessionStore.notice {
-                            Text(notice)
-                                .font(PicoTypography.caption)
-                                .foregroundStyle(PicoColors.textSecondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(PicoSpacing.standard)
-                                .background(
-                                    RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                                        .fill(PicoColors.softSurface)
-                                )
-                        }
+                            SecureField(
+                                "",
+                                text: $password,
+                                prompt: Text("Password").foregroundStyle(PicoColors.textMuted)
+                            )
+                            .textContentType(.password)
+                            .submitLabel(.go)
+                            .onSubmit {
+                                guard canSubmit else { return }
 
-                        Button {
-                            Task {
-                                await submit()
+                                Task {
+                                    await submit()
+                                }
                             }
-                        } label: {
-                            ZStack {
-                                Text("Log in")
-                                    .frame(maxWidth: .infinity)
-                                    .multilineTextAlignment(.center)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .authFieldStyle()
+                            .onChange(of: password) {
+                                sessionStore.notice = nil
+                            }
 
-                                if sessionStore.isLoading {
-                                    HStack {
-                                        Spacer()
+                            Button {
+                                Task {
+                                    await submit()
+                                }
+                            } label: {
+                                ZStack {
+                                    Text("Log in")
+                                        .frame(maxWidth: .infinity)
+                                        .multilineTextAlignment(.center)
 
-                                        ProgressView()
-                                            .tint(PicoColors.textOnPrimary)
+                                    if sessionStore.isLoading {
+                                        HStack {
+                                            Spacer()
+
+                                            ProgressView()
+                                                .tint(PicoColors.textOnPrimary)
+                                        }
                                     }
                                 }
                             }
-                        }
-                        .disabled(!canSubmit)
-                        .opacity(canSubmit ? 1 : 0.62)
-                        .buttonStyle(PicoPrimaryButtonStyle())
+                            .disabled(!canSubmit)
+                            .opacity(canSubmit ? 1 : 0.62)
+                            .buttonStyle(PicoPrimaryButtonStyle())
 
-                        PicoAuthDivider()
-                            .padding(.top, PicoSpacing.compact)
+                            PicoAuthDivider()
+                                .padding(.top, PicoSpacing.compact)
 
-                        PicoGoogleSignInButton(
-                            title: "Google",
-                            isLoading: sessionStore.isLoading
-                        ) {
-                            Task {
-                                await sessionStore.signInWithGoogle()
+                            PicoGoogleSignInButton(
+                                title: "Google",
+                                isLoading: sessionStore.isLoading
+                            ) {
+                                Task {
+                                    await sessionStore.signInWithGoogle()
+                                }
                             }
+
+                            PicoAppleSignInButton(
+                                isLoading: sessionStore.isLoading,
+                                onRequest: handleAppleSignInRequest,
+                                onCompletion: handleAppleSignInCompletion
+                            )
                         }
 
-                        PicoAppleSignInButton(
-                            isLoading: sessionStore.isLoading,
-                            onRequest: handleAppleSignInRequest,
-                            onCompletion: handleAppleSignInCompletion
-                        )
-                    }
+                        HStack(spacing: PicoSpacing.tiny) {
+                            Text("Don't have an account?")
+                                .font(PicoTypography.caption)
+                                .foregroundStyle(PicoColors.textSecondary)
 
-                    HStack(spacing: PicoSpacing.tiny) {
-                        Text("Don't have an account?")
-                            .font(PicoTypography.caption)
-                            .foregroundStyle(PicoColors.textSecondary)
-
-                        Button("Sign up", action: onSignup)
-                            .font(PicoTypography.captionSemibold)
-                            .foregroundStyle(PicoColors.primary)
-                            .buttonStyle(.plain)
+                            Button("Sign up", action: onSignup)
+                                .font(PicoTypography.captionSemibold)
+                                .foregroundStyle(PicoColors.primary)
+                                .buttonStyle(.plain)
+                        }
                     }
+                    .frame(maxWidth: 520)
+                    .padding(.horizontal, PicoSpacing.standard)
+                    .padding(.vertical, PicoSpacing.largeSection)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: proxy.size.height, alignment: .center)
                 }
-                .frame(maxWidth: 520)
-                .padding(.horizontal, PicoSpacing.standard)
-                .padding(.vertical, PicoSpacing.largeSection)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: proxy.size.height, alignment: .center)
+                .scrollIndicators(.hidden)
+
+                if let onBack {
+                    Button(action: onBack) {
+                        PicoIcon(.chevronLeftRegular, size: 22)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .frame(width: 48, height: 48)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("Back"))
+                    .padding(.leading, PicoSpacing.standard)
+                    .padding(.top, max(0, proxy.safeAreaInsets.top))
+                }
             }
-            .scrollIndicators(.hidden)
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
         .toolbarColorScheme(.light, for: .navigationBar)
@@ -471,7 +481,7 @@ struct LoginView: View {
             }
         case .failure(let error):
             guard (error as? ASAuthorizationError)?.code != .canceled else { return }
-            sessionStore.notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            sessionStore.notice = nil
         }
     }
 }
@@ -482,6 +492,8 @@ struct SignupFlowView: View {
     let onBackToStart: () -> Void
     let onLogin: () -> Void
     let entryPoint: String
+    let canBackToStart: Bool
+    let initialDisplayName: String
     let completesOnboarding: Bool
 
     @State private var currentStep: SignupStep = .email
@@ -489,6 +501,23 @@ struct SignupFlowView: View {
     @State private var showsDuplicateEmailLoginPrompt = false
     @State private var hasTrackedSignupCompletion = false
     @State private var hasTrackedOnboardingCompletion = false
+
+    init(
+        onBackToStart: @escaping () -> Void,
+        onLogin: @escaping () -> Void,
+        entryPoint: String,
+        canBackToStart: Bool,
+        initialDisplayName: String,
+        completesOnboarding: Bool
+    ) {
+        self.onBackToStart = onBackToStart
+        self.onLogin = onLogin
+        self.entryPoint = entryPoint
+        self.canBackToStart = canBackToStart
+        self.initialDisplayName = initialDisplayName
+        self.completesOnboarding = completesOnboarding
+        _draft = State(initialValue: SignupDraft(firstName: initialDisplayName))
+    }
 
     private var currentIndex: Int {
         SignupStep.ordered.firstIndex(of: currentStep) ?? 0
@@ -540,6 +569,7 @@ struct SignupFlowView: View {
                 SignupProgressHeader(
                     currentIndex: currentIndex,
                     totalCount: SignupStep.ordered.count,
+                    showsBackButton: currentIndex > 0 || canBackToStart,
                     onBack: goBack,
                     topInset: proxy.safeAreaInsets.top
                 )
@@ -562,7 +592,7 @@ struct SignupFlowView: View {
 
                     signupField
 
-                    if sessionStore.notice != nil {
+                    if shouldShowSignupNotice {
                         signupNotice
                     }
 
@@ -606,6 +636,17 @@ struct SignupFlowView: View {
         }
         .onDisappear {
             sessionStore.notice = nil
+        }
+    }
+
+    private var shouldShowSignupNotice: Bool {
+        switch currentStep {
+        case .email:
+            showsDuplicateEmailLoginPrompt
+        case .username:
+            sessionStore.notice != nil
+        case .firstName, .password:
+            false
         }
     }
 
@@ -673,6 +714,7 @@ struct SignupFlowView: View {
 
     private func goBack() {
         guard currentIndex > 0 else {
+            guard canBackToStart else { return }
             onBackToStart()
             return
         }
@@ -737,7 +779,7 @@ struct SignupFlowView: View {
                 RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
                     .fill(PicoColors.softSurface)
             )
-        } else if let notice = sessionStore.notice {
+        } else if currentStep == .username, let notice = sessionStore.notice {
             Text(notice)
                 .font(PicoTypography.caption)
                 .foregroundStyle(PicoColors.textSecondary)
@@ -845,18 +887,25 @@ struct SignupDraft {
 private struct SignupProgressHeader: View {
     let currentIndex: Int
     let totalCount: Int
+    let showsBackButton: Bool
     let onBack: () -> Void
     let topInset: CGFloat
 
     var body: some View {
         HStack(spacing: PicoSpacing.compact) {
-            Button(action: onBack) {
-                PicoIcon(.chevronLeftRegular, size: 22)
-                    .foregroundStyle(PicoColors.textPrimary)
+            if showsBackButton {
+                Button(action: onBack) {
+                    PicoIcon(.chevronLeftRegular, size: 22)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 48, height: 48)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Back"))
+            } else {
+                Color.clear
                     .frame(width: 48, height: 48)
+                    .accessibilityHidden(true)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("Back"))
 
             SignupPageIndicator(
                 currentIndex: currentIndex,
@@ -923,7 +972,7 @@ private enum LoginAppleSignInNonce {
     }
 }
 
-private extension View {
+extension View {
     func authFieldStyle() -> some View {
         modifier(AuthFieldStyle())
     }

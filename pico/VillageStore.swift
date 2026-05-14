@@ -70,6 +70,10 @@ final class VillageStore: ObservableObject {
         hasLoadedResidents = false
     }
 
+    func removeResident(userID: UUID) {
+        residents.removeAll { $0.profile.userID == userID }
+    }
+
     func scarf(for userID: UUID) -> AvatarScarf? {
         guard let resident = residents.first(where: { $0.profile.userID == userID }) else {
             return nil

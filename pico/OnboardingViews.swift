@@ -24,16 +24,8 @@ struct AuthEntryView: View {
                     AuthEntryAvatarView()
                         .frame(width: 180, height: 180)
 
-                    VStack(spacing: PicoSpacing.compact) {
-                        PicoLogoImage()
-                            .frame(width: 180, height: 80)
-
-                        Text("Guilt-free focus")
-                            .font(PicoTypography.body)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    PicoLogoImage()
+                        .frame(width: 220, height: 96)
                 }
 
                 Spacer(minLength: PicoSpacing.largeSection)
@@ -86,10 +78,17 @@ private struct PicoLogoImage: View {
 }
 
 private struct AuthEntryAvatarView: View {
+    var hat: AvatarHat = .none
+    var scarf: AvatarScarf? = .green
+
     var body: some View {
         GeometryReader { proxy in
             SpriteView(
-                scene: AuthEntryAvatarScene(size: proxy.size),
+                scene: AuthEntryAvatarScene(
+                    size: proxy.size,
+                    hat: hat,
+                    scarf: scarf
+                ),
                 options: [.allowsTransparency]
             )
             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -103,9 +102,13 @@ private struct AuthEntryAvatarView: View {
 private final class AuthEntryAvatarScene: SKScene {
     private static let idleActionKey = "auth-entry-idle"
 
+    private let hat: AvatarHat
+    private let scarf: AvatarScarf?
     private var renderedSize: CGSize = .zero
 
-    override init(size: CGSize) {
+    init(size: CGSize, hat: AvatarHat, scarf: AvatarScarf?) {
+        self.hat = hat
+        self.scarf = scarf
         super.init(size: size)
         scaleMode = .resizeFill
         backgroundColor = .clear
@@ -133,7 +136,7 @@ private final class AuthEntryAvatarScene: SKScene {
         renderedSize = size
         removeAllChildren()
 
-        let frames = AvatarHappyIdleFrames(hat: .none, scarf: .green).layeredFrames
+        let frames = AvatarHappyIdleFrames(hat: hat, scarf: scarf).layeredFrames
         let sprite = AvatarLayeredSpriteNode(frames: frames)
         let spriteSide = min(size.width, size.height)
         sprite.spriteSize = CGSize(width: spriteSide, height: spriteSide)
@@ -152,10 +155,10 @@ struct OnboardingSequenceView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
 
     let onBackToEntry: () -> Void
-    let onSignup: () -> Void
-    let onLogin: () -> Void
+    let onSignup: (String) -> Void
+    let onLogin: (String) -> Void
 
-    @State private var currentStep: OnboardingStep = OnboardingStep.ordered.first ?? .startFishing
+    @State private var currentStep: OnboardingStep = OnboardingStep.ordered.first ?? .welcome
     @State private var hasTrackedOnboardingStart = false
     @State private var lastTrackedScreenStep: OnboardingStep?
     @State private var selectedPhoneUsageHours = 4
@@ -163,6 +166,8 @@ struct OnboardingSequenceView: View {
     @State private var selectedFocusGoal: OnboardingFocusGoal?
     @State private var selectedFocusBarriers: Set<OnboardingFocusBarrier> = []
     @State private var hasTriedProductivityApps: Bool?
+    @State private var onboardingDisplayName = ""
+    @State private var onboardingCelebrationFish = OnboardingRareFreshwaterFish.random()
     @State private var appleSignInNonce: String?
     @State private var hasTrackedAppleSignupCompletion = false
     @State private var hasTrackedAppleOnboardingCompletion = false
@@ -175,39 +180,52 @@ struct OnboardingSequenceView: View {
         OnboardingStep.ordered.firstIndex(of: currentStep) ?? 0
     }
 
+    private var currentProgressIndex: Int {
+        OnboardingStep.progressSteps.firstIndex(of: currentStep) ?? currentIndex
+    }
+
     private var primaryCTATitle: String {
         if currentStep.isPreferenceStep {
             return "Continue"
         }
 
-        if currentStep == .startFishing {
+        switch currentStep {
+        case .displayName:
+            return "Create my character"
+        case .rareFish:
+            return "Start fishing"
+        case .positiveFeedback:
+            return "Continue with Pico"
+        case .catchTeaser:
+            return "Reel it in!"
+        case .authHandoff:
+            return "Create an account"
+        default:
             return "Continue"
         }
-
-        if currentStep == .brokenLine {
-            return "Continue"
-        }
-
-        if currentStep == .whyOtherAppsFail {
-            return "Try Pico instead"
-        }
-
-        return "Continue"
     }
 
     private var primaryCTAAnalyticsActionName: String {
         switch currentStep {
-        case .startFishing:
+        case .rareFish:
             "start_fishing"
-        case .whyOtherAppsFail:
-            "try_pico_instead"
-        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .stayFocused, .brokenLine, .friendBonds, .authHandoff:
+        case .positiveFeedback:
+            "continue_with_pico"
+        case .catchTeaser:
+            "reel_it_in"
+        case .welcome, .displayName, .focusDuration, .setupIntro, .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .whyOtherAppsFail, .fishCelebration, .rewardCelebration, .focusWithFriends, .authHandoff:
             "next"
         }
     }
 
+    private var normalizedDisplayName: String {
+        onboardingDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var isPrimaryCTAEnabled: Bool {
         switch currentStep {
+        case .displayName:
+            (1...40).contains(normalizedDisplayName.count)
         case .focusIntent:
             !selectedFocusIntents.isEmpty
         case .focusGoal:
@@ -216,7 +234,7 @@ struct OnboardingSequenceView: View {
             !selectedFocusBarriers.isEmpty
         case .productivityExperience:
             hasTriedProductivityApps != nil
-        case .phoneUsage, .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .friendBonds, .authHandoff:
+        case .welcome, .focusDuration, .setupIntro, .phoneUsage, .rareFish, .whyOtherAppsFail, .positiveFeedback, .catchTeaser, .fishCelebration, .rewardCelebration, .focusWithFriends, .authHandoff:
             true
         }
     }
@@ -226,11 +244,14 @@ struct OnboardingSequenceView: View {
             let visualHeight = min(max(proxy.size.height * 0.42, 320), 430)
 
             VStack(spacing: 0) {
-                OnboardingProgressHeader(
-                    currentIndex: currentIndex,
-                    totalCount: OnboardingStep.ordered.count,
-                    onBack: goBack
-                )
+                if currentStep.showsProgressHeader {
+                    OnboardingProgressHeader(
+                        currentIndex: currentProgressIndex,
+                        totalCount: OnboardingStep.progressSteps.count,
+                        onBack: goBack,
+                        showsMascot: currentStep.showsProgressMascot
+                    )
+                }
 
                 VStack(spacing: 0) {
                     if currentStep.isPreferenceStep {
@@ -256,7 +277,10 @@ struct OnboardingSequenceView: View {
                         Spacer(minLength: PicoSpacing.compact)
 
                         VStack(spacing: PicoSpacing.largeSection) {
-                            OnboardingStoryStepTitle(currentStep: currentStep)
+                            OnboardingStoryStepTitle(
+                                currentStep: currentStep,
+                                displayName: normalizedDisplayName
+                            )
 
                             OnboardingStoryStepActions(
                                 currentStep: currentStep,
@@ -266,44 +290,74 @@ struct OnboardingSequenceView: View {
                                 handleGoogleSignIn: handleGoogleSignIn,
                                 handleAppleSignInRequest: handleAppleSignInRequest,
                                 handleAppleSignInCompletion: handleAppleSignInCompletion,
-                                onLogin: onLogin,
-                                isLoading: sessionStore.isLoading,
-                                notice: sessionStore.notice
+                                handleLoginAction: handleLoginAction,
+                                isLoading: sessionStore.isLoading
                             )
                         }
                         .frame(maxWidth: .infinity)
 
                         Spacer(minLength: PicoSpacing.compact)
+                    } else if currentStep.usesIslandVisual {
+                        GeometryReader { contentProxy in
+                            let headerSlotHeight = currentStep == .displayName
+                                ? OnboardingStoryLayout.islandDisplayNameHeaderSlotHeight
+                                : currentStep == .focusDuration
+                                    ? OnboardingStoryLayout.islandSocialProofHeaderSlotHeight
+                                : OnboardingStoryLayout.islandHeaderSlotHeight
+                            let visualCenterY = contentProxy.size.height * OnboardingStoryLayout.islandVisualCenterRatio
+                            let headerCenterY = visualCenterY
+                                - (visualHeight / 2)
+                                - OnboardingStoryLayout.islandHeaderVisualGap
+                                - (headerSlotHeight / 2)
+
+                            ZStack(alignment: .top) {
+                                storyVisual(for: currentStep, visualHeight: visualHeight)
+                                    .frame(width: contentProxy.size.width, height: visualHeight)
+                                    .position(x: contentProxy.size.width / 2, y: visualCenterY)
+
+                                VStack(spacing: 0) {
+                                    OnboardingStoryStepTitle(
+                                        currentStep: currentStep,
+                                        displayName: normalizedDisplayName
+                                    )
+
+                                    if currentStep == .displayName {
+                                        OnboardingDisplayNameInput(displayName: $onboardingDisplayName)
+                                            .padding(.top, PicoSpacing.compact)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: headerSlotHeight, alignment: .bottom)
+                                .position(x: contentProxy.size.width / 2, y: headerCenterY)
+
+                                VStack(spacing: 0) {
+                                    Spacer(minLength: 0)
+
+                                    OnboardingStoryStepActions(
+                                        currentStep: currentStep,
+                                        primaryCTATitle: primaryCTATitle,
+                                        handlePrimaryAction: handlePrimaryAction,
+                                        handleSignupAction: handleSignupAction,
+                                        handleGoogleSignIn: handleGoogleSignIn,
+                                        handleAppleSignInRequest: handleAppleSignInRequest,
+                                        handleAppleSignInCompletion: handleAppleSignInCompletion,
+                                        handleLoginAction: handleLoginAction
+                                    )
+                                    .disabled(!isPrimaryCTAEnabled)
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
                     } else {
                         Spacer(minLength: PicoSpacing.compact)
 
-                        VStack(spacing: currentStep == .whyOtherAppsFail ? PicoSpacing.section : 0) {
-                            OnboardingStoryStepTitle(currentStep: currentStep)
-                                .frame(
-                                    minHeight: currentStep.usesIslandVisual ? OnboardingStoryLayout.islandTitleSlotHeight : nil,
-                                    alignment: .bottom
-                                )
-
-                            Group {
-                                if currentStep == .startFishing || currentStep == .stayFocused || currentStep == .brokenLine {
-                                    StartFishingOnboardingVisual(
-                                        isFishing: currentStep != .startFishing,
-                                        showsFriend: currentStep == .brokenLine
-                                    )
-                                        .frame(height: visualHeight)
-                                } else if currentStep == .friendBonds {
-                                    FriendBondsOnboardingVisual()
-                                        .frame(height: visualHeight)
-                                } else if currentStep == .whyOtherAppsFail {
-                                    OnboardingPillCardsVisual()
-                                } else {
-                                    OnboardingPlaceholderVisual(
-                                        symbol: currentStep.visualSymbol,
-                                        subtitle: "Placeholder visual"
-                                    )
-                                    .frame(width: min(visualHeight, 300), height: min(visualHeight, 300))
-                                }
-                            }
+                        VStack(spacing: currentStep == .positiveFeedback || currentStep == .whyOtherAppsFail ? PicoSpacing.section : 0) {
+                            OnboardingStoryStepTitle(
+                                currentStep: currentStep,
+                                displayName: normalizedDisplayName
+                            )
+                            storyVisual(for: currentStep, visualHeight: visualHeight)
                         }
 
                         Spacer(minLength: PicoSpacing.compact)
@@ -316,8 +370,9 @@ struct OnboardingSequenceView: View {
                             handleGoogleSignIn: handleGoogleSignIn,
                             handleAppleSignInRequest: handleAppleSignInRequest,
                             handleAppleSignInCompletion: handleAppleSignInCompletion,
-                            onLogin: onLogin
+                            handleLoginAction: handleLoginAction
                         )
+                        .disabled(!isPrimaryCTAEnabled)
                     }
                 }
                 .frame(maxWidth: 520)
@@ -338,6 +393,8 @@ struct OnboardingSequenceView: View {
     }
 
     private func handlePrimaryAction() {
+        guard isPrimaryCTAEnabled else { return }
+
         AnalyticsService.track(.onboardingActionTapped(
             screenName: currentStep.analyticsName,
             actionName: primaryCTAAnalyticsActionName,
@@ -352,7 +409,16 @@ struct OnboardingSequenceView: View {
             actionName: "create_account",
             onboardingVariant: onboardingVariant
         ))
-        onSignup()
+        onSignup(normalizedDisplayName)
+    }
+
+    private func handleLoginAction() {
+        AnalyticsService.track(.onboardingActionTapped(
+            screenName: currentStep.analyticsName,
+            actionName: "log_in",
+            onboardingVariant: onboardingVariant
+        ))
+        onLogin(normalizedDisplayName)
     }
 
     private func handleGoogleSignIn() {
@@ -407,7 +473,7 @@ struct OnboardingSequenceView: View {
             }
         case .failure(let error):
             guard (error as? ASAuthorizationError)?.code != .canceled else { return }
-            sessionStore.notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            sessionStore.notice = nil
         }
     }
 
@@ -438,8 +504,12 @@ struct OnboardingSequenceView: View {
     private func goForward() {
         let steps = OnboardingStep.ordered
         guard currentIndex < steps.index(before: steps.endIndex) else {
-            onSignup()
+            onSignup(normalizedDisplayName)
             return
+        }
+
+        if currentStep == .catchTeaser {
+            onboardingCelebrationFish = OnboardingRareFreshwaterFish.random()
         }
 
         currentStep = steps[currentIndex + 1]
@@ -475,38 +545,104 @@ struct OnboardingSequenceView: View {
             onboardingVariant: onboardingVariant
         ))
     }
+
+    @ViewBuilder
+    private func storyVisual(for step: OnboardingStep, visualHeight: CGFloat) -> some View {
+        switch step {
+        case .welcome:
+            StartFishingOnboardingVisual(isFishing: false, showsAvatar: false)
+                .frame(height: visualHeight)
+        case .displayName:
+            StartFishingOnboardingVisual(isFishing: false, showsAvatar: false)
+                .frame(height: visualHeight)
+        case .rareFish:
+            StartFishingOnboardingVisual(isFishing: false)
+                .frame(height: visualHeight)
+        case .focusDuration:
+            StartFishingOnboardingVisual(isFishing: true)
+                .frame(height: visualHeight)
+        case .setupIntro:
+            OnboardingWelcomeVisual()
+                .frame(height: min(visualHeight, 280))
+        case .positiveFeedback:
+            OnboardingPositiveFeedbackVisual()
+        case .whyOtherAppsFail:
+            OnboardingWhatDoesntWorkCardsVisual()
+        case .catchTeaser:
+            StartFishingOnboardingVisual(isFishing: true)
+                .frame(height: visualHeight)
+        case .fishCelebration:
+            OnboardingFishCelebrationVisual(fish: onboardingCelebrationFish)
+                .frame(height: min(visualHeight, 330))
+        case .rewardCelebration:
+            OnboardingMovingIslandVisual()
+                .frame(height: visualHeight)
+        case .focusWithFriends:
+            OnboardingFriendsIslandVisual()
+                .frame(height: visualHeight)
+        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .authHandoff:
+            EmptyView()
+        }
+    }
 }
 
 enum OnboardingStep: String, CaseIterable, Identifiable {
+    case welcome
+    case displayName
+    case rareFish
+    case focusDuration
+    case setupIntro
     case phoneUsage
     case focusIntent
     case focusGoal
     case focusBarrier
     case productivityExperience
     case whyOtherAppsFail
-    case startFishing
-    case stayFocused
-    case brokenLine
-    case friendBonds
+    case positiveFeedback
+    case catchTeaser
+    case fishCelebration
+    case rewardCelebration
+    case focusWithFriends
     case authHandoff
 
     static let ordered: [OnboardingStep] = [
+        .welcome,
+        .displayName,
+        .rareFish,
+        .focusDuration,
+        .setupIntro,
         .phoneUsage,
         .focusIntent,
         .focusGoal,
         .productivityExperience,
         .focusBarrier,
         .whyOtherAppsFail,
-        .startFishing,
-        .stayFocused,
-        .brokenLine,
+        .positiveFeedback,
+        .catchTeaser,
+        .fishCelebration,
+        .rewardCelebration,
+        .focusWithFriends,
         .authHandoff
     ]
+
+    static var progressSteps: [OnboardingStep] {
+        ordered.filter(\.showsProgressHeader)
+    }
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .welcome:
+            "Welcome to Pico!"
+        case .displayName:
+            "First off, what should we call you?"
+        case .rareFish:
+            "Catch rare fish as you focus"
+        case .focusDuration:
+            "Catch rarer fish with better focus"
+        case .setupIntro:
+            "Let's get to know you first"
         case .phoneUsage:
             "How much time do you spend on your phone?"
         case .focusIntent:
@@ -519,14 +655,16 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "Have you tried other apps?"
         case .whyOtherAppsFail:
             "What doesn't work"
-        case .startFishing:
-            "Start fishing"
-        case .stayFocused:
-            "Catch fish while you focus"
-        case .brokenLine:
+        case .positiveFeedback:
+            "Small wins worth celebrating"
+        case .catchTeaser:
+            "You've caught something!"
+        case .fishCelebration:
+            "You caught a rare fish!"
+        case .rewardCelebration:
+            "Focus efforts should be rewarded and celebrated"
+        case .focusWithFriends:
             "Focus better with friends"
-        case .friendBonds:
-            "Create strong bonds with friends"
         case .authHandoff:
             "Create an account"
         }
@@ -534,6 +672,16 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
 
     var placeholderText: String {
         switch self {
+        case .welcome:
+            "Your guilt-free focus island"
+        case .displayName:
+            ""
+        case .rareFish:
+            ""
+        case .focusDuration:
+            ""
+        case .setupIntro:
+            "We'll see what you catch later on"
         case .phoneUsage:
             ""
         case .focusIntent:
@@ -546,48 +694,33 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             ""
         case .whyOtherAppsFail:
             ""
-        case .startFishing:
-            "Pico creates a guilt-free focus island"
-        case .stayFocused:
-            "Catch fish while you focus"
-        case .brokenLine:
-            "Placeholder copy for explaining that using your phone breaks the fishing line for that focus session."
-        case .friendBonds:
+        case .positiveFeedback:
+            ""
+        case .catchTeaser:
+            ""
+        case .fishCelebration:
+            ""
+        case .rewardCelebration:
+            ""
+        case .focusWithFriends:
             ""
         case .authHandoff:
             ""
-        }
-    }
-
-    var visualSymbol: String {
-        switch self {
-        case .phoneUsage:
-            "1"
-        case .focusIntent:
-            "2"
-        case .focusGoal:
-            "3"
-        case .productivityExperience:
-            "4"
-        case .focusBarrier:
-            "5"
-        case .whyOtherAppsFail:
-            "6"
-        case .startFishing:
-            "7"
-        case .stayFocused:
-            "8"
-        case .brokenLine:
-            "9"
-        case .friendBonds:
-            "11"
-        case .authHandoff:
-            "12"
         }
     }
 
     var analyticsName: String {
         switch self {
+        case .welcome:
+            "welcome"
+        case .displayName:
+            "display_name"
+        case .rareFish:
+            "rare_fish"
+        case .focusDuration:
+            "focus_duration"
+        case .setupIntro:
+            "setup_intro"
         case .phoneUsage:
             "phone_usage"
         case .focusIntent:
@@ -600,14 +733,16 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
             "productivity_experience"
         case .whyOtherAppsFail:
             "why_other_apps_fail"
-        case .startFishing:
-            "start_fishing"
-        case .stayFocused:
-            "stay_focused"
-        case .brokenLine:
-            "broken_line"
-        case .friendBonds:
-            "friend_bonds"
+        case .positiveFeedback:
+            "positive_feedback"
+        case .catchTeaser:
+            "catch_teaser"
+        case .fishCelebration:
+            "fish_celebration"
+        case .rewardCelebration:
+            "reward_celebration"
+        case .focusWithFriends:
+            "focus_with_friends"
         case .authHandoff:
             "auth_handoff"
         }
@@ -617,23 +752,40 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
         switch self {
         case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience:
             true
-        case .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .friendBonds, .authHandoff:
+        case .welcome, .displayName, .rareFish, .focusDuration, .setupIntro, .whyOtherAppsFail, .positiveFeedback, .catchTeaser, .fishCelebration, .rewardCelebration, .focusWithFriends, .authHandoff:
             false
         }
     }
 
     var usesIslandVisual: Bool {
         switch self {
-        case .startFishing, .stayFocused, .brokenLine:
+        case .welcome, .displayName, .rareFish, .focusDuration, .catchTeaser, .rewardCelebration, .focusWithFriends:
             true
-        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .whyOtherAppsFail, .friendBonds, .authHandoff:
+        case .setupIntro, .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .whyOtherAppsFail, .positiveFeedback, .fishCelebration, .authHandoff:
             false
+        }
+    }
+
+    var showsProgressHeader: Bool {
+        self != .authHandoff
+    }
+
+    var showsProgressMascot: Bool {
+        switch self {
+        case .welcome, .displayName, .rareFish, .focusDuration, .setupIntro, .authHandoff:
+            false
+        case .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .whyOtherAppsFail, .positiveFeedback, .catchTeaser, .fishCelebration, .rewardCelebration, .focusWithFriends:
+            true
         }
     }
 }
 
 private enum OnboardingStoryLayout {
-    static let islandTitleSlotHeight: CGFloat = 76
+    static let islandHeaderSlotHeight: CGFloat = 92
+    static let islandDisplayNameHeaderSlotHeight: CGFloat = 158
+    static let islandSocialProofHeaderSlotHeight: CGFloat = 130
+    static let islandHeaderVisualGap: CGFloat = 12
+    static let islandVisualCenterRatio: CGFloat = 0.5
 }
 
 private enum OnboardingFocusIntent: String, CaseIterable, Identifiable {
@@ -692,7 +844,7 @@ private struct OnboardingSetupStepContent: View {
                 focusBarrierContent
             case .productivityExperience:
                 productivityExperienceContent
-            case .whyOtherAppsFail, .startFishing, .stayFocused, .brokenLine, .friendBonds, .authHandoff:
+            case .welcome, .displayName, .rareFish, .focusDuration, .setupIntro, .whyOtherAppsFail, .positiveFeedback, .catchTeaser, .fishCelebration, .rewardCelebration, .focusWithFriends, .authHandoff:
                 EmptyView()
             }
         }
@@ -815,18 +967,17 @@ private struct OnboardingSetupStepContent: View {
 
 private struct OnboardingStoryStepTitle: View {
     let currentStep: OnboardingStep
+    let displayName: String
 
     var body: some View {
         VStack(spacing: PicoSpacing.compact) {
-            if currentStep != .startFishing && currentStep != .stayFocused {
-                if currentStep == .brokenLine {
-                    OnboardingBrokenLineTitle()
-                } else if currentStep == .friendBonds {
-                    OnboardingFriendBondsTitle()
+            if currentStep != .welcome && currentStep != .rareFish && currentStep != .focusDuration && currentStep != .rewardCelebration {
+                if currentStep == .focusWithFriends {
+                    OnboardingFocusWithFriendsTitle()
                 } else if currentStep == .authHandoff {
                     OnboardingAuthHandoffTitle()
                 } else {
-                    Text(currentStep.title)
+                    Text(titleText)
                         .font(PicoTypography.sectionTitle)
                         .foregroundStyle(PicoColors.textPrimary)
                         .multilineTextAlignment(.center)
@@ -834,11 +985,15 @@ private struct OnboardingStoryStepTitle: View {
                 }
             }
 
-            if currentStep == .startFishing {
-                OnboardingStartFishingTitle()
-            } else if currentStep == .stayFocused {
-                OnboardingStayFocusedTitle()
-            } else if currentStep != .brokenLine && currentStep != .friendBonds && currentStep != .authHandoff && !currentStep.placeholderText.isEmpty {
+            if currentStep == .welcome {
+                OnboardingWelcomeTitle()
+            } else if currentStep == .rareFish {
+                OnboardingRareFishTitle()
+            } else if currentStep == .focusDuration {
+                OnboardingFocusSocialProofCard()
+            } else if currentStep == .rewardCelebration {
+                OnboardingRewardCelebrationTitle()
+            } else if currentStep != .focusWithFriends && currentStep != .authHandoff && !currentStep.placeholderText.isEmpty {
                 Text(currentStep.placeholderText)
                     .font(PicoTypography.body)
                     .foregroundStyle(PicoColors.textSecondary)
@@ -846,6 +1001,14 @@ private struct OnboardingStoryStepTitle: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var titleText: String {
+        guard currentStep == .setupIntro, !displayName.isEmpty else {
+            return currentStep.title
+        }
+
+        return "Hey, \(displayName) let's get to know you first"
     }
 }
 
@@ -857,15 +1020,14 @@ private struct OnboardingStoryStepActions: View {
     let handleGoogleSignIn: () -> Void
     let handleAppleSignInRequest: (ASAuthorizationAppleIDRequest) -> Void
     let handleAppleSignInCompletion: (Result<ASAuthorization, Error>) -> Void
-    let onLogin: () -> Void
+    let handleLoginAction: () -> Void
     var isLoading = false
-    var notice: String? = nil
 
     var body: some View {
         VStack(spacing: PicoSpacing.iconTextGap) {
             if currentStep == .authHandoff {
                 VStack(spacing: PicoSpacing.iconTextGap) {
-                    Button("Continue with email", action: handleSignupAction)
+                    Button("Create account", action: handleSignupAction)
                         .buttonStyle(PicoPrimaryButtonStyle())
 
                     PicoAuthDivider()
@@ -888,28 +1050,28 @@ private struct OnboardingStoryStepActions: View {
                             .font(PicoTypography.caption)
                             .foregroundStyle(PicoColors.textSecondary)
 
-                        Button("Log in", action: onLogin)
+                        Button("Log in", action: handleLoginAction)
                             .font(PicoTypography.captionSemibold)
                             .foregroundStyle(PicoColors.primary)
                             .buttonStyle(.plain)
                     }
-
-                    if let notice {
-                        Text(notice)
-                            .font(PicoTypography.caption)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity)
-                            .padding(PicoSpacing.standard)
-                            .background(
-                                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                                    .fill(PicoColors.softSurface)
-                            )
-                    }
                 }
+            } else if currentStep == .catchTeaser {
+                OnboardingReelButton(title: primaryCTATitle, action: handlePrimaryAction)
             } else {
+                if currentStep == .whyOtherAppsFail {
+                    Text("Pico takes a different approach")
+                        .font(PicoTypography.body)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 Button(action: handlePrimaryAction) {
-                    OnboardingPrimaryCTALabel(title: primaryCTATitle)
+                    OnboardingPrimaryCTALabel(
+                        title: primaryCTATitle,
+                        showsFishingPole: currentStep == .rareFish
+                    )
                 }
                 .buttonStyle(PicoPrimaryButtonStyle())
             }
@@ -1087,23 +1249,89 @@ private struct OnboardingPhoneUsageSlider: View {
     }
 }
 
-private struct OnboardingPillCardsVisual: View {
+private struct OnboardingPositiveFeedbackVisual: View {
+    private let metrics = [
+        OnboardingPositiveFeedbackMetricContent(
+            value: "82%",
+            label: "felt more motivated after their first session",
+            symbol: "sparkles"
+        ),
+        OnboardingPositiveFeedbackMetricContent(
+            value: "3,200+",
+            label: "focus sessions completed this week",
+            symbol: "flame.fill"
+        ),
+        OnboardingPositiveFeedbackMetricContent(
+            value: "4.8★",
+            label: "average beta rating",
+            symbol: "star.fill"
+        )
+    ]
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.section) {
+            ForEach(metrics) { metric in
+                OnboardingPositiveFeedbackMetricRow(content: metric)
+            }
+        }
+        .frame(maxWidth: 430)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("82 percent felt more motivated after their first session. 3,200 plus focus sessions completed this week. 4.8 star average beta rating."))
+    }
+}
+
+private struct OnboardingPositiveFeedbackMetricRow: View {
+    let content: OnboardingPositiveFeedbackMetricContent
+
+    var body: some View {
+        HStack(alignment: .top, spacing: PicoSpacing.standard) {
+            Image(systemName: content.symbol)
+                .font(PicoTypography.symbol(size: 22, weight: .bold))
+                .foregroundStyle(PicoColors.streakAccent)
+                .frame(width: 28, height: 44, alignment: .top)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                Text(content.value)
+                    .font(PicoTypography.largeValue)
+                    .foregroundStyle(PicoColors.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                Text(content.label)
+                    .font(PicoTypography.bodySemibold)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct OnboardingWhatDoesntWorkCardsVisual: View {
     private let cards = [
-        OnboardingPillCardContent(
-            title: "Timers and blockers create guilt which drains motivation"
+        OnboardingWhatDoesntWorkCardContent(
+            title: "Blockers",
+            body: "Creates guilt when you slip up and reduces motivation",
+            symbol: "exclamationmark.shield"
         ),
-        OnboardingPillCardContent(
-            title: "Trying to stay on track alone is difficult"
+        OnboardingWhatDoesntWorkCardContent(
+            title: "Timers without rewards",
+            body: "Makes focus feel stressful",
+            symbol: "timer"
         ),
-        OnboardingPillCardContent(
-            title: "Strict routines get boring and hard to keep up with"
+        OnboardingWhatDoesntWorkCardContent(
+            title: "Strict routines",
+            body: "Get boring before they become habits",
+            symbol: "calendar"
         )
     ]
 
     var body: some View {
         VStack(spacing: PicoSpacing.iconTextGap) {
             ForEach(cards) { card in
-                OnboardingPillCard(content: card)
+                OnboardingWhatDoesntWorkCard(content: card)
             }
         }
         .frame(maxWidth: 430)
@@ -1112,60 +1340,475 @@ private struct OnboardingPillCardsVisual: View {
     }
 }
 
-private struct OnboardingPillCardContent: Identifiable {
+private struct OnboardingWhatDoesntWorkCardContent: Identifiable {
     let title: String
+    let body: String
+    let symbol: String
 
     var id: String { title }
 }
 
-private struct OnboardingPillCard: View {
-    let content: OnboardingPillCardContent
+private struct OnboardingWhatDoesntWorkCard: View {
+    let content: OnboardingWhatDoesntWorkCardContent
 
     var body: some View {
-        HStack(spacing: PicoSpacing.iconTextGap) {
-            OnboardingPicoErrorCrossIcon()
+        HStack(spacing: PicoSpacing.standard) {
+            Image(systemName: content.symbol)
+                .font(PicoTypography.symbol(size: 24, weight: .semibold))
+                .foregroundStyle(PicoColors.error)
+                .frame(width: 48, height: 48)
+                .accessibilityHidden(true)
 
-            Text(content.title)
-                .font(PicoTypography.primaryLabelSemibold)
-                .foregroundStyle(PicoColors.textPrimary)
-                .lineLimit(3)
-                .minimumScaleFactor(0.86)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                Text(content.title)
+                    .font(PicoTypography.primaryLabelSemibold)
+                    .foregroundStyle(PicoColors.error)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.86)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(content.body)
+                    .font(PicoTypography.body)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.86)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Spacer(minLength: PicoSpacing.compact)
         }
-        .padding(.vertical, PicoSpacing.iconTextGap)
-        .padding(.horizontal, PicoSpacing.standard)
+        .padding(PicoSpacing.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
                 .fill(PicoColors.softSurface)
         )
         .overlay(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: PicoRadius.small, style: .continuous)
                 .stroke(PicoColors.border, lineWidth: 1)
         )
-        .accessibilityLabel(Text(content.title))
+        .accessibilityLabel(Text("\(content.title). \(content.body)"))
     }
 }
 
-private struct OnboardingPicoErrorCrossIcon: View {
+private struct OnboardingPositiveFeedbackMetricContent: Identifiable {
+    let value: String
+    let label: String
+    let symbol: String
+
+    var id: String { value }
+}
+
+private struct OnboardingDisplayNameInput: View {
+    @Binding var displayName: String
+
     var body: some View {
-        PicoIcon(.xMarkRegular, size: 20)
-            .foregroundStyle(PicoColors.error)
-            .frame(width: 38, height: 38)
-            .background(PicoColors.destructiveBackground)
-            .clipShape(Circle())
-            .overlay(
-                Circle()
-                    .stroke(PicoColors.error.opacity(0.18), lineWidth: 1)
+        TextField(
+            "",
+            text: $displayName,
+            prompt: Text("Name").foregroundStyle(PicoColors.textMuted)
+        )
+        .textContentType(.name)
+        .submitLabel(.continue)
+        .foregroundStyle(PicoColors.textPrimary)
+        .authFieldStyle()
+    }
+}
+
+private struct OnboardingRareFreshwaterFish: Equatable {
+    let id: FishID
+    let displayName: String
+    let assetName: String
+
+    var accessibilityLabel: String {
+        "You caught a \(displayName.lowercased())"
+    }
+
+    static func random() -> OnboardingRareFreshwaterFish {
+        all.randomElement() ?? all[0]
+    }
+
+    private static let all: [OnboardingRareFreshwaterFish] = [
+        OnboardingRareFreshwaterFish(
+            id: FishID(rawValue: "angelfish"),
+            displayName: "Rare Angelfish",
+            assetName: "freshwater/rare_angelfish"
+        ),
+        OnboardingRareFreshwaterFish(
+            id: FishID(rawValue: "leopoldi"),
+            displayName: "Rare Leopoldi",
+            assetName: "freshwater/rare_leopoldi"
+        ),
+        OnboardingRareFreshwaterFish(
+            id: FishID(rawValue: "sturgeon"),
+            displayName: "Rare Sturgeon",
+            assetName: "freshwater/rare_sturgeon"
+        )
+    ]
+}
+
+private struct OnboardingFishCelebrationVisual: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let fish: OnboardingRareFreshwaterFish
+
+    var body: some View {
+        ZStack {
+            OnboardingConfettiVisual(reduceMotion: reduceMotion)
+                .frame(width: 360, height: 280)
+                .allowsHitTesting(false)
+
+            VStack(spacing: PicoSpacing.iconTextGap) {
+                OnboardingFishImage(fish: fish)
+                    .frame(width: 210, height: 210)
+
+                Text(fish.displayName)
+                    .font(PicoTypography.cardTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                Text("rare")
+                    .font(PicoTypography.largePill)
+                    .foregroundStyle(FishRarity.rare.picoStyle.pillTextColor)
+                    .padding(.horizontal, PicoSpacing.iconTextGap)
+                    .padding(.vertical, 6)
+                    .background(FishRarity.rare.picoStyle.pillBackgroundColor)
+                    .clipShape(Capsule(style: .continuous))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(fish.accessibilityLabel))
+    }
+}
+
+private struct OnboardingConfettiVisual: View {
+    let reduceMotion: Bool
+    @State private var startDate = Date()
+
+    private let cycleDuration: TimeInterval = 3.2
+    private let particles = OnboardingConfettiParticle.particles
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                let elapsed = reduceMotion ? 0 : timeline.date.timeIntervalSince(startDate)
+                let cycleElapsed = reduceMotion ? 0 : elapsed.truncatingRemainder(dividingBy: cycleDuration)
+
+                for particle in particles {
+                    let progress = reduceMotion ? 0.34 : particle.progress(at: cycleElapsed)
+                    guard progress > 0 || reduceMotion else { continue }
+
+                    let easedProgress = 1 - pow(1 - progress, 2)
+                    let x = size.width * particle.unitX + particle.drift * CGFloat(easedProgress)
+                    let y = size.height * particle.startY + particle.fall * CGFloat(easedProgress)
+                    let opacity = reduceMotion ? 0.72 : particle.opacity(at: progress)
+                    guard opacity > 0 else { continue }
+
+                    context.drawLayer { layer in
+                        layer.translateBy(x: x, y: y)
+                        layer.rotate(by: .radians(particle.rotation(at: progress)))
+                        layer.fill(
+                            particle.path,
+                            with: .color(particle.color.opacity(opacity))
+                        )
+                    }
+                }
+            }
+        }
+        .onAppear {
+            startDate = Date()
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct OnboardingConfettiParticle {
+    enum Shape {
+        case circle
+        case roundedRect
+    }
+
+    let unitX: CGFloat
+    let startY: CGFloat
+    let drift: CGFloat
+    let fall: CGFloat
+    let delay: TimeInterval
+    let duration: TimeInterval
+    let size: CGSize
+    let shape: Shape
+    let color: Color
+    let spin: Double
+
+    var path: Path {
+        let rect = CGRect(
+            x: -size.width / 2,
+            y: -size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+
+        switch shape {
+        case .circle:
+            return Path(ellipseIn: rect)
+        case .roundedRect:
+            return Path(roundedRect: rect, cornerRadius: min(size.width, size.height) * 0.28)
+        }
+    }
+
+    func progress(at elapsed: TimeInterval) -> Double {
+        guard elapsed >= delay else { return 0 }
+        return min(1, max(0, (elapsed - delay) / duration))
+    }
+
+    func opacity(at progress: Double) -> Double {
+        min(1, max(0, 1 - pow(progress, 2.4)))
+    }
+
+    func rotation(at progress: Double) -> Double {
+        spin * progress
+    }
+
+    static let particles: [OnboardingConfettiParticle] = [
+        .init(unitX: 0.16, startY: 0.18, drift: -8, fall: 58, delay: 0.00, duration: 1.55, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.warning, spin: 2.4),
+        .init(unitX: 0.24, startY: 0.08, drift: 14, fall: 72, delay: 0.03, duration: 1.68, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.success, spin: -2.1),
+        .init(unitX: 0.35, startY: 0.12, drift: -12, fall: 66, delay: 0.08, duration: 1.52, size: CGSize(width: 5, height: 5), shape: .circle, color: PicoColors.primary, spin: 1.7),
+        .init(unitX: 0.63, startY: 0.10, drift: 10, fall: 74, delay: 0.02, duration: 1.62, size: CGSize(width: 4, height: 8), shape: .roundedRect, color: PicoColors.error, spin: 2.9),
+        .init(unitX: 0.74, startY: 0.16, drift: -11, fall: 56, delay: 0.11, duration: 1.46, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.warning, spin: -2.7),
+        .init(unitX: 0.86, startY: 0.20, drift: 9, fall: 62, delay: 0.05, duration: 1.58, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.primary, spin: 2.2),
+        .init(unitX: 0.20, startY: 0.42, drift: 18, fall: 42, delay: 0.18, duration: 1.38, size: CGSize(width: 4, height: 4), shape: .circle, color: PicoColors.success, spin: -1.5),
+        .init(unitX: 0.44, startY: 0.30, drift: 15, fall: 54, delay: 0.21, duration: 1.36, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.warning, spin: -2.8),
+        .init(unitX: 0.57, startY: 0.32, drift: -15, fall: 52, delay: 0.16, duration: 1.42, size: CGSize(width: 4, height: 7), shape: .roundedRect, color: PicoColors.error, spin: 2.5),
+        .init(unitX: 0.82, startY: 0.38, drift: -18, fall: 44, delay: 0.22, duration: 1.32, size: CGSize(width: 4, height: 8), shape: .roundedRect, color: PicoColors.success, spin: 2.4),
+        .init(unitX: 0.26, startY: 0.62, drift: -16, fall: 34, delay: 0.24, duration: 1.24, size: CGSize(width: 5, height: 5), shape: .circle, color: PicoColors.warning, spin: 1.8),
+        .init(unitX: 0.62, startY: 0.58, drift: -10, fall: 38, delay: 0.27, duration: 1.22, size: CGSize(width: 5, height: 8), shape: .roundedRect, color: PicoColors.primary, spin: -2.5)
+    ]
+}
+
+private struct OnboardingFishImage: View {
+    let fish: OnboardingRareFreshwaterFish
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .renderingMode(.original)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+            } else {
+                Image(systemName: "fish.fill")
+                    .font(PicoTypography.symbol(size: 120, weight: .semibold))
+                    .foregroundStyle(FishRarity.rare.picoStyle.iconFallbackColor)
+            }
+        }
+    }
+
+    private var image: UIImage? {
+        imageResourceCandidates
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
+    }
+
+    private var imageResourceCandidates: [String] {
+        var candidates = [
+            "Icons/fish/\(fish.assetName)",
+            "Icons/fish/\(fish.assetName).png",
+            "fish/\(fish.assetName)",
+            "fish/\(fish.assetName).png",
+            fish.assetName,
+            "\(fish.assetName).png"
+        ]
+
+        if let flatAssetName = fish.assetName.split(separator: "/").last.map(String.init) {
+            candidates.append("Icons/fish/\(flatAssetName)")
+            candidates.append("Icons/fish/\(flatAssetName).png")
+            candidates.append(flatAssetName)
+            candidates.append("\(flatAssetName).png")
+        }
+
+        return candidates
+    }
+}
+
+private struct OnboardingMovingIslandVisual: View {
+    private var participant: IslandParticipant {
+        IslandParticipant(
+            profile: UserProfile(
+                userID: UUID(uuidString: "4F2FBD45-57C9-4B16-8DE1-07B4460831D6") ?? UUID(),
+                username: "pico",
+                displayName: "Pico",
+                avatarConfig: AvatarCatalog.defaultConfig
+            ),
+            bondLevel: 0
+        )
+    }
+
+    var body: some View {
+        VillageView(
+            residents: [],
+            currentUserProfile: nil,
+            participants: [participant],
+            isFishingMode: false,
+            usesHappyIdleAvatars: true,
+            mapStyle: .originalIsland,
+            maxTileWidth: 50,
+            mapYOffset: -76
+        )
+        .accessibilityLabel(Text("Pico avatar smiling on the island"))
+    }
+}
+
+private struct OnboardingFriendsIslandVisual: View {
+    private var participants: [IslandParticipant] {
+        [
+            IslandParticipant(
+                profile: UserProfile(
+                    userID: UUID(uuidString: "4F2FBD45-57C9-4B16-8DE1-07B4460831D6") ?? UUID(),
+                    username: "pico",
+                    displayName: "Pico",
+                    avatarConfig: AvatarCatalog.defaultConfig
+                ),
+                bondLevel: 0
+            ),
+            IslandParticipant(
+                profile: UserProfile(
+                    userID: UUID(uuidString: "A0F2D726-1967-45FB-89E9-A21DD3C0C3E8") ?? UUID(),
+                    username: "kai",
+                    displayName: "Kai",
+                    avatarConfig: AvatarCatalog.defaultConfig.withHat(.beanie)
+                ),
+                bondLevel: 2
+            ),
+            IslandParticipant(
+                profile: UserProfile(
+                    userID: UUID(uuidString: "D3081671-73F5-47D4-88ED-4BC474648178") ?? UUID(),
+                    username: "mika",
+                    displayName: "Mika",
+                    avatarConfig: AvatarCatalog.defaultConfig.withHat(.shark)
+                ),
+                bondLevel: 3
             )
-            .accessibilityHidden(true)
+        ]
+    }
+
+    var body: some View {
+        VillageView(
+            residents: [],
+            currentUserProfile: nil,
+            participants: participants,
+            isFishingMode: false,
+            usesHappyIdleAvatars: true,
+            happyIdlePlacement: .spreadOut,
+            mapStyle: .originalIsland,
+            maxTileWidth: 50,
+            mapYOffset: -76
+        )
+        .accessibilityLabel(Text("Pico and two friends smiling on the island"))
+    }
+}
+
+private struct OnboardingReelButton: View {
+    @StateObject private var reelHaptics = ReelHaptics()
+    @State private var isReeling = false
+    @State private var reelProgress: CGFloat = 0
+
+    let title: String
+    let action: () -> Void
+
+    private let reelFillDuration: TimeInterval = 0.8
+
+    var body: some View {
+        label
+            .contentShape(Capsule(style: .continuous))
+            .onLongPressGesture(
+                minimumDuration: reelFillDuration,
+                maximumDistance: 48,
+                pressing: updateReelingState,
+                perform: completeReel
+            )
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                action()
+            }
+            .onDisappear {
+                stopReelingHaptics()
+            }
+    }
+
+    private var label: some View {
+        VStack(spacing: 2) {
+            Text("Hold down to pull")
+                .font(PicoTypography.caption)
+                .foregroundStyle(PicoColors.textOnPrimary.opacity(0.86))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            HStack(spacing: PicoSpacing.compact) {
+                Text(isReeling ? "Reeling..." : title)
+                    .font(PicoTypography.actionTitle)
+
+                OnboardingFishingPoleIcon()
+                    .frame(width: 25, height: 25)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .foregroundStyle(PicoColors.textOnPrimary)
+        .padding(.horizontal, PicoSpacing.section)
+        .frame(maxWidth: .infinity)
+        .frame(height: 64)
+        .background(background)
+        .clipShape(Capsule(style: .continuous))
+    }
+
+    private var background: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(Color(hex: 0x54B8FF))
+
+                Rectangle()
+                    .fill(Color(hex: 0x2F9FEA))
+                    .frame(width: proxy.size.width * reelProgress)
+            }
+            .clipShape(Capsule(style: .continuous))
+        }
+    }
+
+    private func updateReelingState(_ isPressing: Bool) {
+        isReeling = isPressing
+        if isPressing {
+            reelHaptics.start()
+        } else {
+            stopReelingHaptics()
+        }
+
+        withAnimation(isPressing ? .linear(duration: reelFillDuration) : .easeOut(duration: 0.22)) {
+            reelProgress = isPressing ? 1 : 0
+        }
+    }
+
+    private func completeReel() {
+        action()
+        stopReelingHaptics()
+
+        withAnimation(.easeOut(duration: 0.18)) {
+            reelProgress = 0
+            isReeling = false
+        }
+    }
+
+    private func stopReelingHaptics() {
+        reelHaptics.stop()
     }
 }
 
 private struct StartFishingOnboardingVisual: View {
     let isFishing: Bool
-    var showsFriend = false
+    var showsAvatar = true
 
     private var previewProfile: UserProfile {
         UserProfile(
@@ -1176,29 +1819,11 @@ private struct StartFishingOnboardingVisual: View {
         )
     }
 
-    private var friendProfile: UserProfile {
-        UserProfile(
-            userID: UUID(uuidString: "A0F2D726-1967-45FB-89E9-A21DD3C0C3E8") ?? UUID(),
-            username: "kai",
-            displayName: "Kai",
-            avatarConfig: AvatarCatalog.defaultConfig.withHat(.beanie)
-        )
-    }
-
-    private var participants: [IslandParticipant]? {
-        guard showsFriend else { return nil }
-
-        return [
-            IslandParticipant(profile: previewProfile, bondLevel: 0),
-            IslandParticipant(profile: friendProfile, bondLevel: 0)
-        ]
-    }
-
     var body: some View {
         VillageView(
             residents: [],
-            currentUserProfile: previewProfile,
-            participants: participants,
+            currentUserProfile: showsAvatar ? previewProfile : nil,
+            participants: showsAvatar ? nil : [],
             isFishingMode: isFishing,
             mapStyle: .originalIsland,
             maxTileWidth: 50,
@@ -1208,115 +1833,16 @@ private struct StartFishingOnboardingVisual: View {
     }
 
     private var accessibilityLabel: String {
-        if showsFriend {
-            return "Pico and a friend avatar fishing together on the island"
-        }
-
+        guard showsAvatar else { return "Pico island" }
         return isFishing ? "Pico avatar fishing on the island" : "Pico avatar on the island"
     }
 }
 
-private struct FriendBondsOnboardingVisual: View {
+private struct OnboardingWelcomeVisual: View {
     var body: some View {
-        GeometryReader { proxy in
-            let avatarSize = min(proxy.size.width * 0.64, min(proxy.size.height * 0.70, 270))
-            let overlap = avatarSize * -0.42
-
-            HStack(spacing: overlap) {
-                OnboardingFriendAvatarView(facesLeft: false)
-                    .frame(width: avatarSize, height: avatarSize)
-
-                OnboardingFriendAvatarView(facesLeft: true)
-                    .frame(width: avatarSize, height: avatarSize)
-            }
-            .frame(width: proxy.size.width, height: avatarSize)
-            .position(x: proxy.size.width / 2, y: proxy.size.height * 0.6)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Two happy Pico avatars wearing green scarves"))
-    }
-}
-
-private struct OnboardingAccountAvatarVisual: View {
-    var body: some View {
-        GeometryReader { proxy in
-            let avatarSize = min(proxy.size.width * 0.64, min(proxy.size.height * 0.64, 250))
-
-            AuthEntryAvatarView()
-                .frame(width: avatarSize, height: avatarSize)
-                .position(x: proxy.size.width / 2, y: proxy.size.height * 0.52)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Smiling Pico avatar wearing a green scarf"))
-    }
-}
-
-private struct OnboardingFriendAvatarView: View {
-    let facesLeft: Bool
-
-    var body: some View {
-        GeometryReader { proxy in
-            SpriteView(
-                scene: OnboardingFriendAvatarScene(
-                    size: proxy.size,
-                    facesLeft: facesLeft
-                ),
-                options: [.allowsTransparency]
-            )
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .background(Color.clear)
-        }
-    }
-}
-
-private final class OnboardingFriendAvatarScene: SKScene {
-    private static let idleActionKey = "friend-bonds-idle"
-
-    private let facesLeft: Bool
-    private var renderedSize: CGSize = .zero
-
-    init(size: CGSize, facesLeft: Bool) {
-        self.facesLeft = facesLeft
-        super.init(size: size)
-        scaleMode = .resizeFill
-        backgroundColor = .clear
-    }
-
-    required init?(coder aDecoder: NSCoder) {
-        nil
-    }
-
-    override func didMove(to view: SKView) {
-        view.allowsTransparency = true
-        view.isOpaque = false
-        view.backgroundColor = .clear
-        redrawIfNeeded()
-    }
-
-    override func didChangeSize(_ oldSize: CGSize) {
-        super.didChangeSize(oldSize)
-        redrawIfNeeded()
-    }
-
-    private func redrawIfNeeded() {
-        guard size.width > 0, size.height > 0, size != renderedSize else { return }
-
-        renderedSize = size
-        removeAllChildren()
-
-        let frames = AvatarHappyIdleFrames(hat: .none, scarf: .green).layeredFrames
-        let sprite = AvatarLayeredSpriteNode(frames: frames)
-        let spriteSide = min(size.width, size.height)
-        sprite.spriteSize = CGSize(width: spriteSide, height: spriteSide)
-        sprite.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        sprite.xScale = facesLeft ? -abs(sprite.xScale) : abs(sprite.xScale)
-        sprite.runAnimation(
-            with: frames,
-            row: 0,
-            timePerFrame: 0.10,
-            key: Self.idleActionKey
-        )
-        addChild(sprite)
+        AuthEntryAvatarView()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text("Happy Pico avatar wearing a green scarf"))
     }
 }
 
@@ -1324,6 +1850,7 @@ private struct OnboardingProgressHeader: View {
     let currentIndex: Int
     let totalCount: Int
     let onBack: () -> Void
+    let showsMascot: Bool
 
     var body: some View {
         HStack(spacing: PicoSpacing.compact) {
@@ -1340,106 +1867,138 @@ private struct OnboardingProgressHeader: View {
                 totalCount: totalCount
             )
             .frame(maxWidth: .infinity)
+
+            if showsMascot {
+                OnboardingProgressMascot()
+                    .frame(width: 64, height: 64)
+            }
         }
         .padding(.horizontal, PicoSpacing.standard)
-        .frame(height: 56)
+        .frame(height: 72)
         .background(PicoColors.appBackground)
+    }
+}
+
+private struct OnboardingProgressMascot: View {
+    var body: some View {
+        AuthEntryAvatarView()
+            .padding(2)
+            .accessibilityHidden(true)
     }
 }
 
 private struct OnboardingPrimaryCTALabel: View {
     let title: String
+    var showsFishingPole = false
 
     var body: some View {
-        Text(title)
+        HStack(spacing: PicoSpacing.compact) {
+            Text(title)
+
+            if showsFishingPole {
+                OnboardingFishingPoleIcon()
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
+            }
+        }
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
     }
 }
 
-private struct OnboardingStartFishingTitle: View {
+private struct OnboardingWelcomeTitle: View {
     private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
-        VStack(spacing: PicoSpacing.tiny) {
-            Text("Welcome to Pico!")
-            Text("Your guilt-free focus island")
+        VStack(spacing: PicoSpacing.compact) {
+            Text(OnboardingStep.welcome.title)
+                .font(titleFont)
+                .foregroundStyle(PicoColors.textPrimary)
+
+            Text(OnboardingStep.welcome.placeholderText)
+                .font(titleFont)
+                .foregroundStyle(PicoColors.textPrimary)
         }
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("\(OnboardingStep.welcome.title) \(OnboardingStep.welcome.placeholderText)"))
+    }
+}
+
+private struct OnboardingRareFishTitle: View {
+    private let titleFont = PicoTypography.sectionTitle
+
+    var body: some View {
+        Text(OnboardingStep.rareFish.title)
         .font(titleFont)
         .foregroundStyle(PicoColors.textPrimary)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Welcome! to pico. Stay at a guilt-free focus island"))
+        .accessibilityLabel(Text(OnboardingStep.rareFish.title))
     }
 }
 
-private struct OnboardingFirstCatchTitle: View {
-    let titleFont: Font
+private struct OnboardingFocusSocialProofCard: View {
+    private let statement = "Pico helped me finally focus"
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: PicoSpacing.tiny) {
-            fishingPoleIcon
-                .hidden()
-                .accessibilityHidden(true)
+        VStack(spacing: PicoSpacing.compact) {
+            HStack(spacing: PicoSpacing.compact) {
+                Image(systemName: "laurel.leading")
+                    .font(.system(size: 26, weight: .regular))
+                    .foregroundStyle(PicoColors.primary)
+                    .accessibilityHidden(true)
 
-            Text("What will you catch today?")
-                .font(titleFont)
-                .foregroundStyle(PicoColors.textPrimary)
+                HStack(spacing: 3) {
+                    ForEach(0..<5, id: \.self) { _ in
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(PicoColors.warning)
+                            .accessibilityHidden(true)
+                    }
+                }
 
-            fishingPoleIcon
-                .accessibilityHidden(true)
-        }
-        .multilineTextAlignment(.center)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private var fishingPoleIcon: some View {
-        OnboardingFishingPoleIcon()
-            .frame(width: 24, height: 24)
-            .alignmentGuide(.firstTextBaseline) { context in
-                context[VerticalAlignment.center] + 7
+                Image(systemName: "laurel.trailing")
+                    .font(.system(size: 26, weight: .regular))
+                    .foregroundStyle(PicoColors.primary)
+                    .accessibilityHidden(true)
             }
+
+            Text("\"\(statement)\"")
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("App Store review")
+                .font(PicoTypography.captionSemibold)
+                .foregroundStyle(PicoColors.textSecondary)
+        }
+        .padding(PicoSpacing.standard)
+        .background(PicoColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Five star App Store review. \(statement)."))
     }
 }
 
-private struct OnboardingStayFocusedTitle: View {
+private struct OnboardingRewardCelebrationTitle: View {
     private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
-        Text("Catch fish while you focus")
+        Text(OnboardingStep.rewardCelebration.title)
             .font(titleFont)
             .foregroundStyle(PicoColors.textPrimary)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Catch fish while you focus"))
-    }
-}
-
-private struct OnboardingFriendBondsTitle: View {
-    private let titleFont = PicoTypography.sectionTitle
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text("Focus with friends and")
-                .font(titleFont)
-                .foregroundStyle(PicoColors.textPrimary)
-
-            HStack(alignment: .center, spacing: PicoSpacing.tiny) {
-                Text("create strong bonds")
-                    .font(titleFont)
-                    .foregroundStyle(PicoColors.textPrimary)
-
-                OnboardingGreenScarfImage()
-                    .frame(width: 34, height: 34)
-                    .accessibilityHidden(true)
-            }
-        }
-        .multilineTextAlignment(.center)
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Focus with friends and create strong bonds"))
+        .accessibilityLabel(Text(OnboardingStep.rewardCelebration.title))
     }
 }
 
@@ -1456,106 +2015,16 @@ private struct OnboardingAuthHandoffTitle: View {
     }
 }
 
-private struct OnboardingGreenScarfImage: View {
-    var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image)
-                    .renderingMode(.original)
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-            }
-        }
-    }
-
-    private var image: UIImage? {
-        [
-            "Icons/green_scarf",
-            "Icons/green_scarf.png",
-            "Icons/Scarf_Green",
-            "Icons/Scarf_Green.png",
-            "green_scarf",
-            "green_scarf.png",
-            "Scarf_Green",
-            "Scarf_Green.png"
-        ]
-            .lazy
-            .compactMap { UIImage(named: $0) }
-            .first
-    }
-}
-
-private struct OnboardingBucketImage: View {
-    var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image)
-                    .renderingMode(.original)
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-            }
-        }
-    }
-
-    private var image: UIImage? {
-        [
-            "Icons/Bucket",
-            "Icons/Bucket.png",
-            "Icons/bucket",
-            "Icons/bucket.png",
-            "Bucket",
-            "Bucket.png",
-            "bucket",
-            "bucket.png"
-        ]
-            .lazy
-            .compactMap { UIImage(named: $0) }
-            .first
-    }
-}
-
-private struct OnboardingBrokenLineTitle: View {
+private struct OnboardingFocusWithFriendsTitle: View {
     private let titleFont = PicoTypography.sectionTitle
 
     var body: some View {
-        Text(OnboardingStep.brokenLine.title)
+        Text(OnboardingStep.focusWithFriends.title)
             .font(titleFont)
             .foregroundStyle(PicoColors.textPrimary)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityLabel(Text(OnboardingStep.brokenLine.title))
-    }
-}
-
-private struct OnboardingEmptyBucketImage: View {
-    var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image)
-                    .renderingMode(.original)
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-            }
-        }
-    }
-
-    private var image: UIImage? {
-        [
-            "Icons/Empty_Bucket",
-            "Icons/Empty_Bucket.png",
-            "Icons/empty_bucket",
-            "Icons/empty_bucket.png",
-            "Empty_Bucket",
-            "Empty_Bucket.png",
-            "empty_bucket",
-            "empty_bucket.png"
-        ]
-            .lazy
-            .compactMap { UIImage(named: $0) }
-            .first
+        .accessibilityLabel(Text(OnboardingStep.focusWithFriends.title))
     }
 }
 
@@ -1611,31 +2080,5 @@ private struct OnboardingPageIndicator: View {
         .frame(height: 6)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Onboarding step \(currentIndex + 1) of \(totalCount)"))
-    }
-}
-
-private struct OnboardingPlaceholderVisual: View {
-    let symbol: String
-    let subtitle: String
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: PicoRadius.large, style: .continuous)
-                .fill(PicoColors.softSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: PicoRadius.large, style: .continuous)
-                        .stroke(PicoColors.border, lineWidth: 1)
-                )
-
-            VStack(spacing: PicoSpacing.compact) {
-                Text(symbol)
-                    .font(PicoTypography.largeValue)
-                    .foregroundStyle(PicoColors.primary)
-
-                Text(subtitle)
-                    .font(PicoTypography.captionSemibold)
-                    .foregroundStyle(PicoColors.textSecondary)
-            }
-        }
     }
 }
