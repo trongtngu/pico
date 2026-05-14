@@ -485,9 +485,13 @@ private struct ActiveFocusSessionView: View {
                 LabeledContent("Started", value: session.startedAt?.formatted(date: .omitted, time: .shortened) ?? "--")
                 LabeledContent("Ends", value: session.plannedEndAt?.formatted(date: .omitted, time: .shortened) ?? "--")
 
-                Button("End Session", role: .destructive) {
+                Button(session.mode == .multiplayer ? "Leave Session" : "End Session", role: .destructive) {
                     Task {
-                        await focusStore.interruptCurrentSession(for: sessionStore.session)
+                        if session.mode == .multiplayer {
+                            await focusStore.leaveCurrentMultiplayerSession(for: sessionStore.session)
+                        } else {
+                            await focusStore.interruptCurrentSession(for: sessionStore.session)
+                        }
                     }
                 }
                 .disabled(focusStore.isFinishing)
@@ -572,12 +576,12 @@ private struct FocusResultView: View {
         switch session.status {
         case .lobby:
             "Session Lobby"
-        case .launched, .live:
-            "Session Live"
+        case .active:
+            "Session Active"
         case .completed:
             "Session Completed"
-        case .interrupted:
-            "Session Interrupted"
+        case .failed:
+            "Session Failed"
         case .cancelled:
             "Session Cancelled"
         }
@@ -587,12 +591,12 @@ private struct FocusResultView: View {
         switch session.status {
         case .lobby:
             "This session has not started."
-        case .launched, .live:
+        case .active:
             "This session is still running."
         case .completed:
             "The full focus window was completed."
-        case .interrupted:
-            "The focus window ended before the timer finished."
+        case .failed:
+            "The group focus window ended before the timer finished."
         case .cancelled:
             "The lobby or session was cancelled."
         }
@@ -602,11 +606,11 @@ private struct FocusResultView: View {
         switch session.status {
         case .lobby:
             .usersRegular
-        case .launched, .live:
+        case .active:
             .clockRegular
         case .completed:
             .sparklesSolid
-        case .interrupted:
+        case .failed:
             .xMarkRegular
         case .cancelled:
             .xMarkRegular
@@ -616,7 +620,7 @@ private struct FocusResultView: View {
 
 private func memberStatusText(_ member: FocusSessionMember) -> String {
     if member.isInterrupted {
-        return "Interrupted"
+        return "Failed"
     }
 
     if member.isCompleted {

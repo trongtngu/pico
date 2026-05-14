@@ -4877,7 +4877,7 @@ private struct ActiveSessionTimerStrip: View {
     }
 
     private var canLeaveMultiplayer: Bool {
-        session.mode == .multiplayer && !focusStore.isCurrentUserHost(sessionStore.session)
+        session.mode == .multiplayer
     }
 
     private var currentVillageResidentIDs: Set<UUID> {
@@ -4942,7 +4942,7 @@ private struct FocusCompleteCard: View {
 
             celebrationContent
 
-            if session.status != .completed && session.status != .interrupted {
+            if session.status != .completed && session.status != .failed {
                 rewardContent
                     .padding(.top, PicoSpacing.standard)
             }
@@ -4990,21 +4990,49 @@ private struct FocusCompleteCard: View {
         switch session.status {
         case .completed:
             return "Focus Complete!"
-        case .interrupted:
-            return "Focus interrupted!"
+        case .failed:
+            return failedResultTitle
         case .cancelled:
             return "Session Cancelled"
-        case .lobby, .launched, .live:
+        case .lobby, .active:
             return "Session"
         }
     }
 
     private var resultSubtitle: String? {
-        session.status == .interrupted ? "The catch swam away" : nil
+        guard session.status == .failed else { return nil }
+        return session.mode == .multiplayer ? nil : "The catch swam away"
+    }
+
+    private var failedResultTitle: String {
+        guard session.mode == .multiplayer else { return "Catch got away" }
+        guard let failureContext = focusStore.failureContext else { return "Someone broke focus" }
+
+        if failureContext.isMemberLeaveFailure {
+            if failureContext.isCurrentUserFailure {
+                return "You left the session"
+            }
+
+            if let name = failureContext.failedMemberDisplayName {
+                return "\(name) left the session"
+            }
+
+            return "Someone left the session"
+        }
+
+        if failureContext.isCurrentUserFailure {
+            return "You broke focus"
+        }
+
+        if let name = failureContext.failedMemberDisplayName {
+            return "\(name) broke focus"
+        }
+
+        return "Someone broke focus"
     }
 
     private var doneButtonTitle: String {
-        session.status == .interrupted ? "Try again" : "Done"
+        session.status == .failed ? "Try again" : "Done"
     }
 
     private var scoreLabel: String {
@@ -5019,6 +5047,16 @@ private struct FocusCompleteCard: View {
     private var groupCompletionContext: FocusCompletionContext? {
         guard session.status == .completed else { return nil }
         return focusStore.completionContext
+    }
+
+    private var failedLeaveMember: FocusSessionMember? {
+        guard session.status == .failed,
+              focusStore.failureContext?.isMemberLeaveFailure == true,
+              focusStore.failureContext?.isCurrentUserFailure == false else {
+            return nil
+        }
+
+        return focusStore.failureContext?.failedMember
     }
 
     private var groupTogetherText: String? {
@@ -5043,7 +5081,10 @@ private struct FocusCompleteCard: View {
 
     @ViewBuilder
     private var celebrationContent: some View {
-        if session.status == .interrupted {
+        if let failedLeaveMember {
+            FocusFailedMemberAvatar(member: failedLeaveMember)
+                .padding(.top, PicoSpacing.tiny)
+        } else if session.status == .failed {
             FocusInterruptedEmptyBucketImage()
                 .padding(.top, PicoSpacing.standard)
         } else if let groupCompletionContext {
@@ -5103,6 +5144,27 @@ private struct FocusCompleteCard: View {
 
     private func groupMetrics(for _: FocusCompletionContext) -> [FocusCompleteMetricModel] {
         []
+    }
+}
+
+private struct FocusFailedMemberAvatar: View {
+    @EnvironmentObject private var villageStore: VillageStore
+
+    let member: FocusSessionMember
+
+    var body: some View {
+        UserAvatar(
+            config: member.profile.avatarConfig,
+            maxSpriteSide: FocusCompleteAvatarLayout.spriteSide,
+            usesHappyIdle: false,
+            scarf: villageStore.scarf(for: member.userID)
+        )
+        .frame(
+            width: FocusCompleteAvatarLayout.avatarWidth,
+            height: FocusCompleteAvatarLayout.avatarHeight
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(member.profile.displayName))
     }
 }
 

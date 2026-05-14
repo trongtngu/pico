@@ -14,18 +14,10 @@ enum FocusSessionMode: String, Codable, Equatable {
 
 enum FocusSessionStatus: String, Codable, Equatable {
     case lobby
-    case launched
-    case live
-    case interrupted
+    case active
     case completed
+    case failed
     case cancelled
-}
-
-enum FocusSessionEventType: String, Codable, Equatable {
-    case memberJoined = "member_joined"
-    case sessionStarted = "session_started"
-    case memberInterrupted = "member_interrupted"
-    case memberCompleted = "member_completed"
 }
 
 enum FocusSessionMemberRole: String, Codable, Equatable {
@@ -48,17 +40,43 @@ struct FocusSession: Identifiable, Codable, Equatable {
     let startedAt: Date?
     let plannedEndAt: Date?
     let endedAt: Date?
+    let failedByUserID: UUID?
+    let failureReason: String?
+
+    init(
+        id: UUID,
+        ownerID: UUID,
+        mode: FocusSessionMode,
+        status: FocusSessionStatus,
+        durationSeconds: Int,
+        startedAt: Date?,
+        plannedEndAt: Date?,
+        endedAt: Date?,
+        failedByUserID: UUID? = nil,
+        failureReason: String? = nil
+    ) {
+        self.id = id
+        self.ownerID = ownerID
+        self.mode = mode
+        self.status = status
+        self.durationSeconds = durationSeconds
+        self.startedAt = startedAt
+        self.plannedEndAt = plannedEndAt
+        self.endedAt = endedAt
+        self.failedByUserID = failedByUserID
+        self.failureReason = failureReason
+    }
 
     var isLobby: Bool {
         status == .lobby
     }
 
     var isLive: Bool {
-        status == .live || status == .launched
+        status == .active
     }
 
     var isFinished: Bool {
-        status == .completed || status == .interrupted || status == .cancelled
+        status == .completed || status == .failed || status == .cancelled
     }
 
     func remainingSeconds(at date: Date = Date()) -> Int {
@@ -81,20 +99,28 @@ struct FocusSession: Identifiable, Codable, Equatable {
             durationSeconds: durationSeconds,
             startedAt: startedAt,
             plannedEndAt: plannedEndAt,
-            endedAt: max(date, plannedEndAt ?? date)
+            endedAt: max(date, plannedEndAt ?? date),
+            failedByUserID: nil,
+            failureReason: nil
         )
     }
 
-    func interrupted(at date: Date = Date()) -> FocusSession {
+    func failed(
+        at date: Date = Date(),
+        failedByUserID: UUID? = nil,
+        failureReason: String? = nil
+    ) -> FocusSession {
         FocusSession(
             id: id,
             ownerID: ownerID,
             mode: mode,
-            status: .interrupted,
+            status: .failed,
             durationSeconds: durationSeconds,
             startedAt: startedAt,
             plannedEndAt: plannedEndAt,
-            endedAt: date
+            endedAt: date,
+            failedByUserID: failedByUserID ?? self.failedByUserID,
+            failureReason: failureReason ?? self.failureReason
         )
     }
 }
@@ -133,14 +159,10 @@ struct FocusSessionInvite: Identifiable, Equatable {
     let createdAt: Date?
 }
 
-struct FocusReconciliationResult: Equatable {
+struct FocusSessionSyncResult: Equatable {
     let completedSessions: Int
     let cancelledLobbies: Int
     let leftLobbies: Int
-
-    var changedOpenSessionState: Bool {
-        completedSessions > 0 || cancelledLobbies > 0 || leftLobbies > 0
-    }
 }
 
 enum FocusServiceError: LocalizedError {
@@ -261,15 +283,15 @@ final class FocusService {
         return response.compactMap(\.focusSessionInvite)
     }
 
-    func reconcileOpenSessions(for authSession: AuthSession) async throws -> FocusReconciliationResult {
-        let response: ReconcileOpenFocusSessionsResponse = try await send(
-            path: "/rest/v1/rpc/reconcile_open_focus_sessions",
+    func syncOpenSessions(for authSession: AuthSession) async throws -> FocusSessionSyncResult {
+        let response: SyncOpenFocusSessionsResponse = try await send(
+            path: "/rest/v1/rpc/sync_open_focus_sessions",
             method: "POST",
             body: EmptyFocusRequest(),
             accessToken: authSession.accessToken
         )
 
-        return response.focusReconciliationResult
+        return response.focusSessionSyncResult
     }
 
     func joinSession(
@@ -327,10 +349,14 @@ final class FocusService {
         )
     }
 
-    func interruptSession(_ id: UUID, for authSession: AuthSession) async throws -> FocusSession {
+    func interruptSession(
+        _ id: UUID,
+        reason: String = "interrupted",
+        for authSession: AuthSession
+    ) async throws -> FocusSession {
         try await sessionResponse(
             path: "/rest/v1/rpc/interrupt_focus_session",
-            body: FocusSessionIDRequest(targetSessionId: id),
+            body: InterruptFocusSessionRequest(targetSessionId: id, interruptionReason: reason),
             accessToken: authSession.accessToken
         )
     }
@@ -453,6 +479,11 @@ private struct FocusSessionIDRequest: Encodable {
     let targetSessionId: UUID
 }
 
+private struct InterruptFocusSessionRequest: Encodable {
+    let targetSessionId: UUID
+    let interruptionReason: String
+}
+
 private struct JoinFocusSessionRequest: Encodable {
     let targetSessionId: UUID
     let islandId: String
@@ -460,13 +491,13 @@ private struct JoinFocusSessionRequest: Encodable {
 
 private struct EmptyFocusRequest: Encodable {}
 
-private struct ReconcileOpenFocusSessionsResponse: Decodable {
+private struct SyncOpenFocusSessionsResponse: Decodable {
     let completedSessions: Int
     let cancelledLobbies: Int
     let leftLobbies: Int
 
-    var focusReconciliationResult: FocusReconciliationResult {
-        FocusReconciliationResult(
+    var focusSessionSyncResult: FocusSessionSyncResult {
+        FocusSessionSyncResult(
             completedSessions: completedSessions,
             cancelledLobbies: cancelledLobbies,
             leftLobbies: leftLobbies
@@ -483,6 +514,8 @@ private struct FocusSessionResponse: Decodable, Equatable {
     let startedAt: String?
     let plannedEndAt: String?
     let endedAt: String?
+    let failedByUserId: UUID?
+    let failureReason: String?
 
     var focusSession: FocusSession? {
         FocusSession(
@@ -493,7 +526,9 @@ private struct FocusSessionResponse: Decodable, Equatable {
             durationSeconds: durationSeconds,
             startedAt: startedAt.flatMap(FocusDateFormatter.date(from:)),
             plannedEndAt: plannedEndAt.flatMap(FocusDateFormatter.date(from:)),
-            endedAt: endedAt.flatMap(FocusDateFormatter.date(from:))
+            endedAt: endedAt.flatMap(FocusDateFormatter.date(from:)),
+            failedByUserID: failedByUserId,
+            failureReason: failureReason
         )
     }
 }
@@ -580,7 +615,9 @@ private struct FocusSessionInviteResponse: Decodable {
             durationSeconds: durationSeconds,
             startedAt: startedAt,
             plannedEndAt: plannedEndAt,
-            endedAt: endedAt
+            endedAt: endedAt,
+            failedByUserId: nil,
+            failureReason: nil
         ).focusSession else {
             return nil
         }

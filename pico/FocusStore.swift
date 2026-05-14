@@ -8,6 +8,11 @@
 import Foundation
 import Combine
 
+private enum FocusFailureReason {
+    static let interrupted = "interrupted"
+    static let leftMultiplayer = "left_multiplayer"
+}
+
 struct FocusCompletionContext: Equatable {
     let members: [FocusSessionMember]
     let currentUserID: UUID
@@ -24,6 +29,23 @@ struct FocusCompletionContext: Equatable {
         }
 
         return !preCompletionVillageResidentIDs.contains(member.userID)
+    }
+}
+
+struct FocusFailureContext: Equatable {
+    let failedMember: FocusSessionMember?
+    let failedMemberDisplayName: String?
+    let failedByUserID: UUID?
+    let failureReason: String?
+    let currentUserID: UUID?
+
+    var isCurrentUserFailure: Bool {
+        guard let failedByUserID, let currentUserID else { return false }
+        return failedByUserID == currentUserID
+    }
+
+    var isMemberLeaveFailure: Bool {
+        failureReason == FocusFailureReason.leftMultiplayer
     }
 }
 
@@ -48,12 +70,12 @@ final class FocusStore: ObservableObject {
     @Published private(set) var activeInvitedFriendIDs: Set<UUID> = []
     @Published private(set) var hasPendingResultSync = false
     @Published private(set) var completionContext: FocusCompletionContext?
+    @Published private(set) var failureContext: FocusFailureContext?
     @Published var notice: String?
 
     private let focusService: FocusService
     private let userDefaults: UserDefaults
-    private let savedStateKey = "pico.focus.saved-state.v3"
-    private let legacySavedStateKey = "pico.focus.saved-state.v2"
+    private let savedStateKey = "pico.focus.saved-state.v4"
     private var pendingBackgroundInterruptionTask: Task<Void, Never>?
     private var realtimeSubscription: FocusRealtimeSubscription?
     private var realtimeChannelID: String?
@@ -92,7 +114,16 @@ final class FocusStore: ObservableObject {
             lobbySession = nil
             activeSession = nil
             sessionDetail = nil
-            resultSession = pendingResult.optimisticSession(from: savedState.session)
+            let optimisticSession = pendingResult.optimisticSession(
+                from: savedState.session,
+                failedByUserID: authSession.user?.id
+            )
+            failureContext = makeFailureContext(
+                for: optimisticSession,
+                detail: nil,
+                currentUserID: authSession.user?.id
+            )
+            resultSession = optimisticSession
             await retryPendingResult(for: authSession)
             return
         }
@@ -323,6 +354,7 @@ final class FocusStore: ObservableObject {
             self.sessionDetail = nil
             self.resultSession = nil
             self.completionContext = nil
+            self.failureContext = nil
             self.hasPendingResultSync = false
             clearSavedState()
             subscribeToRealtime(for: authSession, sessionID: nil)
@@ -354,7 +386,7 @@ final class FocusStore: ObservableObject {
         guard let authSession, let session = activeSession ?? liveSavedSession() else { return }
         await finish(
             session,
-            pendingResult: .interrupt,
+            pendingResult: .interrupt(reason: reason),
             authSession: authSession,
             preCompletionVillageResidentIDs: nil,
             interruptionReason: reason
@@ -366,11 +398,23 @@ final class FocusStore: ObservableObject {
             let authSession,
             let session = lobbySession ?? activeSession,
             session.mode == .multiplayer,
-            !isFinishing,
-            !isCurrentUserHost(authSession)
+            !isFinishing
         else {
             return
         }
+
+        if session.isLive {
+            await finish(
+                session,
+                pendingResult: .interrupt(reason: FocusFailureReason.leftMultiplayer),
+                authSession: authSession,
+                preCompletionVillageResidentIDs: nil,
+                interruptionReason: FocusFailureReason.leftMultiplayer
+            )
+            return
+        }
+
+        guard !isCurrentUserHost(authSession) else { return }
 
         isFinishing = true
         notice = nil
@@ -378,12 +422,23 @@ final class FocusStore: ObservableObject {
 
         do {
             let syncedSession = try await focusService.leaveSession(session.id, for: authSession)
+            let previousDetail = sessionDetail
+            let nextResultSession = session.isLive
+                ? (syncedSession.status == .failed ? syncedSession : session.failed())
+                : nil
             lobbySession = nil
             activeSession = nil
             sessionDetail = nil
-            resultSession = session.isLive
-                ? (syncedSession.status == .interrupted ? syncedSession : session.interrupted())
-                : nil
+            if let nextResultSession {
+                failureContext = makeFailureContext(
+                    for: nextResultSession,
+                    detail: previousDetail,
+                    currentUserID: authSession.user?.id
+                )
+            } else {
+                failureContext = nil
+            }
+            resultSession = nextResultSession
             if session.isLive {
                 AnalyticsService.track(.focusSessionInterrupted(
                     sessionType: session.analyticsSessionType,
@@ -410,7 +465,16 @@ final class FocusStore: ObservableObject {
         lobbySession = nil
         activeSession = nil
         sessionDetail = nil
-        resultSession = pendingResult.optimisticSession(from: savedState.session)
+        let optimisticSession = pendingResult.optimisticSession(
+            from: savedState.session,
+            failedByUserID: authSession.user?.id
+        )
+        failureContext = makeFailureContext(
+            for: optimisticSession,
+            detail: nil,
+            currentUserID: authSession.user?.id
+        )
+        resultSession = optimisticSession
         hasPendingResultSync = true
         notice = nil
         isFinishing = true
@@ -498,6 +562,7 @@ final class FocusStore: ObservableObject {
         resultSession = nil
         sessionDetail = nil
         completionContext = nil
+        failureContext = nil
         notice = nil
     }
 
@@ -537,14 +602,16 @@ final class FocusStore: ObservableObject {
             activeSession = nil
             resultSession = nil
             completionContext = nil
+            failureContext = nil
             notice = nil
-        case .launched, .live:
+        case .active:
             lobbySession = nil
             activeSession = session
             resultSession = nil
             completionContext = nil
+            failureContext = nil
             notice = nil
-        case .completed, .interrupted, .cancelled:
+        case .completed, .failed, .cancelled:
             applyFinishedSession(session)
         }
     }
@@ -556,22 +623,28 @@ final class FocusStore: ObservableObject {
             activeSession = nil
             resultSession = nil
             completionContext = nil
+            failureContext = nil
             notice = nil
             saveState(LocalFocusState(userID: authSession.user?.id ?? session.ownerID, session: session, pendingResult: nil))
-        case .launched, .live:
+        case .active:
             lobbySession = nil
             activeSession = session
             resultSession = nil
             completionContext = nil
+            failureContext = nil
             notice = nil
             saveState(LocalFocusState(userID: authSession.user?.id ?? session.ownerID, session: session, pendingResult: nil))
-        case .completed, .interrupted, .cancelled:
-            applyFinishedSession(session)
+        case .completed, .failed, .cancelled:
+            applyFinishedSession(session, currentUserID: authSession.user?.id)
             clearSavedState()
         }
     }
 
-    private func applyFinishedSession(_ session: FocusSession) {
+    private func applyFinishedSession(
+        _ session: FocusSession,
+        detail: FocusSessionDetail? = nil,
+        currentUserID: UUID? = nil
+    ) {
         if session.status == .cancelled {
             clearFocusSessionState()
             return
@@ -580,6 +653,7 @@ final class FocusStore: ObservableObject {
         lobbySession = nil
         activeSession = nil
         sessionDetail = nil
+        failureContext = makeFailureContext(for: session, detail: detail, currentUserID: currentUserID)
         resultSession = session
         notice = nil
     }
@@ -593,7 +667,8 @@ final class FocusStore: ObservableObject {
         do {
             let detail = try await focusService.fetchSessionDetail(session.id, for: authSession)
             if detail.session.isFinished {
-                applyOpenSession(detail.session, authSession: authSession)
+                applyFinishedSession(detail.session, detail: detail, currentUserID: authSession.user?.id)
+                clearSavedState()
                 subscribeToRealtime(for: authSession, sessionID: nil)
                 await loadIncomingInvites(for: authSession)
                 return
@@ -605,7 +680,7 @@ final class FocusStore: ObservableObject {
             if error.isMissingFocusSessionState {
                 clearFocusSessionState()
                 subscribeToRealtime(for: authSession, sessionID: nil)
-                _ = await reconcileOpenSessions(for: authSession)
+                _ = await syncOpenSessions(for: authSession)
                 await loadIncomingInvites(for: authSession)
                 return
             }
@@ -616,10 +691,15 @@ final class FocusStore: ObservableObject {
 
     private func syncOpenSessionState(for authSession: AuthSession) async {
         let previousActiveSession = activeSession ?? liveSavedSession()
+        let previousSession = activeSession ?? lobbySession ?? liveSavedSession()
 
         do {
             let detail = try await focusService.fetchCurrentSessionDetail(for: authSession)
             guard let detail else {
+                if await applyFinishedPreviousSessionIfNeeded(previousSession, authSession: authSession) {
+                    return
+                }
+
                 if let previousActiveSession,
                    previousActiveSession.isLive,
                    previousActiveSession.remainingSeconds() == 0 {
@@ -648,7 +728,8 @@ final class FocusStore: ObservableObject {
             }
 
             if detail.session.isFinished {
-                applyOpenSession(detail.session, authSession: authSession)
+                applyFinishedSession(detail.session, detail: detail, currentUserID: authSession.user?.id)
+                clearSavedState()
                 subscribeToRealtime(for: authSession, sessionID: nil)
                 await loadIncomingInvites(for: authSession)
                 return
@@ -675,9 +756,9 @@ final class FocusStore: ObservableObject {
         await completeCurrentSession(for: authSession)
     }
 
-    private func reconcileOpenSessions(for authSession: AuthSession) async -> FocusReconciliationResult? {
+    private func syncOpenSessions(for authSession: AuthSession) async -> FocusSessionSyncResult? {
         do {
-            return try await focusService.reconcileOpenSessions(for: authSession)
+            return try await focusService.syncOpenSessions(for: authSession)
         } catch {
             guard !error.isCancellation else { return nil }
             notice = displayMessage(for: error)
@@ -703,12 +784,21 @@ final class FocusStore: ObservableObject {
             authSession: authSession,
             preCompletionVillageResidentIDs: preCompletionVillageResidentIDs
         )
-        let optimisticSession = pendingResult.optimisticSession(from: session)
+        let capturedDetail = sessionDetail
+        let optimisticSession = pendingResult.optimisticSession(
+            from: session,
+            failedByUserID: authSession.user?.id
+        )
         lobbySession = nil
         activeSession = nil
         sessionDetail = nil
-        resultSession = optimisticSession
         completionContext = capturedCompletionContext
+        failureContext = makeFailureContext(
+            for: optimisticSession,
+            detail: capturedDetail,
+            currentUserID: authSession.user?.id
+        )
+        resultSession = optimisticSession
         hasPendingResultSync = true
         saveState(LocalFocusState(
             userID: authSession.user?.id ?? session.ownerID,
@@ -765,10 +855,19 @@ final class FocusStore: ObservableObject {
         originalSession: FocusSession,
         authSession: AuthSession
     ) async {
-        let optimisticSession = pendingResult.optimisticSession(from: originalSession)
-        resultSession = pendingResult.shouldUseSavedSession(syncedSession, originalSession: originalSession)
+        let optimisticSession = pendingResult.optimisticSession(
+            from: originalSession,
+            failedByUserID: authSession.user?.id
+        )
+        let nextResultSession = pendingResult.shouldUseSavedSession(syncedSession, originalSession: originalSession)
             ? syncedSession
             : optimisticSession
+        failureContext = makeFailureContext(
+            for: nextResultSession,
+            detail: nil,
+            currentUserID: authSession.user?.id
+        )
+        resultSession = nextResultSession
         hasPendingResultSync = false
         notice = nil
         clearSavedState()
@@ -804,7 +903,16 @@ final class FocusStore: ObservableObject {
         session: FocusSession,
         authSession: AuthSession
     ) async {
-        resultSession = pendingResult.optimisticSession(from: session)
+        let optimisticSession = pendingResult.optimisticSession(
+            from: session,
+            failedByUserID: authSession.user?.id
+        )
+        failureContext = makeFailureContext(
+            for: optimisticSession,
+            detail: nil,
+            currentUserID: authSession.user?.id
+        )
+        resultSession = optimisticSession
         hasPendingResultSync = false
         notice = nil
         clearSavedState()
@@ -850,8 +958,8 @@ final class FocusStore: ObservableObject {
         case .complete:
             let completedSession = try await focusService.completeSession(session.id, for: authSession)
             return FocusSyncResult(session: completedSession)
-        case .interrupt:
-            let session = try await focusService.interruptSession(session.id, for: authSession)
+        case .interrupt(let reason):
+            let session = try await focusService.interruptSession(session.id, reason: reason, for: authSession)
             return FocusSyncResult(session: session)
         }
     }
@@ -895,7 +1003,6 @@ final class FocusStore: ObservableObject {
     private func saveState(_ state: LocalFocusState) {
         guard let data = try? JSONEncoder().encode(state) else { return }
         userDefaults.set(data, forKey: savedStateKey)
-        userDefaults.removeObject(forKey: legacySavedStateKey)
     }
 
     private func loadSavedState() -> LocalFocusState? {
@@ -904,13 +1011,11 @@ final class FocusStore: ObservableObject {
             return savedState
         }
 
-        guard let data = userDefaults.data(forKey: legacySavedStateKey) else { return nil }
-        return try? JSONDecoder().decode(LocalFocusState.self, from: data)
+        return nil
     }
 
     private func clearSavedState() {
         userDefaults.removeObject(forKey: savedStateKey)
-        userDefaults.removeObject(forKey: legacySavedStateKey)
     }
 
     private func clearFocusSessionState() {
@@ -922,6 +1027,7 @@ final class FocusStore: ObservableObject {
         sessionDetail = nil
         hasPendingResultSync = false
         completionContext = nil
+        failureContext = nil
         notice = nil
         clearSavedState()
     }
@@ -934,9 +1040,46 @@ final class FocusStore: ObservableObject {
         incomingInvites = []
         hasPendingResultSync = false
         completionContext = nil
+        failureContext = nil
         realtimeSubscription?.stop()
         realtimeSubscription = nil
         realtimeChannelID = nil
+    }
+
+    private func applyFinishedPreviousSessionIfNeeded(
+        _ session: FocusSession?,
+        authSession: AuthSession
+    ) async -> Bool {
+        guard let session else { return false }
+
+        do {
+            let detail = try await focusService.fetchSessionDetail(session.id, for: authSession)
+            guard detail.session.isFinished else { return false }
+
+            applyFinishedSession(detail.session, detail: detail, currentUserID: authSession.user?.id)
+            clearSavedState()
+            subscribeToRealtime(for: authSession, sessionID: nil)
+            await loadIncomingInvites(for: authSession)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func makeFailureContext(
+        for session: FocusSession?,
+        detail: FocusSessionDetail?,
+        currentUserID: UUID?
+    ) -> FocusFailureContext? {
+        guard let session, session.status == .failed else { return nil }
+
+        return FocusFailureContext(
+            failedMember: detail?.member(for: session.failedByUserID),
+            failedMemberDisplayName: detail?.member(for: session.failedByUserID)?.profile.displayName,
+            failedByUserID: session.failedByUserID,
+            failureReason: session.failureReason,
+            currentUserID: currentUserID
+        )
     }
 
     private func displayMessage(for error: Error) -> String? {
@@ -1005,10 +1148,11 @@ private struct LocalFocusState: Codable, Equatable {
 
 private enum PendingFocusResult: Codable, Equatable {
     case complete
-    case interrupt
+    case interrupt(reason: String)
 
     private enum CodingKeys: String, CodingKey {
         case action
+        case failureReason
     }
 
     private enum Action: String, Codable {
@@ -1033,7 +1177,9 @@ private enum PendingFocusResult: Codable, Equatable {
         case .complete:
             self = .complete
         case .interrupt:
-            self = .interrupt
+            let reason = try container.decodeIfPresent(String.self, forKey: .failureReason)
+                ?? FocusFailureReason.interrupted
+            self = .interrupt(reason: reason)
         }
     }
 
@@ -1043,17 +1189,18 @@ private enum PendingFocusResult: Codable, Equatable {
         switch self {
         case .complete:
             try container.encode(Action.complete, forKey: .action)
-        case .interrupt:
+        case .interrupt(let reason):
             try container.encode(Action.interrupt, forKey: .action)
+            try container.encode(reason, forKey: .failureReason)
         }
     }
 
-    func optimisticSession(from session: FocusSession) -> FocusSession {
+    func optimisticSession(from session: FocusSession, failedByUserID: UUID? = nil) -> FocusSession {
         switch self {
         case .complete:
             session.completed()
-        case .interrupt:
-            session.interrupted()
+        case .interrupt(let reason):
+            session.failed(failedByUserID: failedByUserID, failureReason: reason)
         }
     }
 
@@ -1062,7 +1209,7 @@ private enum PendingFocusResult: Codable, Equatable {
         case .complete:
             detail.member(for: userID)?.isCompleted == true
         case .interrupt:
-            detail.member(for: userID)?.isInterrupted == true || detail.session.status == .interrupted
+            detail.member(for: userID)?.isInterrupted == true || detail.session.status == .failed
         }
     }
 }

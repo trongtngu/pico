@@ -374,26 +374,67 @@ create table public.focus_sessions (
     started_at timestamptz,
     planned_end_at timestamptz,
     ended_at timestamptz,
+    finalized_at timestamptz,
+    failed_by_user_id uuid references public.user_profiles(user_id),
+    failure_reason text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     constraint focus_sessions_mode
         check (mode in ('solo', 'multiplayer')),
     constraint focus_sessions_status
-        check (status in ('lobby', 'launched', 'live', 'interrupted', 'completed', 'cancelled')),
+        check (status in ('lobby', 'active', 'completed', 'failed', 'cancelled')),
     constraint focus_sessions_duration_seconds
         check (duration_seconds between 600 and 86400),
     constraint focus_sessions_lifecycle_timestamps
         check (
-            (status = 'lobby' and started_at is null and planned_end_at is null and ended_at is null)
-            or (status in ('launched', 'live') and started_at is not null and planned_end_at is not null and ended_at is null)
-            or (status in ('completed', 'interrupted') and started_at is not null and planned_end_at is not null and ended_at is not null)
-            or (status = 'cancelled' and ended_at is not null)
+            (
+                status = 'lobby'
+                and started_at is null
+                and planned_end_at is null
+                and ended_at is null
+                and finalized_at is null
+                and failed_by_user_id is null
+                and failure_reason is null
+            )
+            or (
+                status = 'active'
+                and started_at is not null
+                and planned_end_at is not null
+                and ended_at is null
+                and finalized_at is null
+                and failed_by_user_id is null
+                and failure_reason is null
+            )
+            or (
+                status = 'completed'
+                and started_at is not null
+                and planned_end_at is not null
+                and ended_at is not null
+                and finalized_at is not null
+                and failed_by_user_id is null
+                and failure_reason is null
+            )
+            or (
+                status = 'failed'
+                and started_at is not null
+                and planned_end_at is not null
+                and ended_at is not null
+                and finalized_at is not null
+                and failed_by_user_id is not null
+                and failure_reason is not null
+            )
+            or (
+                status = 'cancelled'
+                and ended_at is not null
+                and finalized_at is not null
+                and failed_by_user_id is null
+            )
         )
 );
 
 create unique index focus_sessions_one_open_owner
 on public.focus_sessions (owner_id)
-where status in ('lobby', 'live');
+where status in ('lobby', 'active');
 
 create table public.session_members (
     session_id uuid not null references public.focus_sessions(id) on delete cascade,
@@ -401,13 +442,22 @@ create table public.session_members (
     island_id text not null default 'default' references public.islands(id),
     role text not null default 'participant',
     status text not null default 'invited',
+    committed_at timestamptz,
+    completed_at timestamptz,
+    failed_at timestamptz,
+    failure_reason text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     constraint session_members_pkey primary key (session_id, user_id),
     constraint session_members_role
         check (role in ('host', 'participant')),
     constraint session_members_status
-        check (status in ('invited', 'joined', 'declined', 'left'))
+        check (status in ('invited', 'joined', 'left')),
+    constraint session_members_result_state
+        check (
+            completed_at is null
+            or failed_at is null
+        )
 );
 
 create table public.session_events (
@@ -417,16 +467,8 @@ create table public.session_events (
     event_type text not null,
     occurred_at timestamptz not null default now(),
     constraint session_events_type
-        check (event_type in ('member_joined', 'session_started', 'member_interrupted', 'member_completed'))
+        check (event_type in ('member_joined', 'member_left', 'session_started', 'session_completed', 'session_failed', 'session_cancelled'))
 );
-
-create unique index session_events_member_completed_once
-on public.session_events (session_id, user_id)
-where event_type = 'member_completed';
-
-create unique index session_events_member_interrupted_once
-on public.session_events (session_id, user_id)
-where event_type = 'member_interrupted';
 
 create index session_members_island_id_idx
 on public.session_members (island_id);
@@ -491,11 +533,24 @@ create table public.villager_bonds (
         check (completed_pair_sessions > 0)
 );
 
+create table public.session_bond_awards (
+    session_id uuid not null references public.focus_sessions(id) on delete cascade,
+    user_one_id uuid not null references public.user_profiles(user_id) on delete cascade,
+    user_two_id uuid not null references public.user_profiles(user_id) on delete cascade,
+    awarded_at timestamptz not null default now(),
+    constraint session_bond_awards_pkey primary key (session_id, user_one_id, user_two_id),
+    constraint session_bond_awards_canonical_order
+        check (user_one_id < user_two_id)
+);
+
 create index village_residents_resident_user_id_idx
 on public.village_residents (resident_user_id);
 
 create index villager_bonds_user_two_id_idx
 on public.villager_bonds (user_two_id);
+
+create index session_bond_awards_user_two_id_idx
+on public.session_bond_awards (user_two_id);
 
 create trigger set_public_villages_updated_at
 before update on public.villages
@@ -1055,7 +1110,10 @@ as $$
         'duration_seconds', focus_sessions.duration_seconds,
         'started_at', focus_sessions.started_at,
         'planned_end_at', focus_sessions.planned_end_at,
-        'ended_at', focus_sessions.ended_at
+        'ended_at', focus_sessions.ended_at,
+        'finalized_at', focus_sessions.finalized_at,
+        'failed_by_user_id', focus_sessions.failed_by_user_id,
+        'failure_reason', focus_sessions.failure_reason
     )
     from public.focus_sessions
     where focus_sessions.id = target_session_id;
@@ -1085,20 +1143,8 @@ as $$
                     'username', user_profiles.username,
                     'display_name', user_profiles.display_name,
                     'avatar_config', user_profiles.avatar_config,
-                    'is_completed', exists (
-                        select 1
-                        from public.session_events
-                        where session_events.session_id = session_members.session_id
-                            and session_events.user_id = session_members.user_id
-                            and session_events.event_type = 'member_completed'
-                    ),
-                    'is_interrupted', exists (
-                        select 1
-                        from public.session_events
-                        where session_events.session_id = session_members.session_id
-                            and session_events.user_id = session_members.user_id
-                            and session_events.event_type = 'member_interrupted'
-                    )
+                    'is_completed', session_members.completed_at is not null,
+                    'is_interrupted', session_members.failed_at is not null or focus_sessions.status = 'failed'
                 )
                 order by
                     case session_members.role when 'host' then 0 else 1 end,
@@ -1340,7 +1386,7 @@ begin
 end;
 $$;
 
-create function public.record_user_completion_streak(completing_user_id uuid, completed_at timestamptz)
+create function public.record_user_completion_streak(completing_user_id uuid, p_completed_at timestamptz)
 returns void
 security definer
 set search_path = public, private
@@ -1363,7 +1409,7 @@ begin
         completion_timezone := 'UTC';
     end if;
 
-    completion_day := (completed_at at time zone completion_timezone)::date;
+    completion_day := (p_completed_at at time zone completion_timezone)::date;
 
     insert into public.user_berry_balances (
         user_id,
@@ -1377,7 +1423,7 @@ begin
         0,
         1,
         completion_day,
-        completed_at
+        p_completed_at
     )
     on conflict (user_id) do update
     set completion_streak = case
@@ -1584,10 +1630,9 @@ begin
 end;
 $$;
 
-create function public.award_villager_completion_pairs(
+create function public.award_completed_focus_session_bonds(
     target_session_id uuid,
-    completing_user_id uuid,
-    completed_at timestamptz
+    p_completed_at timestamptz
 )
 returns void
 security definer
@@ -1595,35 +1640,32 @@ set search_path = public
 language plpgsql
 as $$
 declare
-    completed_peer_id uuid;
-    user_one uuid;
-    user_two uuid;
-    completing_user_village_id uuid;
-    peer_village_id uuid;
+    award_record record;
+    user_one_village_id uuid;
+    user_two_village_id uuid;
 begin
-    select id
-    into completing_user_village_id
-    from public.villages
-    where owner_id = completing_user_id;
-
-    if completing_user_village_id is null then
-        insert into public.villages (owner_id)
-        values (completing_user_id)
-        on conflict (owner_id) do update
-        set owner_id = excluded.owner_id
-        returning id into completing_user_village_id;
-    end if;
-
-    for completed_peer_id in
-        select session_events.user_id
-        from public.session_events
-        where session_events.session_id = target_session_id
-            and session_events.event_type = 'member_completed'
-            and session_events.user_id <> completing_user_id
+    for award_record in
+        insert into public.session_bond_awards (
+            session_id,
+            user_one_id,
+            user_two_id,
+            awarded_at
+        )
+        select
+            target_session_id,
+            least(first_member.user_id, second_member.user_id),
+            greatest(first_member.user_id, second_member.user_id),
+            p_completed_at
+        from public.session_members as first_member
+        join public.session_members as second_member
+            on second_member.session_id = first_member.session_id
+            and second_member.user_id > first_member.user_id
+        where first_member.session_id = target_session_id
+            and first_member.committed_at is not null
+            and second_member.committed_at is not null
+        on conflict do nothing
+        returning user_one_id, user_two_id
     loop
-        user_one := least(completing_user_id, completed_peer_id);
-        user_two := greatest(completing_user_id, completed_peer_id);
-
         insert into public.villager_bonds (
             user_one_id,
             user_two_id,
@@ -1631,32 +1673,23 @@ begin
             first_completed_at,
             last_completed_at
         )
-        values (user_one, user_two, 1, completed_at, completed_at)
+        values (award_record.user_one_id, award_record.user_two_id, 1, p_completed_at, p_completed_at)
         on conflict (user_one_id, user_two_id) do update
         set completed_pair_sessions = public.villager_bonds.completed_pair_sessions + 1,
             first_completed_at = least(public.villager_bonds.first_completed_at, excluded.first_completed_at),
             last_completed_at = greatest(public.villager_bonds.last_completed_at, excluded.last_completed_at);
 
-        insert into public.village_residents (
-            village_id,
-            resident_user_id,
-            first_completed_session_id,
-            unlocked_at
-        )
-        values (completing_user_village_id, completed_peer_id, target_session_id, completed_at)
-        on conflict (village_id, resident_user_id) do nothing;
-
         select id
-        into peer_village_id
+        into user_one_village_id
         from public.villages
-        where owner_id = completed_peer_id;
+        where owner_id = award_record.user_one_id;
 
-        if peer_village_id is null then
+        if user_one_village_id is null then
             insert into public.villages (owner_id)
-            values (completed_peer_id)
+            values (award_record.user_one_id)
             on conflict (owner_id) do update
             set owner_id = excluded.owner_id
-            returning id into peer_village_id;
+            returning id into user_one_village_id;
         end if;
 
         insert into public.village_residents (
@@ -1665,8 +1698,74 @@ begin
             first_completed_session_id,
             unlocked_at
         )
-        values (peer_village_id, completing_user_id, target_session_id, completed_at)
+        values (user_one_village_id, award_record.user_two_id, target_session_id, p_completed_at)
         on conflict (village_id, resident_user_id) do nothing;
+
+        select id
+        into user_two_village_id
+        from public.villages
+        where owner_id = award_record.user_two_id;
+
+        if user_two_village_id is null then
+            insert into public.villages (owner_id)
+            values (award_record.user_two_id)
+            on conflict (owner_id) do update
+            set owner_id = excluded.owner_id
+            returning id into user_two_village_id;
+        end if;
+
+        insert into public.village_residents (
+            village_id,
+            resident_user_id,
+            first_completed_session_id,
+            unlocked_at
+        )
+        values (user_two_village_id, award_record.user_one_id, target_session_id, p_completed_at)
+        on conflict (village_id, resident_user_id) do nothing;
+    end loop;
+end;
+$$;
+
+create function public.award_focus_session_completion_rewards(
+    target_session_id uuid,
+    p_completed_at timestamptz
+)
+returns void
+security definer
+set search_path = public
+language plpgsql
+as $$
+declare
+    session_record public.focus_sessions%rowtype;
+    rewarded_user_id uuid;
+begin
+    select *
+    into session_record
+    from public.focus_sessions
+    where id = target_session_id;
+
+    if not found then
+        raise exception 'No focus session was found.' using errcode = 'P0002';
+    end if;
+
+    if session_record.status <> 'completed' then
+        return;
+    end if;
+
+    if session_record.mode = 'multiplayer' then
+        perform public.award_completed_focus_session_bonds(target_session_id, p_completed_at);
+    end if;
+
+    for rewarded_user_id in
+        select session_members.user_id
+        from public.session_members
+        where session_members.session_id = target_session_id
+            and session_members.committed_at is not null
+        order by session_members.user_id
+    loop
+        perform public.record_user_completion_streak(rewarded_user_id, p_completed_at);
+        perform public.create_focus_session_fish_catches(rewarded_user_id, target_session_id, p_completed_at);
+        perform public.upsert_daily_village_snapshot(rewarded_user_id, target_session_id, p_completed_at);
     end loop;
 end;
 $$;
@@ -1946,7 +2045,7 @@ $$;
 create function public.upsert_daily_village_snapshot(
     completing_user_id uuid,
     target_session_id uuid,
-    completed_at timestamptz
+    p_completed_at timestamptz
 )
 returns public.daily_village_snapshots
 security definer
@@ -1969,7 +2068,7 @@ begin
         raise exception 'Target session is required.' using errcode = '22023';
     end if;
 
-    if completed_at is null then
+    if p_completed_at is null then
         raise exception 'Completion time is required.' using errcode = '22023';
     end if;
 
@@ -1986,7 +2085,7 @@ begin
         snapshot_timezone := 'UTC';
     end if;
 
-    computed_snapshot_day := (completed_at at time zone snapshot_timezone)::date;
+    computed_snapshot_day := (p_completed_at at time zone snapshot_timezone)::date;
 
     select jsonb_build_object(
         'user_id', user_profiles.user_id,
@@ -2098,7 +2197,7 @@ begin
     end if;
 
     perform pg_advisory_xact_lock(hashtextextended(requester::text, 0));
-    perform public.reconcile_open_focus_sessions();
+    perform public.sync_open_focus_sessions();
 
     if normalized_mode is null or normalized_mode not in ('solo', 'multiplayer') then
         raise exception 'Focus session mode must be solo or multiplayer.' using errcode = '22023';
@@ -2130,22 +2229,7 @@ begin
             and session_members.status = 'joined'
             and (
                 focus_sessions.status = 'lobby'
-                or (
-                    focus_sessions.mode = 'solo'
-                    and focus_sessions.status = 'live'
-                )
-                or (
-                    focus_sessions.mode = 'multiplayer'
-                    and focus_sessions.status = 'launched'
-                    and focus_sessions.planned_end_at > now()
-                    and not exists (
-                        select 1
-                        from public.session_events
-                        where session_events.session_id = focus_sessions.id
-                            and session_events.user_id = requester
-                            and session_events.event_type in ('member_completed', 'member_interrupted')
-                    )
-                )
+                or focus_sessions.status = 'active'
             )
     ) then
         raise exception 'You already have an open focus session.' using errcode = '23505';
@@ -2284,6 +2368,9 @@ begin
         raise exception 'You must be signed in to join a focus session.' using errcode = '28000';
     end if;
 
+    perform pg_advisory_xact_lock(hashtextextended(requester::text, 0));
+    perform public.sync_open_focus_sessions();
+
     if not exists (
         select 1
         from public.islands
@@ -2331,6 +2418,19 @@ begin
 
     if session_record.status <> 'lobby' then
         return public.focus_session_payload(target_session_id);
+    end if;
+
+    if exists (
+        select 1
+        from public.session_members
+        join public.focus_sessions
+            on focus_sessions.id = session_members.session_id
+        where session_members.user_id = requester
+            and session_members.status = 'joined'
+            and focus_sessions.id <> target_session_id
+            and focus_sessions.status in ('lobby', 'active')
+    ) then
+        raise exception 'You already have an open focus session.' using errcode = '23505';
     end if;
 
     if membership_record.status = 'invited' then
@@ -2420,7 +2520,6 @@ as $$
 declare
     requester uuid := auth.uid();
     starts_at timestamptz := now();
-    next_status text;
     session_record public.focus_sessions%rowtype;
 begin
     if requester is null then
@@ -2446,7 +2545,7 @@ begin
         raise exception 'No focus lobby was found.' using errcode = 'P0002';
     end if;
 
-    if session_record.status in ('launched', 'live') then
+    if session_record.status = 'active' then
         return public.focus_session_payload(target_session_id);
     end if;
 
@@ -2464,17 +2563,17 @@ begin
         raise exception 'At least one invited member must join before starting.' using errcode = '22023';
     end if;
 
-    next_status := case
-        when session_record.mode = 'multiplayer' then 'launched'
-        else 'live'
-    end;
-
     update public.focus_sessions
-    set status = next_status,
+    set status = 'active',
         started_at = starts_at,
         planned_end_at = starts_at + make_interval(secs => duration_seconds)
     where id = target_session_id
         and status = 'lobby';
+
+    update public.session_members
+    set committed_at = starts_at
+    where session_id = target_session_id
+        and status = 'joined';
 
     delete from public.session_members
     where session_id = target_session_id
@@ -2496,8 +2595,9 @@ as $$
 declare
     requester uuid := auth.uid();
     finished_at timestamptz := now();
-    completion_recorded_at timestamptz;
+    completion_time timestamptz;
     session_record public.focus_sessions%rowtype;
+    failed_member_id uuid;
 begin
     if requester is null then
         raise exception 'You must be signed in to complete a focus session.' using errcode = '28000';
@@ -2510,24 +2610,15 @@ begin
     for update;
 
     if not found then
-        raise exception 'No live focus session was found.' using errcode = 'P0002';
+        raise exception 'No active focus session was found.' using errcode = 'P0002';
     end if;
 
-    if exists (
-        select 1
-        from public.session_events
-        where session_events.session_id = target_session_id
-            and session_events.user_id = requester
-            and session_events.event_type = 'member_completed'
-    ) then
+    if session_record.status in ('completed', 'failed', 'cancelled') then
         return public.focus_session_payload(target_session_id);
     end if;
 
-    if not (
-        session_record.status in ('live', 'completed')
-        or (session_record.mode = 'multiplayer' and session_record.status = 'launched')
-    ) then
-        raise exception 'No live focus session was found.' using errcode = 'P0002';
+    if session_record.status <> 'active' then
+        raise exception 'No active focus session was found.' using errcode = 'P0002';
     end if;
 
     if not exists (
@@ -2536,42 +2627,55 @@ begin
         where session_id = target_session_id
             and user_id = requester
             and status = 'joined'
+            and committed_at is not null
     ) then
-        raise exception 'No joined focus session membership was found.' using errcode = 'P0002';
-    end if;
-
-    if session_record.mode = 'multiplayer' and exists (
-        select 1
-        from public.session_events
-        where session_events.session_id = target_session_id
-            and session_events.user_id = requester
-            and session_events.event_type = 'member_interrupted'
-    ) then
-        return public.focus_session_payload(target_session_id);
+        raise exception 'No committed focus session membership was found.' using errcode = 'P0002';
     end if;
 
     if session_record.planned_end_at is null or session_record.planned_end_at > finished_at then
         raise exception 'Focus session is not complete yet.' using errcode = '42501';
     end if;
 
-    insert into public.session_events (session_id, user_id, event_type)
-    values (target_session_id, requester, 'member_completed')
-    on conflict do nothing
-    returning occurred_at into completion_recorded_at;
+    select user_id
+    into failed_member_id
+    from public.session_members
+    where session_id = target_session_id
+        and committed_at is not null
+        and failed_at is not null
+    order by failed_at, user_id
+    limit 1;
 
-    if completion_recorded_at is not null then
-        perform public.record_user_completion_streak(requester, completion_recorded_at);
-        perform public.create_focus_session_fish_catches(requester, target_session_id, completion_recorded_at);
-        perform public.award_villager_completion_pairs(target_session_id, requester, completion_recorded_at);
-        perform public.upsert_daily_village_snapshot(requester, target_session_id, completion_recorded_at);
-    end if;
-
-    if session_record.status = 'live' and session_record.mode = 'solo' then
+    if failed_member_id is not null then
         update public.focus_sessions
-        set status = 'completed',
-            ended_at = greatest(finished_at, planned_end_at)
-        where id = target_session_id;
+        set status = 'failed',
+            ended_at = finished_at,
+            finalized_at = finished_at,
+            failed_by_user_id = failed_member_id,
+            failure_reason = 'member_failed'
+        where id = target_session_id
+            and status = 'active';
+
+        return public.focus_session_payload(target_session_id);
     end if;
+
+    completion_time := greatest(finished_at, session_record.planned_end_at);
+
+    update public.focus_sessions
+    set status = 'completed',
+        ended_at = completion_time,
+        finalized_at = finished_at
+    where id = target_session_id
+        and status = 'active';
+
+    update public.session_members
+    set completed_at = coalesce(public.session_members.completed_at, completion_time)
+    where session_id = target_session_id
+        and committed_at is not null;
+
+    insert into public.session_events (session_id, user_id, event_type, occurred_at)
+    values (target_session_id, requester, 'session_completed', completion_time);
+
+    perform public.award_focus_session_completion_rewards(target_session_id, completion_time);
 
     return public.focus_session_payload(target_session_id);
 end;
@@ -2585,6 +2689,7 @@ language plpgsql
 as $$
 declare
     requester uuid := auth.uid();
+    cancelled_at timestamptz := now();
     session_record public.focus_sessions%rowtype;
 begin
     if requester is null then
@@ -2616,13 +2721,17 @@ begin
 
     update public.focus_sessions
     set status = 'cancelled',
-        ended_at = now()
+        ended_at = cancelled_at,
+        finalized_at = cancelled_at
     where id = target_session_id
         and status = 'lobby';
 
     update public.session_members
     set status = 'left'
     where session_id = target_session_id;
+
+    insert into public.session_events (session_id, user_id, event_type, occurred_at)
+    values (target_session_id, requester, 'session_cancelled', cancelled_at);
 
     return public.focus_session_payload(target_session_id);
 end;
@@ -2636,6 +2745,7 @@ language plpgsql
 as $$
 declare
     requester uuid := auth.uid();
+    left_at timestamptz := now();
     session_record public.focus_sessions%rowtype;
     membership_record public.session_members%rowtype;
 begin
@@ -2647,11 +2757,11 @@ begin
     into session_record
     from public.focus_sessions
     where id = target_session_id
-        and status in ('lobby', 'launched', 'live')
+        and status in ('lobby', 'active', 'failed', 'completed', 'cancelled')
     for update;
 
     if not found then
-        raise exception 'No open focus session was found.' using errcode = 'P0002';
+        raise exception 'No focus session was found.' using errcode = 'P0002';
     end if;
 
     if session_record.mode <> 'multiplayer' then
@@ -2667,42 +2777,53 @@ begin
     for update;
 
     if not found then
-        raise exception 'No joined focus session membership was found.' using errcode = 'P0002';
+        return public.focus_session_payload(target_session_id);
     end if;
 
-    if membership_record.role = 'host' or session_record.owner_id = requester then
-        raise exception 'The host must cancel the focus session instead.' using errcode = '42501';
+    if session_record.status in ('completed', 'failed', 'cancelled') then
+        return public.focus_session_payload(target_session_id);
     end if;
 
-    if session_record.status = 'lobby' then
+    if session_record.status <> 'lobby' and membership_record.committed_at is not null then
+        update public.session_members
+        set status = 'left',
+            failed_at = coalesce(public.session_members.failed_at, left_at),
+            failure_reason = coalesce(failure_reason, 'left_multiplayer')
+        where session_id = target_session_id
+            and user_id = requester;
+
+        if session_record.status = 'active' then
+            update public.session_members
+            set failed_at = coalesce(public.session_members.failed_at, left_at),
+                failure_reason = coalesce(failure_reason, 'group_failed')
+            where session_id = target_session_id
+                and committed_at is not null;
+
+            update public.focus_sessions
+            set status = 'failed',
+                ended_at = left_at,
+                finalized_at = left_at,
+                failed_by_user_id = requester,
+                failure_reason = 'left_multiplayer'
+            where id = target_session_id
+                and status = 'active';
+
+            insert into public.session_events (session_id, user_id, event_type, occurred_at)
+            values (target_session_id, requester, 'session_failed', left_at);
+        end if;
+    else
+        if membership_record.role = 'host' or session_record.owner_id = requester then
+            raise exception 'The host must cancel the focus session instead.' using errcode = '42501';
+        end if;
+
         delete from public.session_members
         where session_id = target_session_id
             and user_id = requester
             and status = 'joined';
-    else
-        update public.session_members
-        set status = 'left'
-        where session_id = target_session_id
-            and user_id = requester
-            and status = 'joined';
-
-        insert into public.session_events (session_id, user_id, event_type)
-        values (target_session_id, requester, 'member_interrupted')
-        on conflict do nothing;
-
-        if not exists (
-            select 1
-            from public.session_members
-            where session_id = target_session_id
-                and status = 'joined'
-        ) then
-            update public.focus_sessions
-            set status = 'interrupted',
-                ended_at = now()
-            where id = target_session_id
-                and status in ('launched', 'live');
-        end if;
     end if;
+
+    insert into public.session_events (session_id, user_id, event_type, occurred_at)
+    values (target_session_id, requester, 'member_left', left_at);
 
     return public.focus_session_payload(target_session_id);
 end;
@@ -2716,6 +2837,7 @@ language plpgsql
 as $$
 declare
     requester uuid := auth.uid();
+    failure_time timestamptz := now();
     session_record public.focus_sessions%rowtype;
 begin
     if requester is null then
@@ -2726,60 +2848,60 @@ begin
     into session_record
     from public.focus_sessions
     where id = target_session_id
-        and (
-            status in ('live', 'interrupted')
-            or (mode = 'multiplayer' and status = 'launched')
-        )
     for update;
 
     if not found then
-        raise exception 'No live focus session was found.' using errcode = 'P0002';
+        raise exception 'No active focus session was found.' using errcode = 'P0002';
     end if;
 
-    if session_record.mode = 'solo' and session_record.owner_id <> requester then
-        raise exception 'Only the host can interrupt a solo focus session.' using errcode = '42501';
-    end if;
-
-    if session_record.status = 'interrupted' then
+    if session_record.status in ('completed', 'failed', 'cancelled') then
         return public.focus_session_payload(target_session_id);
     end if;
 
-    if session_record.mode = 'solo' then
-        update public.focus_sessions
-        set status = 'interrupted',
-            ended_at = now()
-        where id = target_session_id;
-    else
-        if not exists (
-            select 1
-            from public.session_members
-            where session_id = target_session_id
-                and user_id = requester
-                and status = 'joined'
-        ) then
-            raise exception 'No joined focus session membership was found.' using errcode = 'P0002';
-        end if;
-
-        if exists (
-            select 1
-            from public.session_events
-            where session_events.session_id = target_session_id
-                and session_events.user_id = requester
-                and session_events.event_type = 'member_completed'
-        ) then
-            return public.focus_session_payload(target_session_id);
-        end if;
+    if session_record.status <> 'active' then
+        raise exception 'No active focus session was found.' using errcode = 'P0002';
     end if;
 
-    insert into public.session_events (session_id, user_id, event_type)
-    values (target_session_id, requester, 'member_interrupted')
-    on conflict do nothing;
+    if not exists (
+        select 1
+        from public.session_members
+        where session_id = target_session_id
+            and user_id = requester
+            and status = 'joined'
+            and committed_at is not null
+    ) then
+        raise exception 'No committed focus session membership was found.' using errcode = 'P0002';
+    end if;
+
+    update public.session_members
+    set failed_at = coalesce(public.session_members.failed_at, failure_time),
+        failure_reason = coalesce(failure_reason, 'interrupted')
+    where session_id = target_session_id
+        and user_id = requester;
+
+    update public.session_members
+    set failed_at = coalesce(public.session_members.failed_at, failure_time),
+        failure_reason = coalesce(failure_reason, 'group_failed')
+    where session_id = target_session_id
+        and committed_at is not null;
+
+    update public.focus_sessions
+    set status = 'failed',
+        ended_at = failure_time,
+        finalized_at = failure_time,
+        failed_by_user_id = requester,
+        failure_reason = 'interrupted'
+    where id = target_session_id
+        and status = 'active';
+
+    insert into public.session_events (session_id, user_id, event_type, occurred_at)
+    values (target_session_id, requester, 'session_failed', failure_time);
 
     return public.focus_session_payload(target_session_id);
 end;
 $$;
 
-create function public.reconcile_open_focus_sessions()
+create function public.sync_open_focus_sessions()
 returns jsonb
 security definer
 set search_path = public
@@ -2787,31 +2909,20 @@ language plpgsql
 as $$
 declare
     requester uuid := auth.uid();
-    reconciled_at timestamptz := now();
+    synced_at timestamptz := now();
     stale_lobby_after interval := interval '24 hours';
     session_record record;
-    completion_recorded_at timestamptz;
+    completion_time timestamptz;
+    failed_member_id uuid;
     completed_count integer := 0;
     cancelled_lobby_count integer := 0;
     left_lobby_count integer := 0;
-    repaired_cancelled_count integer := 0;
 begin
     if requester is null then
-        raise exception 'You must be signed in to reconcile focus sessions.' using errcode = '28000';
+        raise exception 'You must be signed in to sync focus sessions.' using errcode = '28000';
     end if;
 
     perform pg_advisory_xact_lock(hashtextextended(requester::text, 0));
-
-    update public.session_members
-    set status = 'left'
-    from public.focus_sessions
-    where session_members.session_id = focus_sessions.id
-        and session_members.user_id = requester
-        and session_members.status in ('invited', 'joined')
-        and focus_sessions.status = 'cancelled';
-
-    get diagnostics repaired_cancelled_count = row_count;
-    cancelled_lobby_count := cancelled_lobby_count + repaired_cancelled_count;
 
     for session_record in
         select focus_sessions.*, session_members.role as member_role
@@ -2821,13 +2932,14 @@ begin
         where session_members.user_id = requester
             and session_members.status = 'joined'
             and focus_sessions.status = 'lobby'
-            and focus_sessions.updated_at <= reconciled_at - stale_lobby_after
+            and focus_sessions.updated_at <= synced_at - stale_lobby_after
         for update of focus_sessions
     loop
         if session_record.owner_id = requester or session_record.member_role = 'host' then
             update public.focus_sessions
             set status = 'cancelled',
-                ended_at = reconciled_at
+                ended_at = synced_at,
+                finalized_at = synced_at
             where id = session_record.id
                 and status = 'lobby';
 
@@ -2836,6 +2948,9 @@ begin
             where session_id = session_record.id
                 and status in ('invited', 'joined');
 
+            insert into public.session_events (session_id, user_id, event_type, occurred_at)
+            values (session_record.id, requester, 'session_cancelled', synced_at);
+
             cancelled_lobby_count := cancelled_lobby_count + 1;
         else
             update public.session_members
@@ -2843,6 +2958,9 @@ begin
             where session_id = session_record.id
                 and user_id = requester
                 and status = 'joined';
+
+            insert into public.session_events (session_id, user_id, event_type, occurred_at)
+            values (session_record.id, requester, 'member_left', synced_at);
 
             left_lobby_count := left_lobby_count + 1;
         end if;
@@ -2855,47 +2973,58 @@ begin
             on session_members.session_id = focus_sessions.id
         where session_members.user_id = requester
             and session_members.status = 'joined'
-            and focus_sessions.planned_end_at <= reconciled_at
-            and (
-                (focus_sessions.mode = 'solo' and focus_sessions.status = 'live')
-                or (focus_sessions.mode = 'multiplayer' and focus_sessions.status = 'launched')
-            )
-            and not exists (
-                select 1
-                from public.session_events
-                where session_events.session_id = focus_sessions.id
-                    and session_events.user_id = requester
-                    and session_events.event_type in ('member_completed', 'member_interrupted')
-            )
+            and session_members.committed_at is not null
+            and focus_sessions.status = 'active'
+            and focus_sessions.planned_end_at <= synced_at
         for update of focus_sessions
     loop
-        completion_recorded_at := null;
+        select user_id
+        into failed_member_id
+        from public.session_members
+        where session_id = session_record.id
+            and committed_at is not null
+            and failed_at is not null
+        order by failed_at, user_id
+        limit 1;
 
-        insert into public.session_events (session_id, user_id, event_type)
-        values (session_record.id, requester, 'member_completed')
-        on conflict do nothing
-        returning occurred_at into completion_recorded_at;
+        if failed_member_id is not null then
+            update public.focus_sessions
+            set status = 'failed',
+                ended_at = synced_at,
+                finalized_at = synced_at,
+                failed_by_user_id = failed_member_id,
+                failure_reason = 'member_failed'
+            where id = session_record.id
+                and status = 'active';
 
-        if completion_recorded_at is not null then
-            perform public.record_user_completion_streak(requester, completion_recorded_at);
-            perform public.create_focus_session_fish_catches(requester, session_record.id, completion_recorded_at);
-            perform public.award_villager_completion_pairs(session_record.id, requester, completion_recorded_at);
-            perform public.upsert_daily_village_snapshot(requester, session_record.id, completion_recorded_at);
-        end if;
+            insert into public.session_events (session_id, user_id, event_type, occurred_at)
+            values (session_record.id, failed_member_id, 'session_failed', synced_at);
+        else
+            completion_time := greatest(synced_at, session_record.planned_end_at);
 
-        if session_record.mode = 'solo' then
             update public.focus_sessions
             set status = 'completed',
-                ended_at = greatest(reconciled_at, planned_end_at)
+                ended_at = completion_time,
+                finalized_at = synced_at
             where id = session_record.id
-                and status = 'live';
-        end if;
+                and status = 'active';
 
-        completed_count := completed_count + 1;
+            update public.session_members
+            set completed_at = coalesce(public.session_members.completed_at, completion_time)
+            where session_id = session_record.id
+                and committed_at is not null;
+
+            insert into public.session_events (session_id, user_id, event_type, occurred_at)
+            values (session_record.id, requester, 'session_completed', completion_time);
+
+            perform public.award_focus_session_completion_rewards(session_record.id, completion_time);
+
+            completed_count := completed_count + 1;
+        end if;
     end loop;
 
     return jsonb_build_object(
-        'reconciled_at', reconciled_at,
+        'synced_at', synced_at,
         'completed_sessions', completed_count,
         'cancelled_lobbies', cancelled_lobby_count,
         'left_lobbies', left_lobby_count
@@ -2946,7 +3075,7 @@ begin
         raise exception 'You must be signed in to view a focus session.' using errcode = '28000';
     end if;
 
-    perform public.reconcile_open_focus_sessions();
+    perform public.sync_open_focus_sessions();
 
     select focus_sessions.id
     into current_session_id
@@ -2958,25 +3087,13 @@ begin
         and (
             focus_sessions.status = 'lobby'
             or (
-                focus_sessions.mode = 'solo'
-                and focus_sessions.status = 'live'
-            )
-            or (
-                focus_sessions.mode = 'multiplayer'
-                and focus_sessions.status = 'launched'
+                focus_sessions.status = 'active'
                 and focus_sessions.planned_end_at > now()
-                and not exists (
-                    select 1
-                    from public.session_events
-                    where session_events.session_id = focus_sessions.id
-                        and session_events.user_id = requester
-                        and session_events.event_type in ('member_completed', 'member_interrupted')
-                )
             )
         )
     order by
         case
-            when focus_sessions.status in ('live', 'launched') then 0
+            when focus_sessions.status = 'active' then 0
             else 1
         end,
         focus_sessions.updated_at desc
@@ -3502,6 +3619,7 @@ alter table public.session_events enable row level security;
 alter table public.villages enable row level security;
 alter table public.village_residents enable row level security;
 alter table public.villager_bonds enable row level security;
+alter table public.session_bond_awards enable row level security;
 alter table public.user_berry_balances enable row level security;
 alter table public.store_items enable row level security;
 alter table public.user_store_inventory enable row level security;
@@ -3627,6 +3745,12 @@ for select
 to authenticated
 using (user_one_id = auth.uid() or user_two_id = auth.uid());
 
+create policy "Users can read own session bond awards"
+on public.session_bond_awards
+for select
+to authenticated
+using (user_one_id = auth.uid() or user_two_id = auth.uid());
+
 create policy "Users can read own berry balance"
 on public.user_berry_balances
 for select
@@ -3671,6 +3795,7 @@ revoke all on public.session_events from public, anon, authenticated;
 revoke all on public.villages from public, anon, authenticated;
 revoke all on public.village_residents from public, anon, authenticated;
 revoke all on public.villager_bonds from public, anon, authenticated;
+revoke all on public.session_bond_awards from public, anon, authenticated;
 revoke all on public.user_berry_balances from public, anon, authenticated;
 revoke all on public.store_items from public, anon, authenticated;
 revoke all on public.user_store_inventory from public, anon, authenticated;
@@ -3692,6 +3817,7 @@ grant select on public.session_events to authenticated;
 grant select on public.villages to authenticated;
 grant select on public.village_residents to authenticated;
 grant select on public.villager_bonds to authenticated;
+grant select on public.session_bond_awards to authenticated;
 grant select on public.user_berry_balances to authenticated;
 grant select on public.store_items to authenticated;
 grant select on public.user_store_inventory to authenticated;
@@ -3742,7 +3868,8 @@ revoke all on function public.fetch_user_berries() from public, anon, authentica
 revoke all on function public.fetch_store_catalog() from public, anon, authenticated;
 revoke all on function public.fetch_user_store_inventory() from public, anon, authenticated;
 revoke all on function public.purchase_store_item(text, text) from public, anon, authenticated;
-revoke all on function public.award_villager_completion_pairs(uuid, uuid, timestamptz) from public, anon, authenticated;
+revoke all on function public.award_completed_focus_session_bonds(uuid, timestamptz) from public, anon, authenticated;
+revoke all on function public.award_focus_session_completion_rewards(uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.list_village_residents() from public, anon, authenticated;
 revoke all on function public.random_fish_catches_with_rarity_bonus(text, integer, integer) from public, anon, authenticated;
 revoke all on function public.create_focus_session_fish_catches(uuid, uuid, timestamptz) from public, anon, authenticated;
@@ -3757,7 +3884,7 @@ revoke all on function public.complete_focus_session(uuid) from public, anon, au
 revoke all on function public.cancel_session_lobby(uuid) from public, anon, authenticated;
 revoke all on function public.leave_focus_session(uuid) from public, anon, authenticated;
 revoke all on function public.interrupt_focus_session(uuid) from public, anon, authenticated;
-revoke all on function public.reconcile_open_focus_sessions() from public, anon, authenticated;
+revoke all on function public.sync_open_focus_sessions() from public, anon, authenticated;
 revoke all on function public.fetch_focus_session_detail(uuid) from public, anon, authenticated;
 revoke all on function public.fetch_current_focus_session_detail() from public, anon, authenticated;
 revoke all on function public.list_incoming_focus_session_invites() from public, anon, authenticated;
@@ -3788,7 +3915,7 @@ grant execute on function public.complete_focus_session(uuid) to authenticated;
 grant execute on function public.cancel_session_lobby(uuid) to authenticated;
 grant execute on function public.leave_focus_session(uuid) to authenticated;
 grant execute on function public.interrupt_focus_session(uuid) to authenticated;
-grant execute on function public.reconcile_open_focus_sessions() to authenticated;
+grant execute on function public.sync_open_focus_sessions() to authenticated;
 grant execute on function public.fetch_focus_session_detail(uuid) to authenticated;
 grant execute on function public.fetch_current_focus_session_detail() to authenticated;
 grant execute on function public.list_incoming_focus_session_invites() to authenticated;
