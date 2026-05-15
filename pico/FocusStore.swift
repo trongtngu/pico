@@ -70,8 +70,8 @@ final class FocusStore: ObservableObject {
     @Published private(set) var activeInviteID: UUID?
     @Published private(set) var activeInvitedFriendIDs: Set<UUID> = []
     @Published private(set) var hasPendingResultSync = false
-    @Published private(set) var completionContext: FocusCompletionContext?
-    @Published private(set) var failureContext: FocusFailureContext?
+    private(set) var completionContext: FocusCompletionContext?
+    private(set) var failureContext: FocusFailureContext?
     @Published var notice: String?
 
     private let focusService: FocusService

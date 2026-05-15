@@ -749,6 +749,8 @@ private struct HomePage: View {
             if showsFocusResultOverlay, let resultSession = focusStore.resultSession {
                 FocusCompleteOverlay(
                     session: resultSession,
+                    completionContext: focusStore.completionContext,
+                    failureContext: focusStore.failureContext,
                     done: finishFocusResultOverlay
                 )
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -4887,6 +4889,8 @@ private struct ActiveSessionTimerStrip: View {
 
 private struct FocusCompleteOverlay: View {
     let session: FocusSession
+    let completionContext: FocusCompletionContext?
+    let failureContext: FocusFailureContext?
     let done: () -> Void
 
     var body: some View {
@@ -4894,7 +4898,12 @@ private struct FocusCompleteOverlay: View {
             PicoColors.appBackground
                 .ignoresSafeArea()
 
-            FocusCompleteCard(session: session, done: done)
+            FocusCompleteCard(
+                session: session,
+                completionContext: completionContext,
+                failureContext: failureContext,
+                done: done
+            )
                 .padding(.horizontal, PicoSpacing.standard)
                 .frame(maxWidth: 350)
         }
@@ -4909,6 +4918,8 @@ private struct FocusCompleteCard: View {
     @EnvironmentObject private var focusStore: FocusStore
 
     let session: FocusSession
+    let completionContext: FocusCompletionContext?
+    let failureContext: FocusFailureContext?
     let done: () -> Void
 
     private var avatarConfig: AvatarConfig {
@@ -5006,7 +5017,7 @@ private struct FocusCompleteCard: View {
 
     private var failedResultTitle: String {
         guard session.mode == .multiplayer else { return "Catch got away" }
-        guard let failureContext = focusStore.failureContext else { return "Someone broke focus" }
+        guard let failureContext else { return "Someone broke focus" }
 
         if failureContext.isMemberLeaveFailure {
             if failureContext.isCurrentUserFailure {
@@ -5046,17 +5057,17 @@ private struct FocusCompleteCard: View {
 
     private var groupCompletionContext: FocusCompletionContext? {
         guard session.status == .completed else { return nil }
-        return focusStore.completionContext
+        return completionContext
     }
 
     private var failedLeaveMember: FocusSessionMember? {
         guard session.status == .failed,
-              focusStore.failureContext?.isMemberLeaveFailure == true,
-              focusStore.failureContext?.isCurrentUserFailure == false else {
+              failureContext?.isMemberLeaveFailure == true,
+              failureContext?.isCurrentUserFailure == false else {
             return nil
         }
 
-        return focusStore.failureContext?.failedMember
+        return failureContext?.failedMember
     }
 
     private var groupTogetherText: String? {
