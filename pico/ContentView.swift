@@ -4713,15 +4713,6 @@ private struct MultiplayerLobbySheetContent: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 	                .layoutPriority(1)
 
-                HStack(spacing: 5) {
-                    PicoIcon(.infoRegular, size: 13)
-
-                    Text("Bond rewards unlock when both players finish")
-                        .font(PicoTypography.caption)
-                }
-                .foregroundStyle(PicoColors.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-	
 	                if focusStore.isCurrentUserHost(sessionStore.session) {
 	                    if let readinessText {
 	                        Text(readinessText)
@@ -4774,12 +4765,18 @@ private struct MultiplayerLobbySheetContent: View {
                         .foregroundStyle(PicoColors.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .center)
 
-                    Button("Leave Lobby", role: .destructive) {
+                    Button(role: .destructive) {
                         Task {
                             await focusStore.leaveCurrentMultiplayerSession(for: sessionStore.session)
                         }
+                    } label: {
+                        Text("Leave Lobby")
+                            .font(PicoTypography.caption.weight(.semibold))
+                            .foregroundStyle(PicoColors.error)
                     }
-                    .buttonStyle(PicoDestructiveButtonStyle())
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, -PicoSpacing.tiny)
                     .disabled(focusStore.isFinishing)
                 }
             } else {
