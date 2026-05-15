@@ -52,7 +52,8 @@ struct FocusFailureContext: Equatable {
 @MainActor
 final class FocusStore: ObservableObject {
     static let defaultDurationSeconds = 30 * 60
-    static let minimumDurationSeconds = 10 * 60
+    // Temporary testing override; restore to 10 * 60 after short-session testing.
+    static let minimumDurationSeconds = 10
     static let maximumDurationSeconds = 120 * 60
 
     @Published private(set) var lobbySession: FocusSession?
