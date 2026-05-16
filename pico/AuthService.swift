@@ -134,13 +134,10 @@ final class AuthService {
         password: String,
         username: String,
         displayName: String,
-        avatarConfig: AvatarConfig
+        avatarConfig: AvatarConfig,
+        captchaToken: String?
     ) async throws -> AuthResult {
         let normalizedEmail = email.normalizedEmail
-        guard try await isEmailAvailable(normalizedEmail) else {
-            throw AuthServiceError.emailUnavailable
-        }
-
         let normalizedUsername = username.normalizedUsername
         guard try await isUsernameAvailable(normalizedUsername) else {
             throw AuthServiceError.usernameUnavailable
@@ -159,7 +156,8 @@ final class AuthService {
                     "display_name": .string(displayName.normalizedDisplayName),
                     "avatar_config": .object(avatarConfig.supabaseMetadataJSON),
                     "time_zone": .string(TimeZone.current.identifier)
-                ]
+                ],
+                captchaToken: captchaToken
             )
 
             guard let session = response.session else {
@@ -345,20 +343,10 @@ final class AuthService {
     }
 
     func isUsernameAvailable(_ username: String) async throws -> Bool {
-        let response: [UsernameAvailabilityResponse] = try await send(
-            path: "/rest/v1/user_profiles?select=username&username=eq.\(username)&limit=1",
-            method: "GET",
-            accessToken: SupabaseConfig.anonKey
-        )
-
-        return response.isEmpty
-    }
-
-    func isEmailAvailable(_ email: String) async throws -> Bool {
         try await send(
-            path: "/rest/v1/rpc/is_email_available",
+            path: "/rest/v1/rpc/is_username_available",
             method: "POST",
-            body: EmailAvailabilityRequest(targetEmail: email.normalizedEmail)
+            body: UsernameAvailabilityRequest(targetUsername: username.normalizedUsername)
         )
     }
 
@@ -470,6 +458,16 @@ final class AuthService {
 
     private func friendlyMessage(from message: String) -> String {
         let lowercasedMessage = message.lowercased()
+        if lowercasedMessage.contains("captcha") {
+            return "We couldn't verify this signup. Please try again."
+        }
+
+        if lowercasedMessage.contains("rate limit")
+            || lowercasedMessage.contains("too many")
+            || lowercasedMessage.contains("429") {
+            return "Too many attempts. Please wait a few minutes and try again."
+        }
+
         if lowercasedMessage.contains("user already registered")
             || (lowercasedMessage.contains("email")
                 && (lowercasedMessage.contains("already")
@@ -599,12 +597,8 @@ private struct UserTimezoneUpdate: Encodable {
     let timeZone: String
 }
 
-private struct EmailAvailabilityRequest: Encodable {
-    let targetEmail: String
-}
-
-private struct UsernameAvailabilityResponse: Decodable {
-    let username: String
+private struct UsernameAvailabilityRequest: Encodable {
+    let targetUsername: String
 }
 
 private struct SupabaseErrorResponse: Decodable {

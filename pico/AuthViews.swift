@@ -511,6 +511,8 @@ struct SignupFlowView: View {
     @State private var showsDuplicateEmailLoginPrompt = false
     @State private var hasTrackedSignupCompletion = false
     @State private var hasTrackedOnboardingCompletion = false
+    @State private var isCompletingBotChallenge = false
+    @State private var activeBotChallengeID: UUID?
 
     init(
         onBackToStart: @escaping () -> Void,
@@ -559,7 +561,7 @@ struct SignupFlowView: View {
     }
 
     private var canContinue: Bool {
-        guard !sessionStore.isLoading else { return false }
+        guard !sessionStore.isLoading, !isCompletingBotChallenge else { return false }
 
         switch currentStep {
         case .email:
@@ -616,7 +618,7 @@ struct SignupFlowView: View {
                                 .frame(maxWidth: .infinity)
                                 .multilineTextAlignment(.center)
 
-                            if sessionStore.isLoading {
+                            if sessionStore.isLoading || isCompletingBotChallenge {
                                 HStack {
                                     Spacer()
 
@@ -640,6 +642,24 @@ struct SignupFlowView: View {
             }
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
+        .overlay(alignment: .topLeading) {
+            if let activeBotChallengeID,
+               let siteKey = BotChallengeConfiguration.turnstileSiteKey,
+               let baseURL = BotChallengeConfiguration.turnstileBaseURL {
+                TurnstileChallengeView(
+                    challengeID: activeBotChallengeID,
+                    siteKey: siteKey,
+                    baseURL: baseURL,
+                    action: "signup",
+                    onToken: completeBotChallenge,
+                    onFailure: failBotChallenge
+                )
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
         .preferredColorScheme(.light)
         .onAppear {
             sessionStore.notice = nil
@@ -655,7 +675,9 @@ struct SignupFlowView: View {
             showsDuplicateEmailLoginPrompt
         case .username:
             sessionStore.notice != nil
-        case .firstName, .password:
+        case .password:
+            showsDuplicateEmailLoginPrompt || sessionStore.notice != nil
+        case .firstName:
             false
         }
     }
@@ -736,17 +758,6 @@ struct SignupFlowView: View {
         guard canContinue else { return }
 
         if currentStep == .email {
-            let email = normalizedEmail
-            let isEmailAvailable = await sessionStore.validateEmailAvailability(email)
-            guard email == normalizedEmail else {
-                return
-            }
-
-            guard isEmailAvailable else {
-                showsDuplicateEmailLoginPrompt = sessionStore.notice == AuthServiceError.emailUnavailable.errorDescription
-                return
-            }
-
             showsDuplicateEmailLoginPrompt = false
         }
 
@@ -760,7 +771,7 @@ struct SignupFlowView: View {
         }
 
         guard currentIndex < SignupStep.ordered.index(before: SignupStep.ordered.endIndex) else {
-            await submit()
+            await submitWithBotChallengeIfNeeded()
             return
         }
 
@@ -769,9 +780,9 @@ struct SignupFlowView: View {
 
     @ViewBuilder
     private var signupNotice: some View {
-        if showsDuplicateEmailLoginPrompt, currentStep == .email {
+        if showsDuplicateEmailLoginPrompt {
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
-                Text("Looks like you already have an account.")
+                Text("That email can't be used here.")
                     .foregroundStyle(PicoColors.textSecondary)
 
                 Button("Log in instead.") {
@@ -789,7 +800,7 @@ struct SignupFlowView: View {
                 RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
                     .fill(PicoColors.softSurface)
             )
-        } else if currentStep == .username, let notice = sessionStore.notice {
+        } else if (currentStep == .username || currentStep == .password), let notice = sessionStore.notice {
             Text(notice)
                 .font(PicoTypography.caption)
                 .foregroundStyle(PicoColors.textSecondary)
@@ -802,7 +813,38 @@ struct SignupFlowView: View {
         }
     }
 
-    private func submit() async {
+    private func submitWithBotChallengeIfNeeded() async {
+        guard !isCompletingBotChallenge else { return }
+
+        if BotChallengeConfiguration.isSignupChallengeEnabled {
+            sessionStore.notice = nil
+            isCompletingBotChallenge = true
+            activeBotChallengeID = UUID()
+            return
+        }
+
+        await submit(captchaToken: nil)
+    }
+
+    private func completeBotChallenge(_ token: String) {
+        guard isCompletingBotChallenge else { return }
+
+        activeBotChallengeID = nil
+        Task {
+            await submit(captchaToken: token)
+            isCompletingBotChallenge = false
+        }
+    }
+
+    private func failBotChallenge() {
+        guard isCompletingBotChallenge else { return }
+
+        activeBotChallengeID = nil
+        isCompletingBotChallenge = false
+        sessionStore.notice = "We couldn't verify this signup. Please try again."
+    }
+
+    private func submit(captchaToken: String?) async {
         guard normalizedEmail.contains("@"),
               isFirstNameValid,
               isUsernameValid,
@@ -816,8 +858,11 @@ struct SignupFlowView: View {
             password: draft.password,
             username: normalizedUsername,
             displayName: normalizedFirstName,
-            avatarConfig: AvatarCatalog.defaultConfig
+            avatarConfig: AvatarCatalog.defaultConfig,
+            captchaToken: captchaToken
         )
+
+        showsDuplicateEmailLoginPrompt = sessionStore.notice == AuthServiceError.emailUnavailable.errorDescription
 
         let didCreateAccount = sessionStore.session != nil
             || sessionStore.notice?.hasPrefix("Account created.") == true

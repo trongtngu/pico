@@ -41,7 +41,8 @@ final class AuthSessionStore: ObservableObject {
         password: String,
         username: String,
         displayName: String,
-        avatarConfig: AvatarConfig
+        avatarConfig: AvatarConfig,
+        captchaToken: String?
     ) async {
         await authenticate {
             try await authService.signUp(
@@ -49,7 +50,8 @@ final class AuthSessionStore: ObservableObject {
                 password: password,
                 username: username,
                 displayName: displayName,
-                avatarConfig: avatarConfig
+                avatarConfig: avatarConfig,
+                captchaToken: captchaToken
             )
         }
     }
@@ -82,26 +84,6 @@ final class AuthSessionStore: ObservableObject {
         }
 
         await applyOAuthDisplayNameIfNeeded(displayName)
-    }
-
-    func validateEmailAvailability(_ email: String) async -> Bool {
-        guard !isLoading else { return false }
-
-        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        isLoading = true
-        notice = nil
-        defer { isLoading = false }
-
-        do {
-            let isAvailable = try await authService.isEmailAvailable(normalizedEmail)
-            if !isAvailable {
-                notice = AuthServiceError.emailUnavailable.errorDescription
-            }
-            return isAvailable
-        } catch {
-            notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            return false
-        }
     }
 
     func validateUsernameAvailability(_ username: String) async -> Bool {

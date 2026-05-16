@@ -3605,6 +3605,21 @@ as $$
     );
 $$;
 
+create function public.is_username_available(target_username text)
+returns boolean
+language sql
+security definer
+set search_path = ''
+as $$
+    select lower(btrim(target_username)) ~ '^[a-z0-9_]{3,24}$'
+        and not exists (
+            select 1
+            from public.user_profiles
+            where user_profiles.username = lower(btrim(target_username))
+            limit 1
+        );
+$$;
+
 alter table public.users enable row level security;
 alter table public.user_profiles enable row level security;
 alter table private.user_profiles enable row level security;
@@ -3626,10 +3641,10 @@ alter table public.user_store_inventory enable row level security;
 alter table public.user_fish_catches enable row level security;
 alter table public.daily_village_snapshots enable row level security;
 
-create policy "Anyone can read public profiles"
+create policy "Authenticated users can read public profiles"
 on public.user_profiles
 for select
-to anon, authenticated
+to authenticated
 using (true);
 
 create policy "Users can insert own public profile"
@@ -3803,7 +3818,7 @@ revoke all on public.user_fish_catches from public, anon, authenticated;
 revoke all on public.daily_village_snapshots from public, anon, authenticated;
 
 grant usage on schema private to authenticated;
-grant select on public.user_profiles to anon, authenticated;
+grant select on public.user_profiles to authenticated;
 grant insert, update on public.user_profiles to authenticated;
 grant select, update on private.user_profiles to authenticated;
 grant select on public.sea_critters to authenticated;
@@ -3895,6 +3910,7 @@ revoke all on function public.list_daily_village_snapshots(date, date) from publ
 revoke all on function public.fetch_daily_village_snapshot(date) from public, anon, authenticated;
 revoke all on function public.list_daily_focus_activity(date, date) from public, anon, authenticated;
 revoke all on function public.is_email_available(text) from public, anon, authenticated;
+revoke all on function public.is_username_available(text) from public, anon, authenticated;
 
 grant execute on function public.validate_avatar_config(jsonb) to authenticated;
 grant execute on function public.set_user_timezone(text) to authenticated;
@@ -3930,7 +3946,7 @@ grant execute on function public.accept_friend_request(uuid) to authenticated;
 grant execute on function public.reject_friend_request(uuid) to authenticated;
 grant execute on function public.list_incoming_friend_requests() to authenticated;
 grant execute on function public.list_friends() to authenticated;
-grant execute on function public.is_email_available(text) to anon, authenticated;
+grant execute on function public.is_username_available(text) to anon, authenticated;
 
 do $$
 begin
