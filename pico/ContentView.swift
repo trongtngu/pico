@@ -3142,7 +3142,7 @@ private struct DailySnapshotPlusLockedHeroContent: View {
         VStack(spacing: PicoSpacing.standard) {
             Spacer(minLength: 0)
 
-            Text("Track your progress with Plus")
+            Text("Track your progress with plus")
                 .font(PicoTypography.cardTitle)
                 .foregroundStyle(PicoColors.textPrimary)
                 .multilineTextAlignment(.center)
@@ -3150,6 +3150,8 @@ private struct DailySnapshotPlusLockedHeroContent: View {
                 .minimumScaleFactor(0.78)
 
             PicoPlusCTAButton(
+                title: "Unlock with Plus",
+                size: .pill,
                 source: .calendarView(placement: .calendarView),
                 afterPresentation: afterUnlock
             )
@@ -7777,20 +7779,21 @@ private struct StoreItemRow: View {
 
 private struct StorePicoPlusBadge: View {
     var body: some View {
-        HStack(spacing: 4) {
-            PicoIcon(.lockClosed, size: 10)
-                .accessibilityHidden(true)
-
-            Text("Plus-exclusive")
-                .lineLimit(1)
-                .minimumScaleFactor(0.76)
-        }
-        .font(PicoTypography.tinyCaption.weight(.bold))
-        .foregroundStyle(PicoColors.primary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(PicoColors.primary.opacity(0.12))
-        .clipShape(Capsule(style: .continuous))
+        Text("Plus")
+            .font(PicoTypography.tinyCaption.weight(.bold))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.84)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
+            .background(PicoPlusGradientCapsuleBackground())
+            .clipShape(Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(.white.opacity(0.45), lineWidth: 1)
+            )
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(Text("Pico Plus"))
     }
 }
 

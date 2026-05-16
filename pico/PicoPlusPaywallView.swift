@@ -166,6 +166,12 @@ struct PicoPlusCTAButtonStyle: ButtonStyle {
     }
 
     private var background: some View {
+        PicoPlusGradientCapsuleBackground()
+    }
+}
+
+struct PicoPlusGradientCapsuleBackground: View {
+    var body: some View {
         ZStack {
             Capsule(style: .continuous)
                 .fill(
