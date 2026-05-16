@@ -15,6 +15,7 @@ struct picoApp: App {
             FirebaseApp.configure()
         }
         GoogleSignInClient.configure()
+        PicoPlusService.configurePaywallProvider()
 
         #if canImport(UIKit)
         PicoSegmentedControlAppearance.configure()

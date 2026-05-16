@@ -98,6 +98,10 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
         self == .none || ownedHats.contains(self)
     }
 
+    var isPicoPlusExclusive: Bool {
+        self == .shark
+    }
+
     var name: String {
         switch self {
         case .none:
@@ -710,8 +714,7 @@ struct AvatarPickerView: View {
                             }
                             .overlay {
                                 if !isOwned {
-                                    Image(systemName: "lock.fill")
-                                        .font(.system(size: 18, weight: .semibold))
+                                    PicoIcon(.lockClosed, size: 18)
                                         .foregroundStyle(PicoColors.textOnPrimary)
                                 }
                             }

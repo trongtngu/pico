@@ -245,6 +245,7 @@ enum PicoIconAsset: String {
     case homeSolid = "home_solid"
     case inboxRegular = "inbox_regular"
     case infoRegular = "info_regular"
+    case lockClosed = "lock-closed"
     case logoutRegular = "logout_regular"
     case magnifyingGlassRegular = "magnifying-glass_regular"
     case paperAirplaneRegular = "paper-airplane_regular"

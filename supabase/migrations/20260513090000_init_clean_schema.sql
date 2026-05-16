@@ -571,9 +571,9 @@ immutable
 set search_path = public
 as $$
     select case
-        when coalesce(completed_pair_sessions, 0) >= 30 then 5
-        when coalesce(completed_pair_sessions, 0) >= 14 then 4
-        when coalesce(completed_pair_sessions, 0) >= 7 then 3
+        when coalesce(completed_pair_sessions, 0) >= 12 then 5
+        when coalesce(completed_pair_sessions, 0) >= 9 then 4
+        when coalesce(completed_pair_sessions, 0) >= 6 then 3
         when coalesce(completed_pair_sessions, 0) >= 3 then 2
         when coalesce(completed_pair_sessions, 0) >= 1 then 1
         else 0

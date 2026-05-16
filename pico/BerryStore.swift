@@ -62,8 +62,9 @@ final class BerryStore: ObservableObject {
         }
     }
 
-    func loadStoreInventory(for session: AuthSession?) async {
-        guard let session, !isLoadingStoreInventory else { return }
+    @discardableResult
+    func loadStoreInventory(for session: AuthSession?) async -> Set<String>? {
+        guard let session, !isLoadingStoreInventory else { return nil }
 
         isLoadingStoreInventory = true
         notice = nil
@@ -72,8 +73,10 @@ final class BerryStore: ObservableObject {
         do {
             let inventory = try await berryService.fetchUserStoreInventory(for: session)
             ownedStoreItemIDs = Set(inventory.map(\.storeItemID))
+            return ownedStoreItemIDs
         } catch {
             notice = displayMessage(for: error)
+            return nil
         }
     }
 

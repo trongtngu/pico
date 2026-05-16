@@ -32,6 +32,7 @@ struct AppShellView: View {
     @StateObject private var berryStore = BerryStore()
     @StateObject private var fishStore = FishStore()
     @StateObject private var islandStore = IslandStore()
+    @StateObject private var picoPlusStore = PicoPlusStore()
 
     var body: some View {
         ZStack {
@@ -91,9 +92,12 @@ struct AppShellView: View {
         .environmentObject(berryStore)
         .environmentObject(fishStore)
         .environmentObject(islandStore)
+        .environmentObject(picoPlusStore)
         .task(id: sessionStore.session?.user?.id) {
             await sessionStore.refreshSessionIfNeeded()
             await sessionStore.loadProfileIfNeeded()
+            picoPlusStore.configureIdentity(session: sessionStore.session, profile: sessionStore.profile)
+            await picoPlusStore.refresh(for: sessionStore.session)
             islandStore.configure(
                 for: sessionStore.session?.user?.id,
                 ownedIslandIDs: sessionStore.ownedIslandIDs
@@ -175,6 +179,8 @@ struct AppShellView: View {
             case .active:
                 Task {
                     await sessionStore.refreshSessionIfNeeded()
+                    picoPlusStore.configureIdentity(session: sessionStore.session, profile: sessionStore.profile)
+                    await picoPlusStore.refresh(for: sessionStore.session)
                     await focusStore.handleSceneBecameActive(for: sessionStore.session)
                 }
             case .background:
@@ -1646,6 +1652,7 @@ struct BondsContent: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
     @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
     @State private var claimedReward: BondRewardClaimCelebration?
 
     private var bonds: [VillageResident] {
@@ -1682,6 +1689,10 @@ struct BondsContent: View {
                         RoundedRectangle(cornerRadius: PicoCreamCardStyle.cornerRadius, style: .continuous)
                             .stroke(PicoCreamCardStyle.border, lineWidth: PicoCreamCardStyle.borderWidth)
                     )
+            }
+
+            if let notice = picoPlusStore.notice {
+                ProfileNoticeCard(text: notice)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1774,9 +1785,51 @@ struct BondsContent: View {
             return
         }
 
+        if reward.requiresPicoPlus && !picoPlusStore.isPlusActive {
+            Task { @MainActor in
+                await picoPlusStore.presentPaywall(
+                    source: reward.picoPlusPaywallSource(residentID: resident.id),
+                    authSession: sessionStore.session
+                )
+
+                guard picoPlusStore.isPlusActive else { return }
+                claimHighestAvailableReward(for: resident, ownerID: currentUserID)
+            }
+            return
+        }
+
+        if picoPlusStore.isPlusActive {
+            claimHighestAvailableReward(for: resident, ownerID: currentUserID)
+            return
+        }
+
+        claim(reward: reward, for: resident, ownerID: currentUserID)
+    }
+
+    private func claimHighestAvailableReward(for resident: VillageResident, ownerID: UUID) {
+        let claimedLevel = bondRewardClaimStore.claimedLevel(
+            ownerID: ownerID,
+            residentID: resident.id
+        )
+
+        guard let reward = BondScarfReward.highestClaimable(
+            earnedLevel: resident.bondLevel,
+            claimedLevel: claimedLevel
+        ) else {
+            return
+        }
+
+        guard !reward.requiresPicoPlus || picoPlusStore.isPlusActive else {
+            return
+        }
+
+        claim(reward: reward, for: resident, ownerID: ownerID)
+    }
+
+    private func claim(reward: BondScarfReward, for resident: VillageResident, ownerID: UUID) {
         bondRewardClaimStore.markClaimed(
             level: reward.level,
-            ownerID: currentUserID,
+            ownerID: ownerID,
             residentID: resident.id
         )
 
@@ -1891,6 +1944,7 @@ private struct BondLevelGroupView: View {
 
 private struct BondRowView: View {
     @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let resident: VillageResident
     let ownerID: UUID?
@@ -1917,8 +1971,17 @@ private struct BondRowView: View {
         min(claimedLevel, resident.bondLevel)
     }
 
+    private var pendingRewardRequiresPlus: Bool {
+        guard let pendingReward else { return false }
+        return pendingReward.requiresPicoPlus && !picoPlusStore.isPlusActive
+    }
+
     private var scarfProgress: BondScarfProgress {
-        BondScarfProgress(xp: xp, claimableReward: pendingReward)
+        BondScarfProgress(
+            xp: xp,
+            claimableReward: pendingReward,
+            claimableRewardRequiresPlus: pendingRewardRequiresPlus
+        )
     }
 
     private var hasPendingReward: Bool {
@@ -1931,7 +1994,7 @@ private struct BondRowView: View {
 
     var body: some View {
         Group {
-            if hasPendingReward {
+            if hasPendingReward && !pendingRewardRequiresPlus {
                 Button {
                     onClaim(resident)
                 } label: {
@@ -1971,6 +2034,7 @@ private struct BondRowView: View {
                         .font(PicoTypography.primaryLabelSemibold)
                         .foregroundStyle(PicoColors.textPrimary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                         .layoutPriority(1)
 
                     HStack(spacing: PicoSpacing.tiny) {
@@ -2000,8 +2064,23 @@ private struct BondRowView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
 
-                Spacer(minLength: 0)
+                if let pendingReward, pendingRewardRequiresPlus {
+                    PicoPlusCTAButton(
+                        size: .pill,
+                        source: pendingReward.picoPlusPaywallSource(residentID: resident.id),
+                        afterPresentation: {
+                            if picoPlusStore.isPlusActive {
+                                onClaim(resident)
+                            }
+                        }
+                    )
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(2)
+                } else {
+                    Spacer(minLength: 0)
+                }
             }
 
             BondScarfProgressBar(progress: scarfProgress)
@@ -2064,6 +2143,7 @@ private struct BondScarfProgressBar: View {
 private struct BondScarfProgress {
     let xp: Int
     let claimableReward: BondScarfReward?
+    let claimableRewardRequiresPlus: Bool
 
     private var targetMilestone: BondScarfMilestone? {
         if let claimableReward {
@@ -2118,6 +2198,10 @@ private struct BondScarfProgress {
     }
 
     var caption: String? {
+        if claimableRewardRequiresPlus {
+            return nil
+        }
+
         if claimableReward != nil {
             return "Tap to collect reward"
         }
@@ -2142,6 +2226,10 @@ private struct BondScarfProgress {
 
     var accessibilitySummary: String {
         if let claimableReward {
+            if claimableRewardRequiresPlus {
+                return "level \(claimableReward.level) reward requires Pico Plus"
+            }
+
             return "level \(claimableReward.level) reward ready to claim"
         }
 
@@ -2182,9 +2270,27 @@ private struct BondScarfReward: Equatable {
         name.capitalized
     }
 
+    var requiresPicoPlus: Bool {
+        level > PicoPlusEntitlements.freeBondRewardLevel
+    }
+
+    func picoPlusPaywallSource(residentID: UUID) -> PicoPlusPaywallSource {
+        .bondReward(
+            residentID: residentID.uuidString,
+            bondLevel: level,
+            placement: .bondReward
+        )
+    }
+
     static func nextClaimable(earnedLevel: Int, claimedLevel: Int) -> BondScarfReward? {
         BondScarfMilestone.all
             .first { $0.level <= earnedLevel && $0.level > claimedLevel }
+            .map { BondScarfReward(level: $0.level, name: $0.name) }
+    }
+
+    static func highestClaimable(earnedLevel: Int, claimedLevel: Int) -> BondScarfReward? {
+        BondScarfMilestone.all
+            .last { $0.level <= earnedLevel && $0.level > claimedLevel }
             .map { BondScarfReward(level: $0.level, name: $0.name) }
     }
 }
@@ -2424,6 +2530,8 @@ private struct DailySnapshotCalendarScreen: View {
     let fetchFocusActivityAction: (DailySnapshotDay, DailySnapshotDay) async throws -> [DailySnapshotFocusActivity]
     let fetchSnapshotAction: (DailySnapshotDay) async throws -> DailyVillageSnapshot?
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
     @State private var displayedMonth = Calendar.current.startOfDay(for: Date())
     @State private var heroMode: DailySnapshotHeroMode = .fish
     @State private var selectedDate = Date()
@@ -2462,6 +2570,10 @@ private struct DailySnapshotCalendarScreen: View {
         makeMonthDays()
     }
 
+    private var selectedDayRequiresPlus: Bool {
+        !picoPlusStore.isPlusActive && isPastDay(selectedDate)
+    }
+
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
@@ -2473,7 +2585,9 @@ private struct DailySnapshotCalendarScreen: View {
                         snapshot: selectedSnapshot,
                         mode: heroMode,
                         isLoading: loadState == .loading,
-                        notice: notice
+                        isLocked: selectedDayRequiresPlus,
+                        notice: selectedDayRequiresPlus ? picoPlusStore.notice : notice,
+                        afterUnlock: loadSelectedSnapshotAfterPlusUnlock
                     )
 
                     heroModePills
@@ -2502,6 +2616,10 @@ private struct DailySnapshotCalendarScreen: View {
         }
         .onChange(of: displayedMonth) {
             loadDisplayedMonthActivityIfNeeded(for: displayedMonth)
+        }
+        .onChange(of: picoPlusStore.isPlusActive) {
+            guard picoPlusStore.isPlusActive else { return }
+            loadSelectedSnapshotIfNeeded(for: selectedDate)
         }
     }
 
@@ -2721,6 +2839,12 @@ private struct DailySnapshotCalendarScreen: View {
 
     private func loadSelectedSnapshotIfNeeded(for date: Date) {
         let day = DailySnapshotDay(date: date, calendar: calendar)
+        guard picoPlusStore.isPlusActive || !isPastDay(date) else {
+            loadState = .loaded
+            notice = nil
+            return
+        }
+
         guard snapshotByDay[day] == nil else {
             loadState = .loaded
             notice = nil
@@ -2751,6 +2875,16 @@ private struct DailySnapshotCalendarScreen: View {
             guard day == selectedSnapshotDay else { return }
             loadState = .failed
             notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func isPastDay(_ date: Date) -> Bool {
+        calendar.startOfDay(for: date) < maximumDate
+    }
+
+    private func loadSelectedSnapshotAfterPlusUnlock() {
+        if picoPlusStore.isPlusActive {
+            loadSelectedSnapshotIfNeeded(for: selectedDate)
         }
     }
 }
@@ -2915,7 +3049,9 @@ private struct DailySnapshotCalendarHero: View {
     let snapshot: DailyVillageSnapshot?
     let mode: DailySnapshotHeroMode
     let isLoading: Bool
+    let isLocked: Bool
     let notice: String?
+    let afterUnlock: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2924,20 +3060,26 @@ private struct DailySnapshotCalendarHero: View {
                     .font(PicoTypography.captionSemibold)
                     .foregroundStyle(PicoColors.textSecondary)
 
-                Text("\(focusedTimeText) focused")
-                    .font(PicoTypography.caption)
-                    .foregroundStyle(PicoColors.textPrimary)
+                if !isLocked {
+                    Text("\(focusedTimeText) focused")
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textPrimary)
+                }
             }
 
             ZStack {
-                switch mode {
-                case .bonds:
-                    DailySnapshotBondsHeroContent(snapshot: snapshot)
-                case .fish:
-                    DailySnapshotFishHeroContent(snapshot: snapshot)
+                if isLocked {
+                    DailySnapshotPlusLockedHeroContent(afterUnlock: afterUnlock)
+                } else {
+                    switch mode {
+                    case .bonds:
+                        DailySnapshotBondsHeroContent(snapshot: snapshot)
+                    case .fish:
+                        DailySnapshotFishHeroContent(snapshot: snapshot)
+                    }
                 }
 
-                if isLoading {
+                if isLoading && !isLocked {
                     loadingOverlay
                 }
             }
@@ -2990,6 +3132,33 @@ private struct DailySnapshotCalendarHero: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PicoCalendarStyle.heroBackground.opacity(0.88))
+    }
+}
+
+private struct DailySnapshotPlusLockedHeroContent: View {
+    let afterUnlock: () -> Void
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            Spacer(minLength: 0)
+
+            Text("Track your progress with Plus")
+                .font(PicoTypography.cardTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+
+            PicoPlusCTAButton(
+                source: .calendarView(placement: .calendarView),
+                afterPresentation: afterUnlock
+            )
+                .accessibilityHint(Text("Pico Plus unlocks past calendar day details."))
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: PicoCalendarStyle.heroContentHeight)
     }
 }
 
@@ -4502,6 +4671,7 @@ private struct MultiplayerInviteFriendsSheetContent: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var focusStore: FocusStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
     @Binding var step: StartFocusSheetStep
     @Binding var durationSeconds: Int
     let buttonTitle: String
@@ -4524,6 +4694,13 @@ private struct MultiplayerInviteFriendsSheetContent: View {
                 ) {
                     toggle(friend)
                 }
+            }
+
+            if shouldShowGroupLimitNotice {
+                PicoPlusGroupLimitNotice(
+                    notice: picoPlusStore.notice,
+                    source: largeGroupPaywallSource
+                )
             }
 
             Button {
@@ -4562,6 +4739,35 @@ private struct MultiplayerInviteFriendsSheetContent: View {
         )
     }
 
+    private var currentMemberCount: Int {
+        if let members = focusStore.sessionDetail?.members {
+            return members.filter { $0.status == .joined || $0.status == .invited }.count
+        }
+
+        return 1
+    }
+
+    private var remainingInviteSlots: Int {
+        guard let multiplayerMemberLimit = picoPlusStore.capabilities.multiplayerMemberLimit else {
+            return Int.max
+        }
+
+        return max(0, multiplayerMemberLimit - currentMemberCount)
+    }
+
+    private var shouldShowGroupLimitNotice: Bool {
+        !picoPlusStore.isPlusActive && selectedFriendIDs.count >= remainingInviteSlots
+    }
+
+    private var largeGroupPaywallSource: PicoPlusPaywallSource {
+        .largeGroupSession(
+            currentMembers: currentMemberCount,
+            selectedInvites: selectedFriendIDs.count,
+            limit: PicoPlusEntitlements.freeMultiplayerMemberLimit,
+            placement: .largeGroupSession
+        )
+    }
+
     private var availableFriends: [UserProfile] {
         let filtered = friendStore.friends.filter { !unavailableMemberIDs.contains($0.userID) }
         guard !searchText.isEmpty else { return filtered }
@@ -4575,6 +4781,10 @@ private struct MultiplayerInviteFriendsSheetContent: View {
         if selectedFriendIDs.contains(friend.userID) {
             selectedFriendIDs.remove(friend.userID)
         } else {
+            guard selectedFriendIDs.count < remainingInviteSlots else {
+                return
+            }
+
             selectedFriendIDs.insert(friend.userID)
         }
     }
@@ -4582,6 +4792,9 @@ private struct MultiplayerInviteFriendsSheetContent: View {
     private func sendInvites() async {
         let selectedFriends = friendStore.friends.filter { selectedFriendIDs.contains($0.userID) }
         guard !selectedFriends.isEmpty else { return }
+        guard selectedFriends.count <= remainingInviteSlots else {
+            return
+        }
 
         if focusStore.lobbySession?.mode != .multiplayer {
             await focusStore.createLobby(
@@ -4599,6 +4812,7 @@ private struct MultiplayerInviteFriendsSheetContent: View {
         selectedFriendIDs = []
         step = .multiplayerLobby
     }
+
 }
 
 private struct FriendInviteSelectionRow: View {
@@ -4642,6 +4856,35 @@ private struct FriendInviteSelectionRow: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct PicoPlusGroupLimitNotice: View {
+    let notice: String?
+    let source: PicoPlusPaywallSource
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.compact) {
+            Text("Your session is full")
+                .font(PicoTypography.body.weight(.bold))
+                .foregroundStyle(PicoColors.textPrimary)
+
+            Text("Invite more friends with plus")
+                .font(PicoTypography.caption)
+                .foregroundStyle(PicoColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let notice {
+                Text(notice)
+                    .font(PicoTypography.caption.weight(.semibold))
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            PicoPlusCTAButton(title: "Unlock bigger groups", source: source)
+                .accessibilityHint(Text("Pico Plus unlocks larger group sessions."))
+        }
+        .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
     }
 }
 
@@ -5858,8 +6101,7 @@ private struct FishingCollectionHeader: View {
 
             HStack(spacing: PicoSpacing.tiny) {
                 if isLocked {
-                    Image(systemName: "lock.fill")
-                        .font(PicoTypography.symbol(size: 11, weight: .bold))
+                    PicoIcon(.lockClosed, size: 11)
                         .foregroundStyle(PicoColors.textSecondary)
                         .accessibilityHidden(true)
                 }
@@ -6117,8 +6359,7 @@ private struct FishingIslandRow: View {
                         .lineLimit(1)
 
                     if !isOwned {
-                        Image(systemName: "lock.fill")
-                            .font(PicoTypography.symbol(size: 12, weight: .bold))
+                        PicoIcon(.lockClosed, size: 12)
                             .foregroundStyle(PicoColors.textSecondary)
                             .accessibilityHidden(true)
                     }
@@ -6155,13 +6396,11 @@ private struct FishingIslandRow: View {
     @ViewBuilder
     private var statusIcon: some View {
         if !isOwned {
-            Image(systemName: "lock.fill")
-                .font(PicoTypography.symbol(size: 17, weight: .bold))
+            PicoIcon(.lockClosed, size: 17)
                 .foregroundStyle(PicoColors.textSecondary)
                 .frame(width: 28, height: 28)
         } else if isSessionLocked {
-            Image(systemName: "lock.fill")
-                .font(PicoTypography.symbol(size: 17, weight: .bold))
+            PicoIcon(.lockClosed, size: 17)
                 .foregroundStyle(PicoColors.textSecondary)
                 .frame(width: 28, height: 28)
         } else if isSelected {
@@ -6594,8 +6833,7 @@ private struct FishingCollectionTile: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
             } else {
-                Image(systemName: "lock.fill")
-                    .font(PicoTypography.symbol(size: Layout.lockIconSize, weight: .bold))
+                PicoIcon(.lockClosed, size: Layout.lockIconSize)
                     .frame(width: Layout.lockIconFrameSize, height: Layout.lockIconFrameSize)
             }
         }
@@ -6701,6 +6939,7 @@ private struct StorePage: View {
     @EnvironmentObject private var berryStore: BerryStore
     @EnvironmentObject private var fishStore: FishStore
     @EnvironmentObject private var islandStore: IslandStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
     @State private var selectedMode: StoreMode = .buy
     @State private var previewedIsland: PicoIsland?
     @State private var previewedHatItem: StoreItem?
@@ -6722,7 +6961,8 @@ private struct StorePage: View {
         StoreFishGroup.groups(
             from: fishStore.inventory,
             catalog: fishStore.fishCatalog,
-            inventoryCounts: fishStore.inventoryCounts
+            inventoryCounts: fishStore.inventoryCounts,
+            saleMultiplier: picoPlusStore.isPlusActive ? PicoPlusEntitlements.fishSaleBerryMultiplier : 1
         )
     }
 
@@ -6732,6 +6972,10 @@ private struct StorePage: View {
                 berryBalanceCard
 
                 if let notice = berryStore.notice {
+                    ProfileNoticeCard(text: notice)
+                }
+
+                if let notice = picoPlusStore.notice {
                     ProfileNoticeCard(text: notice)
                 }
 
@@ -6752,15 +6996,8 @@ private struct StorePage: View {
                         StoreBuyCatalogSection(
                             islandItems: islandItems,
                             hatItems: hatItems,
-                            berryBalance: berryStore.balance.berries,
                             ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
-                            purchasingStoreItemID: berryStore.purchasingStoreItemID,
-                            isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
-                                || berryStore.isLoadingBalance
-                                || berryStore.isLoadingStoreCatalog
-                                || sessionStore.session == nil,
-                            previewItem: preview,
-                            purchase: purchase
+                            previewItem: preview
                         )
                     case .sell:
                         StoreFishSection(
@@ -6784,6 +7021,7 @@ private struct StorePage: View {
                 berryBalance: berryStore.balance.berries,
                 ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
                 purchasingStoreItemID: berryStore.purchasingStoreItemID,
+                isPlusActive: picoPlusStore.isPlusActive,
                 isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
                     || berryStore.isLoadingBalance
                     || berryStore.isLoadingStoreCatalog
@@ -6817,6 +7055,7 @@ private struct StorePage: View {
                 berryBalance: berryStore.balance.berries,
                 ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
                 purchasingStoreItemID: berryStore.purchasingStoreItemID,
+                isPlusActive: picoPlusStore.isPlusActive,
                 isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
                     || berryStore.isLoadingBalance
                     || berryStore.isLoadingStoreCatalog
@@ -6845,8 +7084,12 @@ private struct StorePage: View {
             await sessionStore.loadProfileIfNeeded()
             await berryStore.loadBalance(for: sessionStore.session)
             await berryStore.loadStoreCatalog(for: sessionStore.session)
-            await berryStore.loadStoreInventory(for: sessionStore.session)
-            berryStore.applyOwnedStoreItemIDs(sessionStore.ownedStoreItemIDs)
+            if let ownedStoreItemIDs = await berryStore.loadStoreInventory(for: sessionStore.session) {
+                sessionStore.applyOwnedStoreItemIDs(ownedStoreItemIDs)
+                islandStore.updateOwnedIslandIDs(sessionStore.ownedIslandIDs)
+            } else {
+                berryStore.applyOwnedStoreItemIDs(sessionStore.ownedStoreItemIDs)
+            }
             if fishStore.fishCatalog.isEmpty || fishStore.fishCatalogIslandID != islandStore.selectedIslandID {
                 await fishStore.loadFishCatalog(
                     for: sessionStore.session,
@@ -6959,6 +7202,7 @@ private struct StoreFishGroup: Identifiable {
     let assetName: String
     let sortOrder: Int
     let unitValue: Int
+    let saleMultiplier: Int
     let inventoryCount: Int?
     let catches: [FishCatch]
 
@@ -6971,7 +7215,11 @@ private struct StoreFishGroup: Identifiable {
     }
 
     var totalValue: Int {
-        catches.reduce(0) { $0 + $1.sellValue }
+        catches.reduce(0) { $0 + $1.sellValue * saleMultiplier }
+    }
+
+    var displayUnitValue: Int {
+        unitValue * saleMultiplier
     }
 
     var imageResourceCandidates: [String] {
@@ -7004,8 +7252,10 @@ private struct StoreFishGroup: Identifiable {
     static func groups(
         from catches: [FishCatch],
         catalog: [FishCatalogItem],
-        inventoryCounts: [FishCount]
+        inventoryCounts: [FishCount],
+        saleMultiplier: Int = 1
     ) -> [StoreFishGroup] {
+        let resolvedSaleMultiplier = max(1, saleMultiplier)
         let catalogByID = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
         let inventoryCountByID = Dictionary(uniqueKeysWithValues: inventoryCounts.map { ($0.seaCritterID, $0) })
 
@@ -7026,6 +7276,7 @@ private struct StoreFishGroup: Identifiable {
                     assetName: assetName,
                     sortOrder: catalogItem?.sortOrder ?? countItem?.sortOrder ?? Int.max,
                     unitValue: catalogItem?.sellValue ?? countItem?.sellValue ?? firstCatch?.sellValue ?? seaCritterID.sellValue,
+                    saleMultiplier: resolvedSaleMultiplier,
                     inventoryCount: countItem?.count,
                     catches: catches
                 )
@@ -7122,7 +7373,7 @@ private struct StoreFishSellSheet: View {
     }
 
     private var totalValue: Int {
-        selectedCatches.reduce(0) { $0 + $1.sellValue }
+        selectedCatches.reduce(0) { $0 + $1.sellValue * group.saleMultiplier }
     }
 
     var body: some View {
@@ -7285,7 +7536,7 @@ private struct StoreFishGroupRow: View {
                 Spacer(minLength: PicoSpacing.compact)
 
                 BerryAmountLabel(
-                    count: group.unitValue,
+                    count: group.displayUnitValue,
                     font: PicoTypography.primaryLabelSemibold,
                     iconSize: 16,
                     textColor: PicoColors.textPrimary
@@ -7304,7 +7555,7 @@ private struct StoreFishGroupRow: View {
         }
         .buttonStyle(.plain)
         .disabled(isSelling || group.catches.isEmpty)
-        .accessibilityLabel(Text("Sell \(group.displayName), \(formattedBerryCount(group.unitValue)) each, \(group.count) available"))
+        .accessibilityLabel(Text("Sell \(group.displayName), \(formattedBerryCount(group.displayUnitValue)) each, \(group.count) available"))
     }
 
     private var fishIcon: some View {
@@ -7364,12 +7615,8 @@ private struct StoreFishIcon: View {
 private struct StoreBuyCatalogSection: View {
     let islandItems: [StoreItem]
     let hatItems: [StoreItem]
-    let berryBalance: Int
     let ownedStoreItemIDs: Set<String>
-    let purchasingStoreItemID: String?
-    let isPurchaseDisabled: Bool
     let previewItem: (StoreItem) -> Void
-    let purchase: (StoreItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.section) {
@@ -7377,24 +7624,16 @@ private struct StoreBuyCatalogSection: View {
                 title: "Islands",
                 icon: .map,
                 items: islandItems,
-                berryBalance: berryBalance,
                 ownedStoreItemIDs: ownedStoreItemIDs,
-                purchasingStoreItemID: purchasingStoreItemID,
-                isPurchaseDisabled: isPurchaseDisabled,
-                previewItem: previewItem,
-                purchase: purchase
+                previewItem: previewItem
             )
 
             StoreItemSection(
                 title: "Hats",
                 icon: .hat,
                 items: hatItems,
-                berryBalance: berryBalance,
                 ownedStoreItemIDs: ownedStoreItemIDs,
-                purchasingStoreItemID: purchasingStoreItemID,
-                isPurchaseDisabled: isPurchaseDisabled,
-                previewItem: previewItem,
-                purchase: purchase
+                previewItem: previewItem
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -7411,12 +7650,8 @@ private struct StoreItemSection: View {
     let title: String
     let icon: StoreSectionIcon
     let items: [StoreItem]
-    let berryBalance: Int
     let ownedStoreItemIDs: Set<String>
-    let purchasingStoreItemID: String?
-    let isPurchaseDisabled: Bool
     let previewItem: (StoreItem) -> Void
-    let purchase: (StoreItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: PicoSpacing.standard) {
@@ -7433,15 +7668,9 @@ private struct StoreItemSection: View {
                     ForEach(items) { item in
                         StoreItemRow(
                             item: item,
-                            berryBalance: berryBalance,
                             isOwned: ownedStoreItemIDs.contains(item.id),
-                            isPurchasing: purchasingStoreItemID == item.id,
-                            isPurchaseDisabled: isPurchaseDisabled,
                             preview: {
                                 previewItem(item)
-                            },
-                            purchase: {
-                                purchase(item)
                             }
                         )
                     }
@@ -7454,42 +7683,14 @@ private struct StoreItemSection: View {
 
 private struct StoreItemRow: View {
     let item: StoreItem
-    let berryBalance: Int
     let isOwned: Bool
-    let isPurchasing: Bool
-    let isPurchaseDisabled: Bool
     let preview: () -> Void
-    let purchase: () -> Void
-
-    private var missingBerries: Int {
-        max(0, item.berryPrice - berryBalance)
-    }
-
-    private var canPurchase: Bool {
-        !isOwned && !item.isPaidOnly && missingBerries == 0 && !isPurchaseDisabled
-    }
 
     var body: some View {
-        HStack(spacing: PicoSpacing.standard) {
-            Button(action: preview) {
-                HStack(spacing: PicoSpacing.standard) {
-                    itemIcon
-
-                    Text(item.displayName)
-                        .font(PicoTypography.primaryLabelSemibold)
-                        .foregroundStyle(PicoColors.textPrimary)
-                        .lineLimit(1)
-
-                    Spacer(minLength: PicoSpacing.compact)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            purchaseControl
-                .frame(width: 86, alignment: .trailing)
+        Button(action: preview) {
+            rowContent(accessory: rowAccessory)
         }
+        .buttonStyle(.plain)
         .padding(PicoSpacing.compact)
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
@@ -7498,6 +7699,36 @@ private struct StoreItemRow: View {
                 .stroke(PicoColors.border, lineWidth: 1)
         )
         .accessibilityElement(children: .contain)
+    }
+
+    private var rowLabel: some View {
+        HStack(spacing: PicoSpacing.standard) {
+            itemIcon
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName)
+                    .font(PicoTypography.primaryLabelSemibold)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(1)
+
+                if item.isPaidOnly {
+                    StorePicoPlusBadge()
+                }
+            }
+
+            Spacer(minLength: PicoSpacing.compact)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func rowContent<Accessory: View>(accessory: Accessory) -> some View {
+        HStack(spacing: PicoSpacing.standard) {
+            rowLabel
+
+            accessory
+                .frame(width: 86, alignment: .trailing)
+        }
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -7516,7 +7747,7 @@ private struct StoreItemRow: View {
     }
 
     @ViewBuilder
-    private var purchaseControl: some View {
+    private var rowAccessory: some View {
         if isOwned {
             HStack(spacing: PicoSpacing.tiny) {
                 Text("✓")
@@ -7527,33 +7758,50 @@ private struct StoreItemRow: View {
             }
             .foregroundStyle(PicoColors.primary.opacity(0.78))
             .frame(height: 34, alignment: .trailing)
-        } else if item.isPaidOnly {
-            Text("Paid")
-                .font(PicoTypography.statusLabel)
-                .foregroundStyle(PicoColors.textSecondary)
-                .frame(height: 34, alignment: .trailing)
         } else {
-            Button {
-                guard canPurchase else { return }
-                purchase()
-            } label: {
-                HStack(spacing: PicoSpacing.tiny) {
-                    BerryAmountLabel(
-                        count: item.berryPrice,
-                        font: PicoTypography.primaryLabelSemibold,
-                        iconSize: 16,
-                        textColor: PicoColors.textPrimary
-                    )
-
-                    if isPurchasing {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .tint(PicoColors.primary)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
+            priceLabel
         }
+    }
+
+    private var priceLabel: some View {
+        BerryAmountLabel(
+            count: item.berryPrice,
+            font: PicoTypography.primaryLabelSemibold,
+            iconSize: 16,
+            textColor: PicoColors.textPrimary
+        )
+        .frame(height: 34, alignment: .trailing)
+    }
+
+}
+
+private struct StorePicoPlusBadge: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            PicoIcon(.lockClosed, size: 10)
+                .accessibilityHidden(true)
+
+            Text("Plus-exclusive")
+                .lineLimit(1)
+                .minimumScaleFactor(0.76)
+        }
+        .font(PicoTypography.tinyCaption.weight(.bold))
+        .foregroundStyle(PicoColors.primary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(PicoColors.primary.opacity(0.12))
+        .clipShape(Capsule(style: .continuous))
+    }
+}
+
+private extension StoreItem {
+    func picoPlusPaywallSource(placement: PicoPlusPlacement) -> PicoPlusPaywallSource {
+        .plusCosmetic(
+            itemID: id,
+            itemType: itemType.rawValue,
+            itemKey: itemKey,
+            placement: placement
+        )
     }
 }
 
@@ -7618,6 +7866,7 @@ private struct StoreIslandPreviewOverlay: View {
     let berryBalance: Int
     let ownedStoreItemIDs: Set<String>
     let purchasingStoreItemID: String?
+    let isPlusActive: Bool
     let isPurchaseDisabled: Bool
     let currentUserProfile: UserProfile?
     let catalog: [FishCatalogItem]
@@ -7641,6 +7890,10 @@ private struct StoreIslandPreviewOverlay: View {
                                 .minimumScaleFactor(0.64)
 
                             if let item {
+                                if item.isPaidOnly {
+                                    StorePicoPlusBadge()
+                                }
+
                                 BerryAmountLabel(
                                     count: item.berryPrice,
                                     font: PicoTypography.primaryLabelSemibold,
@@ -7685,8 +7938,10 @@ private struct StoreIslandPreviewOverlay: View {
                             berryBalance: berryBalance,
                             ownedStoreItemIDs: ownedStoreItemIDs,
                             purchasingStoreItemID: purchasingStoreItemID,
+                            isPlusActive: isPlusActive,
                             isPurchaseDisabled: isPurchaseDisabled,
-                            purchase: purchase
+                            purchase: purchase,
+                            close: close
                         )
                     }
                 }
@@ -7719,8 +7974,10 @@ private struct StoreIslandPreviewPurchaseFooter: View {
     let berryBalance: Int
     let ownedStoreItemIDs: Set<String>
     let purchasingStoreItemID: String?
+    let isPlusActive: Bool
     let isPurchaseDisabled: Bool
     let purchase: (StoreItem) -> Void
+    let close: () -> Void
 
     private var isOwned: Bool {
         ownedStoreItemIDs.contains(item.id)
@@ -7731,7 +7988,7 @@ private struct StoreIslandPreviewPurchaseFooter: View {
     }
 
     private var canPurchase: Bool {
-        !isOwned && !item.isPaidOnly && missingBerries == 0 && !isPurchaseDisabled
+        !isOwned && (!item.isPaidOnly || isPlusActive) && missingBerries == 0 && !isPurchaseDisabled
     }
 
     private var isPurchasing: Bool {
@@ -7765,11 +8022,8 @@ private struct StoreIslandPreviewPurchaseFooter: View {
             }
             .foregroundStyle(PicoColors.primary.opacity(0.78))
             .frame(maxWidth: .infinity, minHeight: 52)
-        } else if item.isPaidOnly {
-            Text("Paid")
-                .font(PicoTypography.button)
-                .foregroundStyle(PicoColors.textSecondary)
-                .frame(maxWidth: .infinity, minHeight: 52)
+        } else if item.isPaidOnly && !isPlusActive {
+            plusControl
         } else {
             Button {
                 guard canPurchase else { return }
@@ -7790,6 +8044,19 @@ private struct StoreIslandPreviewPurchaseFooter: View {
             .accessibilityLabel(Text("Buy \(island.displayName)"))
             .accessibilityHint(Text(missingBerries > 0 ? "You need \(formattedBerryCount(missingBerries)) more." : ""))
         }
+    }
+
+    @ViewBuilder
+    private var plusControl: some View {
+        PicoPlusCTAButton(
+            source: item.picoPlusPaywallSource(placement: .exclusiveHat),
+            beforePresentation: closeBeforePresentation
+        )
+    }
+
+    private func closeBeforePresentation() async {
+        close()
+        try? await Task.sleep(nanoseconds: 300_000_000)
     }
 }
 
@@ -7978,6 +8245,7 @@ private struct StoreHatPreviewOverlay: View {
     let berryBalance: Int
     let ownedStoreItemIDs: Set<String>
     let purchasingStoreItemID: String?
+    let isPlusActive: Bool
     let isPurchaseDisabled: Bool
     let currentUserProfile: UserProfile?
     let close: () -> Void
@@ -7993,6 +8261,7 @@ private struct StoreHatPreviewOverlay: View {
         berryBalance: Int,
         ownedStoreItemIDs: Set<String>,
         purchasingStoreItemID: String?,
+        isPlusActive: Bool,
         isPurchaseDisabled: Bool,
         currentUserProfile: UserProfile?,
         close: @escaping () -> Void,
@@ -8002,6 +8271,7 @@ private struct StoreHatPreviewOverlay: View {
         self.berryBalance = berryBalance
         self.ownedStoreItemIDs = ownedStoreItemIDs
         self.purchasingStoreItemID = purchasingStoreItemID
+        self.isPlusActive = isPlusActive
         self.isPurchaseDisabled = isPurchaseDisabled
         self.currentUserProfile = currentUserProfile
         self.close = close
@@ -8034,7 +8304,7 @@ private struct StoreHatPreviewOverlay: View {
     }
 
     private var canPurchase: Bool {
-        !isOwned && !currentItem.isPaidOnly && missingBerries == 0 && !isPurchaseDisabled
+        !isOwned && (!currentItem.isPaidOnly || isPlusActive) && missingBerries == 0 && !isPurchaseDisabled
     }
 
     private var isPurchasing: Bool {
@@ -8133,11 +8403,8 @@ private struct StoreHatPreviewOverlay: View {
             }
             .foregroundStyle(PicoColors.primary.opacity(0.78))
             .frame(maxWidth: .infinity, minHeight: 52)
-        } else if currentItem.isPaidOnly {
-            Text("Paid")
-                .font(PicoTypography.button)
-                .foregroundStyle(PicoColors.textSecondary)
-                .frame(maxWidth: .infinity, minHeight: 52)
+        } else if currentItem.isPaidOnly && !isPlusActive {
+            plusControl
         } else {
             Button {
                 guard canPurchase else { return }
@@ -8157,6 +8424,19 @@ private struct StoreHatPreviewOverlay: View {
             .disabled(!canPurchase)
             .accessibilityHint(Text(missingBerries > 0 ? "You need \(formattedBerryCount(missingBerries)) more." : ""))
         }
+    }
+
+    @ViewBuilder
+    private var plusControl: some View {
+        PicoPlusCTAButton(
+            source: currentItem.picoPlusPaywallSource(placement: .exclusiveHat),
+            beforePresentation: closeBeforePresentation
+        )
+    }
+
+    private func closeBeforePresentation() async {
+        close()
+        try? await Task.sleep(nanoseconds: 300_000_000)
     }
 
     private func hatCycleButton(icon: PicoIconAsset, label: String, action: @escaping () -> Void) -> some View {
@@ -8246,6 +8526,7 @@ private struct StoreBuyButtonStyle: ButtonStyle {
 
 private struct ProfilePage: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
     let openStore: () -> Void
     @State private var username = ""
     @State private var displayName = ""
@@ -8272,6 +8553,7 @@ private struct ProfilePage: View {
                             previousHat: selectPreviousHat,
                             nextHat: selectNextHat,
                             buyInStore: openStore,
+                            subscribeToPlus: subscribeToPlusForSelectedHat,
                             save: saveProfile
                         )
                     }
@@ -8408,6 +8690,25 @@ private struct ProfilePage: View {
                 displayName: displayName,
                 avatarConfig: avatarConfig
             )
+        }
+    }
+
+    private func subscribeToPlusForSelectedHat(placement: PicoPlusPlacement) {
+        let hat = avatarConfig.selectedHat
+        Task {
+            await picoPlusStore.presentPaywall(
+                source: .plusCosmetic(
+                    itemID: "hat:\(hat.rawValue)",
+                    itemType: StoreItemType.hat.rawValue,
+                    itemKey: "\(hat.rawValue)",
+                    placement: placement
+                ),
+                authSession: sessionStore.session
+            )
+
+            if picoPlusStore.isPlusActive {
+                openStore()
+            }
         }
     }
 }
@@ -8724,6 +9025,7 @@ private struct ProfileAvatarOutfitCard: View {
     let previousHat: () -> Void
     let nextHat: () -> Void
     let buyInStore: () -> Void
+    let subscribeToPlus: (PicoPlusPlacement) -> Void
     let save: () -> Void
     @State private var scrubStartDirection: AvatarPreviewDirection?
 
@@ -8744,15 +9046,20 @@ private struct ProfileAvatarOutfitCard: View {
             .gesture(avatarScrubGesture)
             .overlay(alignment: .topLeading) {
                 if !selectedHatIsOwned {
-                    ProfileBuyInStorePillButton(action: buyInStore)
-                        .padding(.top, PicoSpacing.compact)
-                        .padding(.leading, PicoSpacing.compact)
+                    if selection.selectedHat.isPicoPlusExclusive {
+                        ProfileSubscribeToPlusPillButton(action: subscribeToPlus)
+                            .padding(.top, PicoSpacing.compact)
+                            .padding(.leading, PicoSpacing.compact)
+                    } else {
+                        ProfileBuyInStorePillButton(action: buyInStore)
+                            .padding(.top, PicoSpacing.compact)
+                            .padding(.leading, PicoSpacing.compact)
+                    }
                 }
             }
             .overlay(alignment: .topTrailing) {
                 if !selectedHatIsOwned {
-                    Image(systemName: "lock.fill")
-                        .font(PicoTypography.symbol(size: 17, weight: .semibold))
+                    PicoIcon(.lockClosed, size: 17)
                         .foregroundStyle(PicoColors.textOnPrimary)
                         .frame(width: 34, height: 34)
                         .background(Circle().fill(PicoColors.textPrimary.opacity(0.76)))
@@ -8867,8 +9174,7 @@ private struct ProfileAvatarOutfitCard: View {
                             Circle()
                                 .fill(.black.opacity(0.42))
 
-                            Image(systemName: "lock.fill")
-                                .font(PicoTypography.symbol(size: 17, weight: .semibold))
+                            PicoIcon(.lockClosed, size: 17)
                                 .foregroundStyle(PicoColors.textOnPrimary)
                         }
                     }
@@ -8880,7 +9186,9 @@ private struct ProfileAvatarOutfitCard: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
 
-                if !isOwned {
+                if !isOwned && hat.isPicoPlusExclusive {
+                    StorePicoPlusBadge()
+                } else if !isOwned {
                     Text("Not owned")
                         .font(PicoTypography.tinyCaption)
                         .foregroundStyle(PicoColors.textSecondary)
@@ -8915,6 +9223,28 @@ private struct ProfileBuyInStorePillButton: View {
         .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel(Text("Buy selected hat in store"))
+    }
+}
+
+private struct ProfileSubscribeToPlusPillButton: View {
+    let action: (PicoPlusPlacement) -> Void
+
+    var body: some View {
+        Button {
+            action(.exclusiveHat)
+        } label: {
+            Text("Buy in store")
+                .font(PicoTypography.statusLabel)
+                .foregroundStyle(PicoColors.textOnPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(PicoColors.primary)
+                .clipShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel(Text("Buy selected hat in shop"))
     }
 }
 
