@@ -515,7 +515,7 @@ private extension AvatarConfig {
 }
 
 private final class LegacyAuthSessionStorage {
-    private let service = "\(Bundle.main.bundleIdentifier ?? "trongpapaya.pico").auth-session"
+    private let service = "\(Bundle.main.bundleIdentifier ?? "com.trongpapaya.pico").auth-session"
     private let account = "supabase-session"
 
     func loadSession() -> AuthSession? {

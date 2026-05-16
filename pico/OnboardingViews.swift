@@ -7,7 +7,6 @@
 
 import AuthenticationServices
 import CryptoKit
-import SpriteKit
 import SwiftUI
 import UIKit
 
@@ -21,9 +20,6 @@ struct AuthEntryView: View {
                 Spacer(minLength: max(28, proxy.safeAreaInsets.top + 20))
 
                 VStack(spacing: PicoSpacing.section) {
-                    AuthEntryAvatarView()
-                        .frame(width: 180, height: 180)
-
                     VStack(spacing: PicoSpacing.compact) {
                         PicoLogoImage()
                             .frame(width: 220, height: 96)
@@ -82,80 +78,6 @@ private struct PicoLogoImage: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Pico"))
-    }
-}
-
-private struct AuthEntryAvatarView: View {
-    var hat: AvatarHat = .none
-    var scarf: AvatarScarf? = .green
-
-    var body: some View {
-        GeometryReader { proxy in
-            SpriteView(
-                scene: AuthEntryAvatarScene(
-                    size: proxy.size,
-                    hat: hat,
-                    scarf: scarf
-                ),
-                options: [.allowsTransparency]
-            )
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .background(Color.clear)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Happy Pico avatar wearing a green scarf"))
-    }
-}
-
-private final class AuthEntryAvatarScene: SKScene {
-    private static let idleActionKey = "auth-entry-idle"
-
-    private let hat: AvatarHat
-    private let scarf: AvatarScarf?
-    private var renderedSize: CGSize = .zero
-
-    init(size: CGSize, hat: AvatarHat, scarf: AvatarScarf?) {
-        self.hat = hat
-        self.scarf = scarf
-        super.init(size: size)
-        scaleMode = .resizeFill
-        backgroundColor = .clear
-    }
-
-    required init?(coder aDecoder: NSCoder) {
-        nil
-    }
-
-    override func didMove(to view: SKView) {
-        view.allowsTransparency = true
-        view.isOpaque = false
-        view.backgroundColor = .clear
-        redrawIfNeeded()
-    }
-
-    override func didChangeSize(_ oldSize: CGSize) {
-        super.didChangeSize(oldSize)
-        redrawIfNeeded()
-    }
-
-    private func redrawIfNeeded() {
-        guard size.width > 0, size.height > 0, size != renderedSize else { return }
-
-        renderedSize = size
-        removeAllChildren()
-
-        let frames = AvatarHappyIdleFrames(hat: hat, scarf: scarf).layeredFrames
-        let sprite = AvatarLayeredSpriteNode(frames: frames)
-        let spriteSide = min(size.width, size.height)
-        sprite.spriteSize = CGSize(width: spriteSide, height: spriteSide)
-        sprite.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        sprite.runAnimation(
-            with: frames,
-            row: 0,
-            timePerFrame: 0.10,
-            key: Self.idleActionKey
-        )
-        addChild(sprite)
     }
 }
 

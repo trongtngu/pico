@@ -82,6 +82,8 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
     case bow = 3
     case helmet = 4
     case shark = 5
+    case clownfish = 6
+    case pufferfish = 7
 
     static let allCases: [AvatarHat] = [
         .none,
@@ -89,6 +91,8 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
         .beanie,
         .bow,
         .helmet,
+        .pufferfish,
+        .clownfish,
         .shark
     ]
 
@@ -99,7 +103,7 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
     }
 
     var isPicoPlusExclusive: Bool {
-        self == .shark
+        self == .shark || self == .pufferfish
     }
 
     var name: String {
@@ -107,7 +111,7 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
         case .none:
             "No Hat"
         case .bambooHat:
-            "Bamboo Hat"
+            "Bamboo"
         case .beanie:
             "Beanie"
         case .bow:
@@ -115,7 +119,11 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
         case .helmet:
             "Helmet"
         case .shark:
-            "Shark Hat"
+            "Shark"
+        case .clownfish:
+            "Clownfish"
+        case .pufferfish:
+            "Pufferfish"
         }
     }
 
@@ -132,6 +140,10 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
         case .helmet:
             "shield"
         case .shark:
+            "fish"
+        case .clownfish:
+            "fish"
+        case .pufferfish:
             "fish"
         }
     }
@@ -150,6 +162,10 @@ enum AvatarHat: Int, CaseIterable, Identifiable, Hashable {
             .purple
         case .shark:
             .cyan
+        case .clownfish:
+            .orange
+        case .pufferfish:
+            .yellow
         }
     }
 
@@ -461,6 +477,10 @@ private extension AvatarHat {
             "Helmet_Silver"
         case .shark:
             "Shark"
+        case .clownfish:
+            "Clownfish"
+        case .pufferfish:
+            "Puffer"
         }
     }
 }

@@ -106,18 +106,8 @@ private enum GoogleSignInNonce {
 
 private enum GoogleSignInConfig {
     static var clientID: String? {
-        value(for: "CLIENT_ID")
-    }
-
-    private static func value(for key: String) -> String? {
-        guard let url = Bundle.main.url(forResource: "GoogleSignIn-Info", withExtension: "plist"),
-              let plist = NSDictionary(contentsOf: url),
-              let value = plist[key] as? String,
-              !value.isEmpty
-        else {
-            return nil
-        }
-
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
+              !value.isEmpty else { return nil }
         return value
     }
 }
