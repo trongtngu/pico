@@ -41,8 +41,7 @@ final class AuthSessionStore: ObservableObject {
         password: String,
         username: String,
         displayName: String,
-        avatarConfig: AvatarConfig,
-        captchaToken: String?
+        avatarConfig: AvatarConfig
     ) async {
         await authenticate {
             try await authService.signUp(
@@ -50,8 +49,7 @@ final class AuthSessionStore: ObservableObject {
                 password: password,
                 username: username,
                 displayName: displayName,
-                avatarConfig: avatarConfig,
-                captchaToken: captchaToken
+                avatarConfig: avatarConfig
             )
         }
     }

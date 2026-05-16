@@ -540,14 +540,36 @@ private struct PicoSideNavigation: View {
         isPersistent ? 58 : nil
     }
 
+    private var logoImage: UIImage? {
+        [
+            "Icons/pico_logo",
+            "Icons/pico_logo.png",
+            "pico_logo",
+            "pico_logo.png"
+        ]
+        .lazy
+        .compactMap { UIImage(named: $0) }
+        .first
+    }
+
     var body: some View {
         VStack(alignment: isPersistent ? .center : .leading, spacing: PicoSpacing.compact) {
             if !isPersistent {
-                Text("pico")
-                    .font(PicoTypography.sectionTitle)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .padding(.bottom, PicoSpacing.standard)
-                    .padding(.top, PicoSpacing.largeSection)
+                Group {
+                    if let logoImage {
+                        Image(uiImage: logoImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 96, height: 42, alignment: .leading)
+                    } else {
+                        Text("Pico")
+                            .font(PicoTypography.sectionTitle)
+                            .foregroundStyle(PicoColors.textPrimary)
+                    }
+                }
+                .accessibilityLabel(Text("Pico"))
+                .padding(.bottom, PicoSpacing.standard)
+                .padding(.top, PicoSpacing.largeSection)
             }
 
             ForEach(AppTab.allCases) { tab in

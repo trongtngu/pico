@@ -35,10 +35,6 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>SUPERWALL_API_KEY</key>
 	<string>$(SUPERWALL_API_KEY)</string>
-	<key>PICO_TURNSTILE_CHALLENGE_URL</key>
-	<string>$(PICO_TURNSTILE_CHALLENGE_URL)</string>
-	<key>PICO_TURNSTILE_SITE_KEY</key>
-	<string>$(PICO_TURNSTILE_SITE_KEY)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

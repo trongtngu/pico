@@ -511,8 +511,6 @@ struct SignupFlowView: View {
     @State private var showsDuplicateEmailLoginPrompt = false
     @State private var hasTrackedSignupCompletion = false
     @State private var hasTrackedOnboardingCompletion = false
-    @State private var isCompletingBotChallenge = false
-    @State private var activeBotChallengeID: UUID?
 
     init(
         onBackToStart: @escaping () -> Void,
@@ -561,7 +559,7 @@ struct SignupFlowView: View {
     }
 
     private var canContinue: Bool {
-        guard !sessionStore.isLoading, !isCompletingBotChallenge else { return false }
+        guard !sessionStore.isLoading else { return false }
 
         switch currentStep {
         case .email:
@@ -618,7 +616,7 @@ struct SignupFlowView: View {
                                 .frame(maxWidth: .infinity)
                                 .multilineTextAlignment(.center)
 
-                            if sessionStore.isLoading || isCompletingBotChallenge {
+                            if sessionStore.isLoading {
                                 HStack {
                                     Spacer()
 
@@ -642,24 +640,6 @@ struct SignupFlowView: View {
             }
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
-        .overlay(alignment: .topLeading) {
-            if let activeBotChallengeID,
-               let siteKey = BotChallengeConfiguration.turnstileSiteKey,
-               let baseURL = BotChallengeConfiguration.turnstileBaseURL {
-                TurnstileChallengeView(
-                    challengeID: activeBotChallengeID,
-                    siteKey: siteKey,
-                    baseURL: baseURL,
-                    action: "signup",
-                    onToken: completeBotChallenge,
-                    onFailure: failBotChallenge
-                )
-                .frame(width: 1, height: 1)
-                .opacity(0.01)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-        }
         .preferredColorScheme(.light)
         .onAppear {
             sessionStore.notice = nil
@@ -771,7 +751,7 @@ struct SignupFlowView: View {
         }
 
         guard currentIndex < SignupStep.ordered.index(before: SignupStep.ordered.endIndex) else {
-            await submitWithBotChallengeIfNeeded()
+            await submit()
             return
         }
 
@@ -813,38 +793,7 @@ struct SignupFlowView: View {
         }
     }
 
-    private func submitWithBotChallengeIfNeeded() async {
-        guard !isCompletingBotChallenge else { return }
-
-        if BotChallengeConfiguration.isSignupChallengeEnabled {
-            sessionStore.notice = nil
-            isCompletingBotChallenge = true
-            activeBotChallengeID = UUID()
-            return
-        }
-
-        await submit(captchaToken: nil)
-    }
-
-    private func completeBotChallenge(_ token: String) {
-        guard isCompletingBotChallenge else { return }
-
-        activeBotChallengeID = nil
-        Task {
-            await submit(captchaToken: token)
-            isCompletingBotChallenge = false
-        }
-    }
-
-    private func failBotChallenge() {
-        guard isCompletingBotChallenge else { return }
-
-        activeBotChallengeID = nil
-        isCompletingBotChallenge = false
-        sessionStore.notice = "We couldn't verify this signup. Please try again."
-    }
-
-    private func submit(captchaToken: String?) async {
+    private func submit() async {
         guard normalizedEmail.contains("@"),
               isFirstNameValid,
               isUsernameValid,
@@ -858,8 +807,7 @@ struct SignupFlowView: View {
             password: draft.password,
             username: normalizedUsername,
             displayName: normalizedFirstName,
-            avatarConfig: AvatarCatalog.defaultConfig,
-            captchaToken: captchaToken
+            avatarConfig: AvatarCatalog.defaultConfig
         )
 
         showsDuplicateEmailLoginPrompt = sessionStore.notice == AuthServiceError.emailUnavailable.errorDescription

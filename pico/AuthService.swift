@@ -134,8 +134,7 @@ final class AuthService {
         password: String,
         username: String,
         displayName: String,
-        avatarConfig: AvatarConfig,
-        captchaToken: String?
+        avatarConfig: AvatarConfig
     ) async throws -> AuthResult {
         let normalizedEmail = email.normalizedEmail
         let normalizedUsername = username.normalizedUsername
@@ -156,8 +155,7 @@ final class AuthService {
                     "display_name": .string(displayName.normalizedDisplayName),
                     "avatar_config": .object(avatarConfig.supabaseMetadataJSON),
                     "time_zone": .string(TimeZone.current.identifier)
-                ],
-                captchaToken: captchaToken
+                ]
             )
 
             guard let session = response.session else {
@@ -458,10 +456,6 @@ final class AuthService {
 
     private func friendlyMessage(from message: String) -> String {
         let lowercasedMessage = message.lowercased()
-        if lowercasedMessage.contains("captcha") {
-            return "We couldn't verify this signup. Please try again."
-        }
-
         if lowercasedMessage.contains("rate limit")
             || lowercasedMessage.contains("too many")
             || lowercasedMessage.contains("429") {
