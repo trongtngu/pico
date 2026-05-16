@@ -161,6 +161,7 @@ private final class AuthEntryAvatarScene: SKScene {
 
 struct OnboardingSequenceView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let onBackToEntry: () -> Void
     let onSignup: (String) -> Void
@@ -181,6 +182,7 @@ struct OnboardingSequenceView: View {
     @State private var hasTrackedAppleOnboardingCompletion = false
     @State private var hasTrackedGoogleSignupCompletion = false
     @State private var hasTrackedGoogleOnboardingCompletion = false
+    @State private var isPresentingOnboardingPaywall = false
 
     init(
         initialStep: OnboardingStep = OnboardingStep.ordered.first ?? .welcome,
@@ -243,7 +245,9 @@ struct OnboardingSequenceView: View {
     }
 
     private var isPrimaryCTAEnabled: Bool {
-        switch currentStep {
+        guard !isPresentingOnboardingPaywall else { return false }
+
+        return switch currentStep {
         case .displayName:
             (1...40).contains(normalizedDisplayName.count)
         case .focusIntent:
@@ -414,6 +418,12 @@ struct OnboardingSequenceView: View {
             actionName: primaryCTAAnalyticsActionName,
             onboardingVariant: onboardingVariant
         ))
+
+        if currentStep == .focusWithFriends {
+            presentOnboardingCompletePaywall()
+            return
+        }
+
         goForward()
     }
 
@@ -527,6 +537,20 @@ struct OnboardingSequenceView: View {
         }
 
         currentStep = steps[currentIndex + 1]
+    }
+
+    private func presentOnboardingCompletePaywall() {
+        guard !isPresentingOnboardingPaywall else { return }
+
+        isPresentingOnboardingPaywall = true
+        Task { @MainActor in
+            await picoPlusStore.presentPaywall(
+                source: .onboardingComplete(placement: .onboardingComplete),
+                authSession: sessionStore.session
+            )
+            isPresentingOnboardingPaywall = false
+            goForward()
+        }
     }
 
     private func goBack() {

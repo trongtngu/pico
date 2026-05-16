@@ -34,6 +34,7 @@ struct AuthGateView: View {
 }
 
 private struct AuthRootView: View {
+    @StateObject private var picoPlusStore = PicoPlusStore()
     @State private var route: AuthRoute = .entry
     @State private var loginReturnPolicy: AuthReturnPolicy = .route(.entry)
     @State private var signupReturnPolicy: AuthReturnPolicy = .lockedAfterOnboarding
@@ -143,6 +144,7 @@ private struct AuthRootView: View {
             .background(PicoColors.appBackground.ignoresSafeArea())
             .tint(PicoColors.primary)
         }
+        .environmentObject(picoPlusStore)
     }
 }
 

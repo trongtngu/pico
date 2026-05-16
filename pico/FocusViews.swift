@@ -96,6 +96,8 @@ private struct IncomingFocusInvitesView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     var body: some View {
         if !focusStore.incomingInvites.isEmpty || focusStore.isLoadingInvites {
@@ -114,7 +116,12 @@ private struct IncomingFocusInvitesView: View {
                             AvatarBadgeView(
                                 config: invite.host.avatarConfig,
                                 size: 42,
-                                scarf: villageStore.scarf(for: invite.host.userID)
+                                scarf: villageStore.scarf(
+                                    for: invite.host.userID,
+                                    sessionStore: sessionStore,
+                                    bondRewardClaimStore: bondRewardClaimStore,
+                                    picoPlusStore: picoPlusStore
+                                )
                             )
 
                             VStack(alignment: .leading, spacing: 2) {
@@ -330,6 +337,8 @@ private struct InviteFriendsSection: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let availableFriends: [UserProfile]
     let canInvite: Bool
@@ -351,7 +360,12 @@ private struct InviteFriendsSection: View {
                                 AvatarBadgeView(
                                     config: friend.avatarConfig,
                                     size: 36,
-                                    scarf: villageStore.scarf(for: friend.userID)
+                                    scarf: villageStore.scarf(
+                                        for: friend.userID,
+                                        sessionStore: sessionStore,
+                                        bondRewardClaimStore: bondRewardClaimStore,
+                                        picoPlusStore: picoPlusStore
+                                    )
                                 )
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(friend.displayName)
@@ -412,7 +426,10 @@ private struct MultiplayerMembersSection: View {
 }
 
 private struct FocusMemberRow: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let member: FocusSessionMember
 
@@ -421,7 +438,12 @@ private struct FocusMemberRow: View {
             AvatarBadgeView(
                 config: member.profile.avatarConfig,
                 size: 38,
-                scarf: villageStore.scarf(for: member.userID)
+                scarf: villageStore.scarf(
+                    for: member.userID,
+                    sessionStore: sessionStore,
+                    bondRewardClaimStore: bondRewardClaimStore,
+                    picoPlusStore: picoPlusStore
+                )
             )
 
             VStack(alignment: .leading, spacing: 2) {
@@ -669,6 +691,8 @@ struct FocusViews_Previews: PreviewProvider {
                 .environmentObject(FriendStore.preview)
                 .environmentObject(FocusStore.preview)
                 .environmentObject(VillageStore.preview)
+                .environmentObject(BondRewardClaimStore())
+                .environmentObject(PicoPlusStore())
         }
     }
 }

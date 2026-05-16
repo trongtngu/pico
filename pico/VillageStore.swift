@@ -74,12 +74,54 @@ final class VillageStore: ObservableObject {
         residents.removeAll { $0.profile.userID == userID }
     }
 
-    func scarf(for userID: UUID) -> AvatarScarf? {
+    func visibleBondLevel(
+        for resident: VillageResident,
+        ownerID: UUID?,
+        bondRewardClaimStore: BondRewardClaimStore,
+        capabilities: PicoPlusCapabilities
+    ) -> Int {
+        let claimedLevel = bondRewardClaimStore.claimedLevel(
+            ownerID: ownerID,
+            residentID: resident.id
+        )
+        return capabilities.visibleBondRewardLevel(
+            earnedLevel: resident.bondLevel,
+            claimedLevel: claimedLevel
+        )
+    }
+
+    func scarf(
+        for userID: UUID,
+        sessionStore: AuthSessionStore,
+        bondRewardClaimStore: BondRewardClaimStore,
+        picoPlusStore: PicoPlusStore
+    ) -> AvatarScarf? {
+        scarf(
+            for: userID,
+            ownerID: sessionStore.session?.user?.id ?? sessionStore.profile?.userID,
+            bondRewardClaimStore: bondRewardClaimStore,
+            capabilities: picoPlusStore.capabilities
+        )
+    }
+
+    func scarf(
+        for userID: UUID,
+        ownerID: UUID?,
+        bondRewardClaimStore: BondRewardClaimStore,
+        capabilities: PicoPlusCapabilities
+    ) -> AvatarScarf? {
         guard let resident = residents.first(where: { $0.profile.userID == userID }) else {
             return nil
         }
 
-        return AvatarScarf(bondLevel: resident.bondLevel)
+        return AvatarScarf(
+            bondLevel: visibleBondLevel(
+                for: resident,
+                ownerID: ownerID,
+                bondRewardClaimStore: bondRewardClaimStore,
+                capabilities: capabilities
+            )
+        )
     }
 
     #if DEBUG

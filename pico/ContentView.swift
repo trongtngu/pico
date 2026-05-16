@@ -685,6 +685,8 @@ private struct HomePage: View {
     @EnvironmentObject private var berryStore: BerryStore
     @EnvironmentObject private var fishStore: FishStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var islandStore: IslandStore
     let showsMenuButton: Bool
@@ -872,6 +874,26 @@ private struct HomePage: View {
         Calendar.current.startOfDay(for: Date())
     }
 
+    private var currentUserID: UUID? {
+        sessionStore.session?.user?.id ?? sessionStore.profile?.userID
+    }
+
+    private func visibleBondLevel(for resident: VillageResident) -> Int {
+        villageStore.visibleBondLevel(
+            for: resident,
+            ownerID: currentUserID,
+            bondRewardClaimStore: bondRewardClaimStore,
+            capabilities: picoPlusStore.capabilities
+        )
+    }
+
+    private func islandParticipant(for resident: VillageResident) -> IslandParticipant {
+        IslandParticipant(
+            profile: resident.profile,
+            bondLevel: visibleBondLevel(for: resident)
+        )
+    }
+
     private var activeIslandParticipants: [IslandParticipant]? {
         guard let activeSession = focusStore.activeSession,
               activeSession.isLive else {
@@ -880,7 +902,7 @@ private struct HomePage: View {
 
         let bondLevelByUserID = Dictionary(
             villageStore.residents.map { resident in
-                (resident.profile.userID, resident.bondLevel)
+                (resident.profile.userID, visibleBondLevel(for: resident))
             },
             uniquingKeysWith: { current, _ in current }
         )
@@ -913,12 +935,12 @@ private struct HomePage: View {
 
     private var currentIslandParticipants: [IslandParticipant]? {
         guard let currentUserProfile = sessionStore.profile else {
-            return villageStore.residents.map(IslandParticipant.init(resident:))
+            return villageStore.residents.map(islandParticipant(for:))
         }
 
         return [IslandParticipant(profile: currentUserProfile, bondLevel: 0)] + villageStore.residents
             .filter { $0.profile.userID != currentUserProfile.userID }
-            .map(IslandParticipant.init(resident:))
+            .map(islandParticipant(for:))
     }
 
     private var completedResultSession: FocusSession? {
@@ -1785,20 +1807,20 @@ struct BondsContent: View {
             return
         }
 
-        if reward.requiresPicoPlus && !picoPlusStore.isPlusActive {
+        if !picoPlusStore.capabilities.canClaimBondReward(level: reward.level) {
             Task { @MainActor in
                 await picoPlusStore.presentPaywall(
                     source: reward.picoPlusPaywallSource(residentID: resident.id),
                     authSession: sessionStore.session
                 )
 
-                guard picoPlusStore.isPlusActive else { return }
+                guard picoPlusStore.capabilities.canClaimBondReward(level: reward.level) else { return }
                 claimHighestAvailableReward(for: resident, ownerID: currentUserID)
             }
             return
         }
 
-        if picoPlusStore.isPlusActive {
+        if picoPlusStore.capabilities.canClaimAllBondRewards {
             claimHighestAvailableReward(for: resident, ownerID: currentUserID)
             return
         }
@@ -1819,7 +1841,7 @@ struct BondsContent: View {
             return
         }
 
-        guard !reward.requiresPicoPlus || picoPlusStore.isPlusActive else {
+        guard picoPlusStore.capabilities.canClaimBondReward(level: reward.level) else {
             return
         }
 
@@ -1968,12 +1990,15 @@ private struct BondRowView: View {
     }
 
     private var visibleBondLevel: Int {
-        min(claimedLevel, resident.bondLevel)
+        picoPlusStore.capabilities.visibleBondRewardLevel(
+            earnedLevel: resident.bondLevel,
+            claimedLevel: claimedLevel
+        )
     }
 
     private var pendingRewardRequiresPlus: Bool {
         guard let pendingReward else { return false }
-        return pendingReward.requiresPicoPlus && !picoPlusStore.isPlusActive
+        return picoPlusStore.capabilities.bondRewardRequiresPlus(level: pendingReward.level)
     }
 
     private var scarfProgress: BondScarfProgress {
@@ -2071,7 +2096,7 @@ private struct BondRowView: View {
                         size: .pill,
                         source: pendingReward.picoPlusPaywallSource(residentID: resident.id),
                         afterPresentation: {
-                            if picoPlusStore.isPlusActive {
+                            if picoPlusStore.capabilities.canClaimBondReward(level: pendingReward.level) {
                                 onClaim(resident)
                             }
                         }
@@ -2271,7 +2296,7 @@ private struct BondScarfReward: Equatable {
     }
 
     var requiresPicoPlus: Bool {
-        level > PicoPlusEntitlements.freeBondRewardLevel
+        PicoPlusCapabilities.free.bondRewardRequiresPlus(level: level)
     }
 
     func picoPlusPaywallSource(residentID: UUID) -> PicoPlusPaywallSource {
@@ -2571,7 +2596,7 @@ private struct DailySnapshotCalendarScreen: View {
     }
 
     private var selectedDayRequiresPlus: Bool {
-        !picoPlusStore.isPlusActive && isPastDay(selectedDate)
+        !picoPlusStore.capabilities.canAccessDailySnapshot(isPastDay: isPastDay(selectedDate))
     }
 
     var body: some View {
@@ -2617,8 +2642,8 @@ private struct DailySnapshotCalendarScreen: View {
         .onChange(of: displayedMonth) {
             loadDisplayedMonthActivityIfNeeded(for: displayedMonth)
         }
-        .onChange(of: picoPlusStore.isPlusActive) {
-            guard picoPlusStore.isPlusActive else { return }
+        .onChange(of: picoPlusStore.capabilities) {
+            guard picoPlusStore.capabilities.canAccessHistoricalDailySnapshots else { return }
             loadSelectedSnapshotIfNeeded(for: selectedDate)
         }
     }
@@ -2839,7 +2864,7 @@ private struct DailySnapshotCalendarScreen: View {
 
     private func loadSelectedSnapshotIfNeeded(for date: Date) {
         let day = DailySnapshotDay(date: date, calendar: calendar)
-        guard picoPlusStore.isPlusActive || !isPastDay(date) else {
+        guard picoPlusStore.capabilities.canAccessDailySnapshot(isPastDay: isPastDay(date)) else {
             loadState = .loaded
             notice = nil
             return
@@ -2883,7 +2908,7 @@ private struct DailySnapshotCalendarScreen: View {
     }
 
     private func loadSelectedSnapshotAfterPlusUnlock() {
-        if picoPlusStore.isPlusActive {
+        if picoPlusStore.capabilities.canAccessDailySnapshot(isPastDay: isPastDay(selectedDate)) {
             loadSelectedSnapshotIfNeeded(for: selectedDate)
         }
     }
@@ -4077,6 +4102,8 @@ private struct IncomingFocusInviteSheetRow: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var focusStore: FocusStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let invite: FocusSessionInvite
     private let avatarColumnSize: CGFloat = 42
@@ -4094,7 +4121,7 @@ private struct IncomingFocusInviteSheetRow: View {
                 AvatarBadgeView(
                     config: invite.host.avatarConfig,
                     size: avatarSize,
-                    scarf: villageStore.scarf(for: invite.host.userID)
+                    scarf: scarf(for: invite.host.userID)
                 )
                     .frame(width: avatarColumnSize, height: avatarColumnSize, alignment: .center)
 
@@ -4150,6 +4177,19 @@ private struct IncomingFocusInviteSheetRow: View {
                 .disabled(focusStore.activeInviteID != nil)
             }
         }
+    }
+
+    private var currentUserID: UUID? {
+        sessionStore.session?.user?.id ?? sessionStore.profile?.userID
+    }
+
+    private func scarf(for userID: UUID) -> AvatarScarf? {
+        villageStore.scarf(
+            for: userID,
+            ownerID: currentUserID,
+            bondRewardClaimStore: bondRewardClaimStore,
+            capabilities: picoPlusStore.capabilities
+        )
     }
 }
 
@@ -4750,22 +4790,21 @@ private struct MultiplayerInviteFriendsSheetContent: View {
     }
 
     private var remainingInviteSlots: Int {
-        guard let multiplayerMemberLimit = picoPlusStore.capabilities.multiplayerMemberLimit else {
-            return Int.max
-        }
-
-        return max(0, multiplayerMemberLimit - currentMemberCount)
+        picoPlusStore.capabilities.remainingMultiplayerInviteSlots(currentMemberCount: currentMemberCount)
     }
 
     private var shouldShowGroupLimitNotice: Bool {
-        !picoPlusStore.isPlusActive && selectedFriendIDs.count >= remainingInviteSlots
+        picoPlusStore.capabilities.selectedInvitesReachMultiplayerLimit(
+            currentMemberCount: currentMemberCount,
+            selectedInviteCount: selectedFriendIDs.count
+        )
     }
 
     private var largeGroupPaywallSource: PicoPlusPaywallSource {
         .largeGroupSession(
             currentMembers: currentMemberCount,
             selectedInvites: selectedFriendIDs.count,
-            limit: PicoPlusEntitlements.freeMultiplayerMemberLimit,
+            limit: picoPlusStore.capabilities.freeMultiplayerMemberLimit,
             placement: .largeGroupSession
         )
     }
@@ -4818,7 +4857,10 @@ private struct MultiplayerInviteFriendsSheetContent: View {
 }
 
 private struct FriendInviteSelectionRow: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let friend: UserProfile
     let isSelected: Bool
@@ -4830,7 +4872,7 @@ private struct FriendInviteSelectionRow: View {
                 AvatarBadgeView(
                     config: friend.avatarConfig,
                     size: 40,
-                    scarf: villageStore.scarf(for: friend.userID)
+                    scarf: scarf(for: friend.userID)
                 )
 
                 VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
@@ -4859,6 +4901,20 @@ private struct FriendInviteSelectionRow: View {
         }
         .buttonStyle(.plain)
     }
+
+    private var currentUserID: UUID? {
+        sessionStore.session?.user?.id ?? sessionStore.profile?.userID
+    }
+
+    private func scarf(for userID: UUID) -> AvatarScarf? {
+        villageStore.scarf(
+            for: userID,
+            ownerID: currentUserID,
+            bondRewardClaimStore: bondRewardClaimStore,
+            capabilities: picoPlusStore.capabilities
+        )
+    }
+
 }
 
 private struct PicoPlusGroupLimitNotice: View {
@@ -5401,7 +5457,10 @@ private struct FocusCompleteCard: View {
 }
 
 private struct FocusFailedMemberAvatar: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let member: FocusSessionMember
 
@@ -5410,7 +5469,7 @@ private struct FocusFailedMemberAvatar: View {
             config: member.profile.avatarConfig,
             maxSpriteSide: FocusCompleteAvatarLayout.spriteSide,
             usesHappyIdle: false,
-            scarf: villageStore.scarf(for: member.userID)
+            scarf: scarf(for: member.userID)
         )
         .frame(
             width: FocusCompleteAvatarLayout.avatarWidth,
@@ -5418,6 +5477,19 @@ private struct FocusFailedMemberAvatar: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(member.profile.displayName))
+    }
+
+    private var currentUserID: UUID? {
+        sessionStore.session?.user?.id ?? sessionStore.profile?.userID
+    }
+
+    private func scarf(for userID: UUID) -> AvatarScarf? {
+        villageStore.scarf(
+            for: userID,
+            ownerID: currentUserID,
+            bondRewardClaimStore: bondRewardClaimStore,
+            capabilities: picoPlusStore.capabilities
+        )
     }
 }
 
@@ -5478,7 +5550,10 @@ private struct FocusCompleteGroupCelebrationView: View {
 }
 
 private struct FocusCompleteGroupMemberPill: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let member: FocusSessionMember
     let isNewPeer: Bool
@@ -5490,7 +5565,7 @@ private struct FocusCompleteGroupMemberPill: View {
                     config: member.profile.avatarConfig,
                     maxSpriteSide: FocusCompleteAvatarLayout.spriteSide,
                     usesHappyIdle: true,
-                    scarf: villageStore.scarf(for: member.userID)
+                    scarf: scarf(for: member.userID)
                 )
                 .frame(
                     width: FocusCompleteAvatarLayout.avatarWidth,
@@ -5523,6 +5598,19 @@ private struct FocusCompleteGroupMemberPill: View {
         .frame(width: FocusCompleteAvatarLayout.avatarWidth)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(isNewPeer ? "\(member.profile.displayName), new" : member.profile.displayName))
+    }
+
+    private var currentUserID: UUID? {
+        sessionStore.session?.user?.id ?? sessionStore.profile?.userID
+    }
+
+    private func scarf(for userID: UUID) -> AvatarScarf? {
+        villageStore.scarf(
+            for: userID,
+            ownerID: currentUserID,
+            bondRewardClaimStore: bondRewardClaimStore,
+            capabilities: picoPlusStore.capabilities
+        )
     }
 }
 
@@ -5693,7 +5781,10 @@ private struct FocusCompleteMetric: View {
 }
 
 private struct FocusMemberStatusRow: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let member: FocusSessionMember
 
@@ -5702,7 +5793,7 @@ private struct FocusMemberStatusRow: View {
             AvatarBadgeView(
                 config: member.profile.avatarConfig,
                 size: 40,
-                scarf: villageStore.scarf(for: member.userID)
+                scarf: scarf(for: member.userID)
             )
 
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
@@ -5730,6 +5821,19 @@ private struct FocusMemberStatusRow: View {
                 .foregroundStyle(homeMemberStatusColor(member))
         }
         .picoCreamCard(showsShadow: false, padding: PicoCreamCardStyle.sheetCardPadding)
+    }
+
+    private var currentUserID: UUID? {
+        sessionStore.session?.user?.id ?? sessionStore.profile?.userID
+    }
+
+    private func scarf(for userID: UUID) -> AvatarScarf? {
+        villageStore.scarf(
+            for: userID,
+            ownerID: currentUserID,
+            bondRewardClaimStore: bondRewardClaimStore,
+            capabilities: picoPlusStore.capabilities
+        )
     }
 }
 
@@ -6964,7 +7068,7 @@ private struct StorePage: View {
             from: fishStore.inventory,
             catalog: fishStore.fishCatalog,
             inventoryCounts: fishStore.inventoryCounts,
-            saleMultiplier: picoPlusStore.isPlusActive ? PicoPlusEntitlements.fishSaleBerryMultiplier : 1
+            saleMultiplier: picoPlusStore.capabilities.fishSaleBerryMultiplier
         )
     }
 
@@ -7023,7 +7127,7 @@ private struct StorePage: View {
                 berryBalance: berryStore.balance.berries,
                 ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
                 purchasingStoreItemID: berryStore.purchasingStoreItemID,
-                isPlusActive: picoPlusStore.isPlusActive,
+                capabilities: picoPlusStore.capabilities,
                 isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
                     || berryStore.isLoadingBalance
                     || berryStore.isLoadingStoreCatalog
@@ -7057,7 +7161,7 @@ private struct StorePage: View {
                 berryBalance: berryStore.balance.berries,
                 ownedStoreItemIDs: sessionStore.ownedStoreItemIDs,
                 purchasingStoreItemID: berryStore.purchasingStoreItemID,
-                isPlusActive: picoPlusStore.isPlusActive,
+                capabilities: picoPlusStore.capabilities,
                 isPurchaseDisabled: berryStore.purchasingStoreItemID != nil
                     || berryStore.isLoadingBalance
                     || berryStore.isLoadingStoreCatalog
@@ -7869,7 +7973,7 @@ private struct StoreIslandPreviewOverlay: View {
     let berryBalance: Int
     let ownedStoreItemIDs: Set<String>
     let purchasingStoreItemID: String?
-    let isPlusActive: Bool
+    let capabilities: PicoPlusCapabilities
     let isPurchaseDisabled: Bool
     let currentUserProfile: UserProfile?
     let catalog: [FishCatalogItem]
@@ -7941,7 +8045,7 @@ private struct StoreIslandPreviewOverlay: View {
                             berryBalance: berryBalance,
                             ownedStoreItemIDs: ownedStoreItemIDs,
                             purchasingStoreItemID: purchasingStoreItemID,
-                            isPlusActive: isPlusActive,
+                            capabilities: capabilities,
                             isPurchaseDisabled: isPurchaseDisabled,
                             purchase: purchase,
                             close: close
@@ -7977,7 +8081,7 @@ private struct StoreIslandPreviewPurchaseFooter: View {
     let berryBalance: Int
     let ownedStoreItemIDs: Set<String>
     let purchasingStoreItemID: String?
-    let isPlusActive: Bool
+    let capabilities: PicoPlusCapabilities
     let isPurchaseDisabled: Bool
     let purchase: (StoreItem) -> Void
     let close: () -> Void
@@ -7991,7 +8095,7 @@ private struct StoreIslandPreviewPurchaseFooter: View {
     }
 
     private var canPurchase: Bool {
-        !isOwned && (!item.isPaidOnly || isPlusActive) && missingBerries == 0 && !isPurchaseDisabled
+        !isOwned && capabilities.canPurchaseStoreItem(item) && missingBerries == 0 && !isPurchaseDisabled
     }
 
     private var isPurchasing: Bool {
@@ -8025,7 +8129,7 @@ private struct StoreIslandPreviewPurchaseFooter: View {
             }
             .foregroundStyle(PicoColors.primary.opacity(0.78))
             .frame(maxWidth: .infinity, minHeight: 52)
-        } else if item.isPaidOnly && !isPlusActive {
+        } else if !capabilities.canPurchaseStoreItem(item) {
             plusControl
         } else {
             Button {
@@ -8248,7 +8352,7 @@ private struct StoreHatPreviewOverlay: View {
     let berryBalance: Int
     let ownedStoreItemIDs: Set<String>
     let purchasingStoreItemID: String?
-    let isPlusActive: Bool
+    let capabilities: PicoPlusCapabilities
     let isPurchaseDisabled: Bool
     let currentUserProfile: UserProfile?
     let close: () -> Void
@@ -8264,7 +8368,7 @@ private struct StoreHatPreviewOverlay: View {
         berryBalance: Int,
         ownedStoreItemIDs: Set<String>,
         purchasingStoreItemID: String?,
-        isPlusActive: Bool,
+        capabilities: PicoPlusCapabilities,
         isPurchaseDisabled: Bool,
         currentUserProfile: UserProfile?,
         close: @escaping () -> Void,
@@ -8274,7 +8378,7 @@ private struct StoreHatPreviewOverlay: View {
         self.berryBalance = berryBalance
         self.ownedStoreItemIDs = ownedStoreItemIDs
         self.purchasingStoreItemID = purchasingStoreItemID
-        self.isPlusActive = isPlusActive
+        self.capabilities = capabilities
         self.isPurchaseDisabled = isPurchaseDisabled
         self.currentUserProfile = currentUserProfile
         self.close = close
@@ -8307,7 +8411,7 @@ private struct StoreHatPreviewOverlay: View {
     }
 
     private var canPurchase: Bool {
-        !isOwned && (!currentItem.isPaidOnly || isPlusActive) && missingBerries == 0 && !isPurchaseDisabled
+        !isOwned && capabilities.canPurchaseStoreItem(currentItem) && missingBerries == 0 && !isPurchaseDisabled
     }
 
     private var isPurchasing: Bool {
@@ -8406,7 +8510,7 @@ private struct StoreHatPreviewOverlay: View {
             }
             .foregroundStyle(PicoColors.primary.opacity(0.78))
             .frame(maxWidth: .infinity, minHeight: 52)
-        } else if currentItem.isPaidOnly && !isPlusActive {
+        } else if !capabilities.canPurchaseStoreItem(currentItem) {
             plusControl
         } else {
             Button {
@@ -8709,7 +8813,7 @@ private struct ProfilePage: View {
                 authSession: sessionStore.session
             )
 
-            if picoPlusStore.isPlusActive {
+            if picoPlusStore.capabilities.canPurchasePaidOnlyStoreItems {
                 openStore()
             }
         }

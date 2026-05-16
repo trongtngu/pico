@@ -271,6 +271,7 @@ private struct FriendProfilePage: View {
     @EnvironmentObject private var friendStore: FriendStore
     @EnvironmentObject private var villageStore: VillageStore
     @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
     @State private var isConfirmingUnfriend = false
 
     let profile: UserProfile
@@ -286,7 +287,12 @@ private struct FriendProfilePage: View {
                     AvatarBadgeView(
                         config: profile.avatarConfig,
                         size: 112,
-                        scarf: villageStore.scarf(for: profile.userID)
+                        scarf: villageStore.scarf(
+                            for: profile.userID,
+                            sessionStore: sessionStore,
+                            bondRewardClaimStore: bondRewardClaimStore,
+                            picoPlusStore: picoPlusStore
+                        )
                     )
 
                     VStack(spacing: PicoSpacing.tiny) {
@@ -353,7 +359,10 @@ private struct FriendProfilePage: View {
 }
 
 private struct FriendProfileRowView: View {
+    @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var villageStore: VillageStore
+    @EnvironmentObject private var bondRewardClaimStore: BondRewardClaimStore
+    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let profile: UserProfile
 
@@ -362,7 +371,12 @@ private struct FriendProfileRowView: View {
             AvatarBadgeView(
                 config: profile.avatarConfig,
                 size: 48,
-                scarf: villageStore.scarf(for: profile.userID)
+                scarf: villageStore.scarf(
+                    for: profile.userID,
+                    sessionStore: sessionStore,
+                    bondRewardClaimStore: bondRewardClaimStore,
+                    picoPlusStore: picoPlusStore
+                )
             )
 
             VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
@@ -802,6 +816,7 @@ struct FriendViews_Previews: PreviewProvider {
                 .environmentObject(FriendStore.preview)
                 .environmentObject(VillageStore.preview)
                 .environmentObject(BondRewardClaimStore())
+                .environmentObject(PicoPlusStore())
         }
     }
 }

@@ -75,6 +75,8 @@ final class PicoPlusStore: ObservableObject {
 
     private func trackGateHit(for source: PicoPlusPaywallSource) {
         switch source {
+        case .onboardingComplete:
+            AnalyticsService.track(.picoPlusOnboardingGateHit())
         case .calendarView:
             AnalyticsService.track(.picoPlusCalendarGateHit())
         case .bondReward(let residentID, let bondLevel, _):

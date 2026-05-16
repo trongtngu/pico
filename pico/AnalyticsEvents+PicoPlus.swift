@@ -80,6 +80,13 @@ extension AnalyticsEvent {
         )
     }
 
+    static func picoPlusOnboardingGateHit() -> AnalyticsEvent {
+        AnalyticsEvent(
+            name: "pico_plus_onboarding_gate_hit",
+            parameters: [:]
+        )
+    }
+
     static func picoPlusBondRewardGateHit(residentID: String, bondLevel: Int) -> AnalyticsEvent {
         AnalyticsEvent(
             name: "pico_plus_bond_gate_hit",

@@ -9,7 +9,7 @@ This document summarizes the codebase from direct inspection. Paths are cited wi
 - Auth gating is centralized in `AuthGateView`: it owns a `@StateObject AuthSessionStore`, restores the session in a `.task`, shows a loading screen during restore, routes signed-out users to auth/onboarding, and routes signed-in users to `AppShellView` (`pico/AuthViews.swift:12`, `pico/AuthViews.swift:16`, `pico/AuthViews.swift:30`).
 - `AppShellView` is the main composition root after login. It owns app-wide stores as `@StateObject`s and injects them as environment objects: `FriendStore`, `FocusStore`, `VillageStore`, `BondRewardClaimStore`, `BerryStore`, `FishStore`, and `IslandStore` (`pico/ContentView.swift:22`, `pico/ContentView.swift:28`, `pico/ContentView.swift:87`).
 - The architecture is mostly “view + store + service” rather than folderized modules. Most Swift files live directly under `pico/`; `ContentView.swift` is very large and contains Home, Bonds, Fishing, Store, Profile, daily snapshot, and focus-sheet UI (`pico/ContentView.swift` is 9,127 lines per `wc -l`).
-- Swift Package dependencies include Supabase, FirebaseAnalytics, GoogleSignIn, and SuperwallKit in the Xcode project (`pico.xcodeproj/project.pbxproj:134`, `pico.xcodeproj/project.pbxproj:436`). SuperwallKit is referenced as a package, but no app source usage was found in the inspected Swift files. Unclear whether it is planned or stale.
+- Swift Package dependencies include Supabase, FirebaseAnalytics, GoogleSignIn, and SuperwallKit in the Xcode project (`pico.xcodeproj/project.pbxproj:134`, `pico.xcodeproj/project.pbxproj:436`). Superwall paywall access is centralized through `PicoPlusService` and `PicoPlusStore`.
 
 ## Main Feature Modules And Locations
 
@@ -46,11 +46,12 @@ This document summarizes the codebase from direct inspection. Paths are cited wi
   - `pico/BerryStore.swift` owns berry balance, store catalog, inventory, and purchase state (`pico/BerryStore.swift:12`).
   - `pico/BerryService.swift` calls RPC endpoints for berries, store catalog, inventory, and purchase (`pico/BerryService.swift:100`, `pico/BerryService.swift:111`, `pico/BerryService.swift:129`, `pico/BerryService.swift:140`).
 - Pico Plus:
-  - `pico/PicoPlusStore.swift` owns server-backed entitlement state and exposes simple capabilities such as active Plus status and the free multiplayer member limit. Active Plus removes the multiplayer group-size cap.
+  - `pico/PicoPlusStore.swift` owns server-backed entitlement state and exposes a `PicoPlusCapabilities` value for feature checks such as historical snapshots, bond rewards, group invite limits, paid-only store item purchases, and fish sale multiplier. Feature views should prefer capability methods/properties over raw Plus-status checks. Active Plus removes the multiplayer group-size cap.
   - `pico/PicoPlusService.swift` wraps entitlement fetches and Superwall paywall presentation.
   - Paywall presentation is centralized through `PicoPlusStore.presentPaywall(source:authSession:)`; feature views should pass a `PicoPlusPaywallSource` with an explicit `PicoPlusPlacement` rather than calling Superwall placements directly. The shared CTA is `PicoPlusCTAButton` in `pico/PicoPlusPaywallView.swift`.
   - Active Plus unlocks the ability to purchase Plus-exclusive cosmetics with berries through the regular `purchase_store_item` path. Purchased cosmetics remain usable after subscription expiration, and profile hat ownership continues to flow through `AuthSessionStore.ownedStoreItemIDs`.
-  - Active Plus also gives a 3x fish sale berry multiplier. The store UI mirrors `PicoPlusEntitlements.fishSaleBerryMultiplier`, but `sell_user_fish` is authoritative and computes the credited amount from `public.user_has_pico_plus(auth.uid())` at sale time.
+  - Active Plus also gives a 3x fish sale berry multiplier. The store UI reads `PicoPlusCapabilities.fishSaleBerryMultiplier`, but `sell_user_fish` is authoritative and computes the credited amount from `public.user_has_pico_plus(auth.uid())` at sale time.
+  - Bond scarf rendering must use claimed reward level plus `PicoPlusCapabilities.visibleBondRewardLevel(...)`, not raw `VillageResident.bondLevel`. Free users should never render bond scarf rewards above the free level even if the underlying bond level is higher or stale local claims exist.
 - Avatar/assets:
   - `pico/AvatarCatalog.swift` defines `AvatarConfig`, hats, scarves, SpriteKit layering, avatar badge, and picker (`pico/AvatarCatalog.swift:12`, `pico/AvatarCatalog.swift:78`, `pico/AvatarCatalog.swift:154`, `pico/AvatarCatalog.swift:496`, `pico/AvatarCatalog.swift:646`).
   - Sprite atlases live under `pico/Atlases/`; icons live under `pico/Assets.xcassets/` and `pico/Icons/`.
