@@ -19,7 +19,7 @@ struct PicoAuthDivider: View {
                 .fill(PicoColors.border)
                 .frame(height: 1)
 
-            Text("or sign in with")
+            Text("or")
                 .font(PicoTypography.captionSemibold)
                 .foregroundStyle(PicoColors.textSecondary)
                 .lineLimit(1)
@@ -147,7 +147,7 @@ struct PicoAppleSignInButton: View {
                     .font(.system(size: 22, weight: .semibold))
                     .frame(width: 24, height: 24)
 
-                Text("Apple")
+                Text("Sign in with Apple")
                     .font(PicoTypography.button)
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -161,6 +161,6 @@ struct PicoAppleSignInButton: View {
         }
         .disabled(isLoading)
         .opacity(isLoading ? 0.62 : 1)
-        .accessibilityLabel(Text("Apple"))
+        .accessibilityLabel(Text("Sign in with Apple"))
     }
 }

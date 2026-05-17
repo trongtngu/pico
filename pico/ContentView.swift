@@ -267,96 +267,89 @@ private struct ProfileCompletionView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
     let profile: UserProfile
 
-    @State private var username = ""
+    @State private var currentStep: ProfileCompletionStep = .displayName
     @State private var displayName = ""
+    @State private var username = ""
 
-    private var normalizedUsername: String {
-        username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    private var currentIndex: Int {
+        ProfileCompletionStep.ordered.firstIndex(of: currentStep) ?? 0
     }
 
     private var normalizedDisplayName: String {
         displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var canSubmit: Bool {
-        normalizedUsername.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) != nil
-            && !normalizedUsername.isGeneratedOAuthUsername
-            && (1...40).contains(normalizedDisplayName.count)
-            && !sessionStore.isProfileSaving
+    private var normalizedUsername: String {
+        username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var isDisplayNameValid: Bool {
+        (1...40).contains(normalizedDisplayName.count)
+    }
+
+    private var isUsernameValid: Bool {
+        PicoUsernameRules.isValidUserChosenUsername(normalizedUsername)
+    }
+
+    private var canContinue: Bool {
+        guard !sessionStore.isLoading,
+              !sessionStore.isProfileSaving
+        else {
+            return false
+        }
+
+        switch currentStep {
+        case .displayName:
+            return isDisplayNameValid
+        case .username:
+            return isUsernameValid
+        }
     }
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView {
+            VStack(spacing: 0) {
+                SignupProgressHeader(
+                    currentIndex: currentIndex,
+                    totalCount: ProfileCompletionStep.ordered.count,
+                    showsBackButton: true,
+                    onBack: goBack,
+                    backAccessibilityLabel: "Sign out",
+                    topInset: proxy.safeAreaInsets.top
+                )
+
                 VStack(spacing: PicoSpacing.section) {
                     VStack(spacing: PicoSpacing.compact) {
-                        Text("Finish your profile")
+                        Text(currentStep.title)
                             .font(PicoTypography.sectionTitle)
                             .foregroundStyle(PicoColors.textPrimary)
                             .multilineTextAlignment(.center)
 
-                        Text("Choose how friends will find you.")
-                            .font(PicoTypography.body)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .multilineTextAlignment(.center)
-                    }
-
-                    VStack(spacing: PicoSpacing.standard) {
-                        AuthCompletionFieldSection(
-                            title: "Username",
-                            subtitle: "This cannot be changed later",
-                            subtitleIconName: "exclamationmark.triangle.fill",
-                            subtitleIconColor: PicoColors.warning
-                        ) {
-                            TextField(
-                                "",
-                                text: $username,
-                                prompt: Text("Username").foregroundStyle(PicoColors.textMuted)
-                            )
-                            .textInputAutocapitalization(.never)
-                            .textContentType(.username)
-                            .autocorrectionDisabled()
-                            .foregroundStyle(PicoColors.textPrimary)
-                            .authCompletionFieldStyle()
-                            .onChange(of: username) {
-                                username = normalizedUsername
-                                sessionStore.notice = nil
-                                sessionStore.clearProfileNotice()
-                            }
-                        }
-
-                        AuthCompletionFieldSection(
-                            title: "Display name",
-                            subtitle: "You can change this later"
-                        ) {
-                            TextField(
-                                "",
-                                text: $displayName,
-                                prompt: Text("Display name").foregroundStyle(PicoColors.textMuted)
-                            )
-                            .textContentType(.name)
-                            .autocorrectionDisabled()
-                            .foregroundStyle(PicoColors.textPrimary)
-                            .authCompletionFieldStyle()
-                            .onChange(of: displayName) {
-                                sessionStore.notice = nil
-                                sessionStore.clearProfileNotice()
-                            }
+                        if let subtitle = currentStep.subtitle {
+                            Text(subtitle)
+                                .font(PicoTypography.body)
+                                .foregroundStyle(PicoColors.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 
-                    if let profileNotice = sessionStore.profileNotice {
-                        ProfileNoticeCard(text: profileNotice)
+                    completionField
+
+                    if let completionNotice {
+                        ProfileNoticeCard(text: completionNotice)
                     }
 
                     Button {
-                        save()
+                        Task {
+                            await handlePrimaryAction()
+                        }
                     } label: {
                         ZStack {
                             Text("Continue")
                                 .frame(maxWidth: .infinity)
 
-                            if sessionStore.isProfileSaving {
+                            if sessionStore.isLoading || sessionStore.isProfileSaving {
                                 HStack {
                                     Spacer()
                                     ProgressView()
@@ -366,25 +359,17 @@ private struct ProfileCompletionView: View {
                         }
                     }
                     .buttonStyle(PicoPrimaryButtonStyle())
-                    .disabled(!canSubmit)
-                    .opacity(canSubmit ? 1 : 0.62)
+                    .disabled(!canContinue)
+                    .opacity(canContinue ? 1 : 0.62)
 
-                    Button {
-                        sessionStore.signOut()
-                    } label: {
-                        Text("Cancel")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(PicoSecondaryButtonStyle())
-                    .disabled(sessionStore.isProfileSaving)
+                    Spacer(minLength: PicoSpacing.largeSection)
                 }
                 .frame(maxWidth: 520)
                 .padding(.horizontal, PicoSpacing.standard)
-                .padding(.vertical, PicoSpacing.largeSection)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: proxy.size.height, alignment: .center)
+                .padding(.top, PicoSpacing.section)
+                .padding(.bottom, max(PicoSpacing.section, proxy.safeAreaInsets.bottom + PicoSpacing.standard))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .scrollIndicators(.hidden)
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
         .onAppear(perform: syncDrafts)
@@ -393,15 +378,92 @@ private struct ProfileCompletionView: View {
         }
     }
 
-    private func syncDrafts() {
-        username = profile.requiresProfileCompletion ? "" : profile.username
-        displayName = profile.displayName == "Pico" || profile.displayName.hasPrefix("pico_") ? "" : profile.displayName
+    @ViewBuilder
+    private var completionField: some View {
+        switch currentStep {
+        case .displayName:
+            TextField(
+                "",
+                text: $displayName,
+                prompt: Text("Display name").foregroundStyle(PicoColors.textMuted)
+            )
+            .textContentType(.name)
+            .submitLabel(.continue)
+            .autocorrectionDisabled()
+            .foregroundStyle(PicoColors.textPrimary)
+            .authFieldStyle()
+            .onSubmit {
+                guard canContinue else { return }
+
+                Task {
+                    await handlePrimaryAction()
+                }
+            }
+            .onChange(of: displayName) {
+                sessionStore.notice = nil
+                sessionStore.clearProfileNotice()
+            }
+        case .username:
+            TextField(
+                "",
+                text: $username,
+                prompt: Text("Username").foregroundStyle(PicoColors.textMuted)
+            )
+            .textInputAutocapitalization(.never)
+            .textContentType(.username)
+            .submitLabel(.continue)
+            .autocorrectionDisabled()
+            .foregroundStyle(PicoColors.textPrimary)
+            .authFieldStyle()
+            .onSubmit {
+                guard canContinue else { return }
+
+                Task {
+                    await handlePrimaryAction()
+                }
+            }
+            .onChange(of: username) {
+                username = normalizedUsername
+                sessionStore.notice = nil
+                sessionStore.clearProfileNotice()
+            }
+        }
     }
 
-    private func save() {
-        Task {
+    private var completionNotice: String? {
+        sessionStore.profileNotice ?? sessionStore.notice
+    }
+
+    private func syncDrafts() {
+        guard profile.requiresProfileCompletion else { return }
+
+        currentStep = .displayName
+        displayName = ""
+        username = ""
+        sessionStore.notice = nil
+        sessionStore.clearProfileNotice()
+    }
+
+    private func goBack() {
+        sessionStore.signOut()
+    }
+
+    private func handlePrimaryAction() async {
+        guard canContinue else { return }
+
+        switch currentStep {
+        case .displayName:
+            currentStep = .username
+        case .username:
+            let username = normalizedUsername
+            guard await sessionStore.validateUsernameAvailability(username),
+                  username == normalizedUsername
+            else {
+                return
+            }
+
             await sessionStore.updateProfile(
-                username: normalizedUsername,
+                username: username,
                 displayName: normalizedDisplayName,
                 avatarConfig: profile.avatarConfig
             )
@@ -409,101 +471,39 @@ private struct ProfileCompletionView: View {
     }
 }
 
-private struct AuthCompletionFieldSection<Content: View>: View {
-    let title: String
-    let subtitle: String
-    let subtitleIconName: String?
-    let subtitleIconColor: Color
-    private let content: Content
+private enum ProfileCompletionStep: String, CaseIterable, Identifiable {
+    case displayName
+    case username
 
-    init(
-        title: String,
-        subtitle: String,
-        subtitleIconName: String? = nil,
-        subtitleIconColor: Color = PicoColors.textSecondary,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.title = title
-        self.subtitle = subtitle
-        self.subtitleIconName = subtitleIconName
-        self.subtitleIconColor = subtitleIconColor
-        self.content = content()
-    }
+    static let ordered: [ProfileCompletionStep] = [
+        .displayName,
+        .username
+    ]
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: PicoSpacing.iconTextGap) {
-            VStack(alignment: .leading, spacing: PicoSpacing.compact) {
-                Text(title)
-                    .font(PicoTypography.primaryLabel)
-                    .foregroundStyle(PicoColors.textPrimary)
+    var id: String { rawValue }
 
-                HStack(alignment: .firstTextBaseline, spacing: PicoSpacing.compact) {
-                    if let subtitleIconName {
-                        Image(systemName: subtitleIconName)
-                            .font(PicoTypography.compactCaption)
-                            .foregroundStyle(subtitleIconColor)
-                            .accessibilityLabel(Text("Important"))
-                    }
-
-                    Text(subtitle)
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textSecondary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            content
+    var title: String {
+        switch self {
+        case .displayName:
+            "What's your first name?"
+        case .username:
+            "Choose a username"
         }
-        .padding(PicoSpacing.cardPadding)
-        .background(
-            RoundedRectangle(cornerRadius: PicoRadius.large, style: .continuous)
-                .fill(PicoColors.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: PicoRadius.large, style: .continuous)
-                .stroke(PicoColors.border, lineWidth: 1)
-        )
-        .shadow(
-            color: PicoShadow.raisedCardColor,
-            radius: PicoShadow.raisedCardRadius,
-            x: PicoShadow.raisedCardX,
-            y: PicoShadow.raisedCardY
-        )
     }
-}
 
-private struct AuthCompletionFieldStyle: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .font(PicoTypography.body)
-            .padding(.horizontal, PicoSpacing.standard)
-            .frame(minHeight: 52)
-            .background(
-                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                    .fill(PicoColors.softSurface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                    .stroke(PicoColors.border.opacity(0.72), lineWidth: 1)
-            )
-    }
-}
-
-private extension View {
-    func authCompletionFieldStyle() -> some View {
-        modifier(AuthCompletionFieldStyle())
+    var subtitle: String? {
+        switch self {
+        case .displayName:
+            nil
+        case .username:
+            "This is how friends will find you"
+        }
     }
 }
 
 private extension UserProfile {
     var requiresProfileCompletion: Bool {
-        username.isGeneratedOAuthUsername
-    }
-}
-
-private extension String {
-    var isGeneratedOAuthUsername: Bool {
-        range(of: "^pico_[0-9a-f]{19}$", options: .regularExpression) != nil
+        profileCompletedAt == nil || PicoUsernameRules.isGeneratedOAuthUsername(username)
     }
 }
 

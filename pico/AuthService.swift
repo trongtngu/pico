@@ -71,6 +71,21 @@ struct UserProfile: Equatable {
     let username: String
     let displayName: String
     let avatarConfig: AvatarConfig
+    let profileCompletedAt: String?
+
+    init(
+        userID: UUID,
+        username: String,
+        displayName: String,
+        avatarConfig: AvatarConfig,
+        profileCompletedAt: String? = nil
+    ) {
+        self.userID = userID
+        self.username = username
+        self.displayName = displayName
+        self.avatarConfig = avatarConfig
+        self.profileCompletedAt = profileCompletedAt
+    }
 }
 
 enum AuthServiceError: LocalizedError {
@@ -286,7 +301,7 @@ final class AuthService {
         }
 
         let response: [UserProfileResponse] = try await send(
-            path: "/rest/v1/user_profiles?select=user_id,username,display_name,avatar_config&user_id=eq.\(userID.uuidString)&limit=1",
+            path: "/rest/v1/user_profiles?select=user_id,username,display_name,avatar_config,profile_completed_at&user_id=eq.\(userID.uuidString)&limit=1",
             method: "GET",
             accessToken: authSession.accessToken
         )
@@ -320,7 +335,7 @@ final class AuthService {
         }
 
         let response: [UserProfileResponse] = try await send(
-            path: "/rest/v1/user_profiles?select=user_id,username,display_name,avatar_config&user_id=eq.\(userID.uuidString)",
+            path: "/rest/v1/user_profiles?select=user_id,username,display_name,avatar_config,profile_completed_at&user_id=eq.\(userID.uuidString)",
             method: "PATCH",
             body: UserProfileUpdate(
                 username: username.normalizedUsername,
@@ -564,13 +579,15 @@ private struct UserProfileResponse: Decodable {
     let username: String
     let displayName: String
     let avatarConfig: AvatarConfig
+    let profileCompletedAt: String?
 
     var userProfile: UserProfile {
         UserProfile(
             userID: userId,
             username: username,
             displayName: displayName,
-            avatarConfig: avatarConfig
+            avatarConfig: avatarConfig,
+            profileCompletedAt: profileCompletedAt
         )
     }
 }

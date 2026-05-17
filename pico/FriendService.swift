@@ -49,9 +49,16 @@ final class FriendService {
 
     func findProfile(username: String, for authSession: AuthSession) async throws -> UserProfile? {
         let response: [FriendUserProfileResponse] = try await send(
-            path: "/rest/v1/user_profiles?select=user_id,username,display_name,avatar_config&username=eq.\(username)&limit=1",
+            path: "/rest/v1/user_profiles",
             method: "GET",
-            accessToken: authSession.accessToken
+            queryItems: [
+                URLQueryItem(name: "select", value: "user_id,username,display_name,avatar_config,profile_completed_at"),
+                URLQueryItem(name: "username", value: "eq.\(username)"),
+                URLQueryItem(name: "profile_completed_at", value: "not.is.null"),
+                URLQueryItem(name: "limit", value: "1")
+            ],
+            accessToken: authSession.accessToken,
+            bodyData: nil
         )
 
         return response.first?.userProfile
@@ -75,6 +82,7 @@ final class FriendService {
             queryItems: [
                 URLQueryItem(name: "select", value: "user_id,username,display_name,avatar_config"),
                 URLQueryItem(name: "or", value: "(username.ilike.\(pattern),display_name.ilike.\(pattern))"),
+                URLQueryItem(name: "profile_completed_at", value: "not.is.null"),
                 URLQueryItem(name: "order", value: "display_name.asc,username.asc"),
                 URLQueryItem(name: "limit", value: "20")
             ],

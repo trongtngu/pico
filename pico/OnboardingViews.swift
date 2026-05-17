@@ -105,6 +105,7 @@ struct OnboardingSequenceView: View {
     @State private var hasTrackedGoogleSignupCompletion = false
     @State private var hasTrackedGoogleOnboardingCompletion = false
     @State private var isPresentingOnboardingPaywall = false
+    @FocusState private var isDisplayNameFocused: Bool
 
     init(
         initialStep: OnboardingStep = OnboardingStep.ordered.first ?? .welcome,
@@ -243,52 +244,89 @@ struct OnboardingSequenceView: View {
                         Spacer(minLength: PicoSpacing.compact)
                     } else if currentStep.usesIslandVisual {
                         GeometryReader { contentProxy in
-                            let headerSlotHeight = currentStep == .displayName
-                                ? OnboardingStoryLayout.islandDisplayNameHeaderSlotHeight
-                                : OnboardingStoryLayout.islandHeaderSlotHeight
+                            let headerSlotHeight = OnboardingStoryLayout.islandHeaderSlotHeight
                             let visualCenterY = contentProxy.size.height * OnboardingStoryLayout.islandVisualCenterRatio
                             let headerCenterY = visualCenterY
                                 - (visualHeight / 2)
                                 - OnboardingStoryLayout.islandHeaderVisualGap
                                 - (headerSlotHeight / 2)
 
-                            ZStack(alignment: .top) {
-                                storyVisual(for: currentStep, visualHeight: visualHeight)
-                                    .frame(width: contentProxy.size.width, height: visualHeight)
-                                    .position(x: contentProxy.size.width / 2, y: visualCenterY)
+                            if currentStep == .displayName {
+                                ZStack(alignment: .top) {
+                                    VStack(spacing: PicoSpacing.section) {
+                                        OnboardingStoryStepTitle(
+                                            currentStep: currentStep
+                                        )
 
-                                VStack(spacing: 0) {
-                                    OnboardingStoryStepTitle(
-                                        currentStep: currentStep
-                                    )
-
-                                    if currentStep == .displayName {
-                                        OnboardingDisplayNameInput(displayName: $onboardingDisplayName)
-                                            .padding(.top, PicoSpacing.compact)
+                                        OnboardingDisplayNameInput(
+                                            displayName: $onboardingDisplayName,
+                                            isFocused: $isDisplayNameFocused,
+                                            handleSubmit: handlePrimaryAction
+                                        )
                                     }
+                                    .padding(.top, max(PicoSpacing.section, contentProxy.size.height * 0.08))
+                                    .frame(maxWidth: .infinity)
+                                    .zIndex(1)
+
+                                    VStack(spacing: PicoSpacing.compact) {
+                                        Spacer(minLength: OnboardingStoryLayout.displayNameTopContentReservedHeight)
+
+                                        storyVisual(for: currentStep, visualHeight: visualHeight)
+                                            .frame(width: contentProxy.size.width, height: visualHeight)
+                                            .allowsHitTesting(false)
+
+                                        Spacer(minLength: PicoSpacing.compact)
+
+                                        OnboardingStoryStepActions(
+                                            currentStep: currentStep,
+                                            primaryCTATitle: primaryCTATitle,
+                                            handlePrimaryAction: handlePrimaryAction,
+                                            handleSignupAction: handleSignupAction,
+                                            handleGoogleSignIn: handleGoogleSignIn,
+                                            handleAppleSignInRequest: handleAppleSignInRequest,
+                                            handleAppleSignInCompletion: handleAppleSignInCompletion,
+                                            handleLoginAction: handleLoginAction
+                                        )
+                                        .disabled(!isPrimaryCTAEnabled)
+                                        .frame(maxWidth: .infinity)
+                                    }
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 }
-                                .frame(maxWidth: .infinity)
-                                .frame(height: headerSlotHeight, alignment: .bottom)
-                                .position(x: contentProxy.size.width / 2, y: headerCenterY)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            } else {
+                                ZStack(alignment: .top) {
+                                    storyVisual(for: currentStep, visualHeight: visualHeight)
+                                        .frame(width: contentProxy.size.width, height: visualHeight)
+                                        .position(x: contentProxy.size.width / 2, y: visualCenterY)
 
-                                VStack(spacing: 0) {
-                                    Spacer(minLength: 0)
+                                    VStack(spacing: 0) {
+                                        OnboardingStoryStepTitle(
+                                            currentStep: currentStep
+                                        )
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: headerSlotHeight, alignment: .bottom)
+                                    .position(x: contentProxy.size.width / 2, y: headerCenterY)
 
-                                    OnboardingStoryStepActions(
-                                        currentStep: currentStep,
-                                        primaryCTATitle: primaryCTATitle,
-                                        handlePrimaryAction: handlePrimaryAction,
-                                        handleSignupAction: handleSignupAction,
-                                        handleGoogleSignIn: handleGoogleSignIn,
-                                        handleAppleSignInRequest: handleAppleSignInRequest,
-                                        handleAppleSignInCompletion: handleAppleSignInCompletion,
-                                        handleLoginAction: handleLoginAction
-                                    )
-                                    .disabled(!isPrimaryCTAEnabled)
+                                    VStack(spacing: 0) {
+                                        Spacer(minLength: 0)
+
+                                        OnboardingStoryStepActions(
+                                            currentStep: currentStep,
+                                            primaryCTATitle: primaryCTATitle,
+                                            handlePrimaryAction: handlePrimaryAction,
+                                            handleSignupAction: handleSignupAction,
+                                            handleGoogleSignIn: handleGoogleSignIn,
+                                            handleAppleSignInRequest: handleAppleSignInRequest,
+                                            handleAppleSignInCompletion: handleAppleSignInCompletion,
+                                            handleLoginAction: handleLoginAction
+                                        )
+                                        .disabled(!isPrimaryCTAEnabled)
+                                    }
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 }
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                             }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                     } else {
                         Spacer(minLength: PicoSpacing.compact)
@@ -322,12 +360,16 @@ struct OnboardingSequenceView: View {
             }
         }
         .background(PicoColors.appBackground.ignoresSafeArea())
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .preferredColorScheme(.light)
         .onAppear {
             trackOnboardingStartIfNeeded()
             trackCurrentScreenIfNeeded()
         }
         .onChange(of: currentStep) {
+            if currentStep != .displayName {
+                isDisplayNameFocused = false
+            }
             trackCurrentScreenIfNeeded()
         }
     }
@@ -346,6 +388,7 @@ struct OnboardingSequenceView: View {
             return
         }
 
+        isDisplayNameFocused = false
         goForward()
     }
 
@@ -392,7 +435,7 @@ struct OnboardingSequenceView: View {
 
         let nonce = AppleSignInNonce.random()
         appleSignInNonce = nonce
-        request.requestedScopes = [.fullName, .email]
+        request.requestedScopes = [.email]
         request.nonce = AppleSignInNonce.sha256(nonce)
         sessionStore.notice = nil
     }
@@ -408,10 +451,8 @@ struct OnboardingSequenceView: View {
                 return
             }
 
-            let nonce = appleSignInNonce
-            let fullName = credential.fullName
             Task {
-                await sessionStore.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName)
+                await sessionStore.signInWithApple(idToken: idToken, nonce: appleSignInNonce)
                 if sessionStore.session != nil {
                     trackAppleSignupCompletionIfNeeded()
                     trackAppleOnboardingCompletionIfNeeded()
@@ -714,6 +755,7 @@ enum OnboardingStep: String, CaseIterable, Identifiable {
 private enum OnboardingStoryLayout {
     static let islandHeaderSlotHeight: CGFloat = 92
     static let islandDisplayNameHeaderSlotHeight: CGFloat = 158
+    static let displayNameTopContentReservedHeight: CGFloat = 188
     static let islandHeaderVisualGap: CGFloat = 12
     static let islandVisualCenterRatio: CGFloat = 0.5
 }
@@ -953,7 +995,7 @@ private struct OnboardingStoryStepActions: View {
                         .padding(.top, PicoSpacing.compact)
 
                     PicoGoogleSignInButton(
-                        title: "Google",
+                        title: "Sign in with Google",
                         isLoading: isLoading,
                         action: handleGoogleSignIn
                     )
@@ -1252,6 +1294,8 @@ private struct OnboardingWhatDoesntWorkCard: View {
 
 private struct OnboardingDisplayNameInput: View {
     @Binding var displayName: String
+    let isFocused: FocusState<Bool>.Binding
+    let handleSubmit: () -> Void
 
     var body: some View {
         TextField(
@@ -1263,6 +1307,8 @@ private struct OnboardingDisplayNameInput: View {
         .submitLabel(.continue)
         .foregroundStyle(PicoColors.textPrimary)
         .authFieldStyle()
+        .focused(isFocused)
+        .onSubmit(handleSubmit)
     }
 }
 

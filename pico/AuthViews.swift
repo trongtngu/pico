@@ -217,7 +217,7 @@ struct SignupOptionsView: View {
                                 .padding(.top, PicoSpacing.compact)
 
                             PicoGoogleSignInButton(
-                                title: "Google",
+                                title: "Sign in with Google",
                                 isLoading: sessionStore.isLoading
                             ) {
                                 AnalyticsService.track(.signupStarted(method: "google", entryPoint: entryPoint))
@@ -278,7 +278,7 @@ struct SignupOptionsView: View {
 
         let nonce = LoginAppleSignInNonce.random()
         appleSignInNonce = nonce
-        request.requestedScopes = [.fullName, .email]
+        request.requestedScopes = [.email]
         request.nonce = LoginAppleSignInNonce.sha256(nonce)
         sessionStore.notice = nil
     }
@@ -294,10 +294,8 @@ struct SignupOptionsView: View {
                 return
             }
 
-            let nonce = appleSignInNonce
-            let fullName = credential.fullName
             Task {
-                await sessionStore.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName)
+                await sessionStore.signInWithApple(idToken: idToken, nonce: appleSignInNonce)
             }
         case .failure(let error):
             guard (error as? ASAuthorizationError)?.code != .canceled else { return }
@@ -401,7 +399,7 @@ struct LoginView: View {
                                 .padding(.top, PicoSpacing.compact)
 
                             PicoGoogleSignInButton(
-                                title: "Google",
+                                title: "Sign in with Google",
                                 isLoading: sessionStore.isLoading
                             ) {
                                 Task {
@@ -468,7 +466,7 @@ struct LoginView: View {
     private func handleAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
         let nonce = LoginAppleSignInNonce.random()
         appleSignInNonce = nonce
-        request.requestedScopes = [.fullName, .email]
+        request.requestedScopes = [.email]
         request.nonce = LoginAppleSignInNonce.sha256(nonce)
         sessionStore.notice = nil
     }
@@ -484,10 +482,8 @@ struct LoginView: View {
                 return
             }
 
-            let nonce = appleSignInNonce
-            let fullName = credential.fullName
             Task {
-                await sessionStore.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName)
+                await sessionStore.signInWithApple(idToken: idToken, nonce: appleSignInNonce)
             }
         case .failure(let error):
             guard (error as? ASAuthorizationError)?.code != .canceled else { return }
@@ -546,7 +542,7 @@ struct SignupFlowView: View {
     }
 
     private var isUsernameValid: Bool {
-        normalizedUsername.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) != nil
+        PicoUsernameRules.isValidUserChosenUsername(normalizedUsername)
     }
 
     private var isFirstNameValid: Bool {
@@ -887,11 +883,12 @@ struct SignupDraft {
     var password = ""
 }
 
-private struct SignupProgressHeader: View {
+struct SignupProgressHeader: View {
     let currentIndex: Int
     let totalCount: Int
     let showsBackButton: Bool
     let onBack: () -> Void
+    var backAccessibilityLabel = "Back"
     let topInset: CGFloat
 
     var body: some View {
@@ -903,7 +900,7 @@ private struct SignupProgressHeader: View {
                         .frame(width: 48, height: 48)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(Text("Back"))
+                .accessibilityLabel(Text(backAccessibilityLabel))
             } else {
                 Color.clear
                     .frame(width: 48, height: 48)
@@ -923,7 +920,7 @@ private struct SignupProgressHeader: View {
     }
 }
 
-private struct SignupPageIndicator: View {
+struct SignupPageIndicator: View {
     let currentIndex: Int
     let totalCount: Int
 
@@ -937,7 +934,7 @@ private struct SignupPageIndicator: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Signup step \(currentIndex + 1) of \(totalCount)"))
+        .accessibilityLabel(Text("Step \(currentIndex + 1) of \(totalCount)"))
     }
 }
 

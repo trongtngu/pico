@@ -60,34 +60,32 @@ final class AuthSessionStore: ObservableObject {
         }
     }
 
-    func signInWithApple(idToken: String, nonce: String?, fullName: PersonNameComponents?) async {
+    func signInWithApple(idToken: String, nonce: String?) async {
         await authenticate {
             try await authService.signInWithApple(idToken: idToken, nonce: nonce)
         }
-
-        await applyOAuthDisplayNameIfNeeded(Self.normalizedDisplayName(from: fullName))
     }
 
     func signInWithGoogle() async {
-        var displayName: String?
-
         await authenticate {
             let tokens = try await GoogleSignInClient.signIn()
-            displayName = tokens.displayName
             return try await authService.signInWithGoogle(
                 idToken: tokens.idToken,
                 accessToken: tokens.accessToken,
                 nonce: tokens.nonce
             )
         }
-
-        await applyOAuthDisplayNameIfNeeded(displayName)
     }
 
     func validateUsernameAvailability(_ username: String) async -> Bool {
         guard !isLoading else { return false }
 
         let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard PicoUsernameRules.isValidUserChosenUsername(normalizedUsername) else {
+            notice = AuthServiceError.usernameUnavailable.errorDescription
+            return false
+        }
+
         isLoading = true
         notice = nil
         defer { isLoading = false }
@@ -148,7 +146,7 @@ final class AuthSessionStore: ObservableObject {
         }
 
         let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard normalizedUsername.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) != nil else {
+        guard PicoUsernameRules.isValidUserChosenUsername(normalizedUsername) else {
             profileNotice = "That username is not available."
             return
         }
@@ -186,29 +184,6 @@ final class AuthSessionStore: ObservableObject {
 
     func clearProfileNotice() {
         profileNotice = nil
-    }
-
-    private func applyOAuthDisplayNameIfNeeded(_ displayName: String?) async {
-        guard let session, let currentProfile = profile else { return }
-
-        let oauthDisplayName = String((displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
-        guard !oauthDisplayName.isEmpty else { return }
-
-        let shouldReplaceDisplayName = currentProfile.displayName == "Pico"
-            || currentProfile.displayName.hasPrefix("pico_")
-        guard shouldReplaceDisplayName else { return }
-
-        do {
-            profile = try await authService.updateProfile(
-                username: currentProfile.username,
-                displayName: oauthDisplayName,
-                avatarConfig: currentProfile.avatarConfig,
-                for: session
-            )
-            hasLoadedProfile = true
-        } catch {
-            profileNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        }
     }
 
     func applyOwnedStoreItemIDs(_ itemIDs: Set<String>) {
@@ -358,12 +333,6 @@ final class AuthSessionStore: ObservableObject {
         }
 
         return Set(storeIslands).union([PicoIsland.original.backendID])
-    }
-
-    private static func normalizedDisplayName(from fullName: PersonNameComponents?) -> String {
-        guard let fullName else { return "" }
-        let formattedName = PersonNameComponentsFormatter.localizedString(from: fullName, style: .medium)
-        return String(formattedName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
     }
 
 }
