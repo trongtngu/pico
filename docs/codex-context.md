@@ -59,8 +59,9 @@ This document summarizes the codebase from direct inspection. Paths are cited wi
   - `pico/AvatarCatalog.swift` defines `AvatarConfig`, hats, scarves, SpriteKit layering, avatar badge, and picker (`pico/AvatarCatalog.swift:12`, `pico/AvatarCatalog.swift:78`, `pico/AvatarCatalog.swift:154`, `pico/AvatarCatalog.swift:496`, `pico/AvatarCatalog.swift:646`).
   - Sprite atlases live under `pico/Atlases/`; icons live under `pico/Assets.xcassets/` and `pico/Icons/`.
 - Analytics:
-  - `pico/AnalyticsService.swift` wraps FirebaseAnalytics with common parameters (`pico/AnalyticsService.swift:11`, `pico/AnalyticsService.swift:33`).
-  - Event definitions/extensions live in `pico/AnalyticsEvent.swift`, `pico/AnalyticsEvents+Focus.swift`, and `pico/AnalyticsEvents+Onboarding.swift`.
+  - Typed analytics primitives and event catalog live in `pico/AnalyticsEvent.swift`. Feature-facing code uses `AnalyticsEventID`, `AnalyticsParameterKey`, and `AnalyticsValue` rather than raw Firebase names or `[String: Any]` payloads.
+  - `pico/FirebaseAnalyticsEngine.swift` is the only Firebase event adapter. It validates events against `AnalyticsCatalog`, appends common parameters, converts typed values to Firebase parameters, and calls `FirebaseAnalytics.Analytics.logEvent`.
+  - `pico/Analytics.swift` is the central entry point for tracking and user property support. Onboarding and signup funnel helpers live in `pico/OnboardingAnalytics.swift`.
 
 ## Navigation Flow
 

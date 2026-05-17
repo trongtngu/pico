@@ -988,7 +988,7 @@ private struct HomePage: View {
             startFocusStep = .modePicker
         }
 
-        AnalyticsService.track(.focusSetupViewed())
+        Analytics.track(AnalyticsEvent(id: .focusSetupViewed))
         isStartFocusSheetPresented = true
     }
 
@@ -1092,7 +1092,7 @@ private struct HomePage: View {
     private func trackHomeViewIfNeeded() {
         guard !hasTrackedHomeView else { return }
         hasTrackedHomeView = true
-        AnalyticsService.track(.homeViewed())
+        Analytics.track(AnalyticsEvent(id: .homeViewed))
     }
 }
 
@@ -1278,10 +1278,13 @@ private struct FishCatchRevealView: View {
     private func trackRevealIfReady() {
         guard !hasTrackedReveal, !isLoading else { return }
         hasTrackedReveal = true
-        AnalyticsService.track(.catchRevealViewed(
-            catchCount: catches.count,
-            bestRarity: bestRarityAnalyticsValue(in: catches),
-            sessionType: session?.mode.rawValue ?? "unknown"
+        Analytics.track(AnalyticsEvent(
+            id: .catchRevealViewed,
+            parameters: [
+                .catchCount: .int(catches.count),
+                .bestRarity: .string(bestRarityAnalyticsValue(in: catches)),
+                .sessionType: .string(session?.mode.rawValue ?? "unknown")
+            ]
         ))
     }
 }
@@ -7293,10 +7296,13 @@ private struct StorePage: View {
         let catchIDs = catches.map(\.id)
         Task {
             guard let result = await fishStore.sellFish(catchIDs: catchIDs, for: sessionStore.session) else { return }
-            AnalyticsService.track(.fishSold(
-                fishCount: result.soldFishCount,
-                berriesEarned: result.soldBerryAmount,
-                bestRarity: bestRarityAnalyticsValue(in: catches)
+            Analytics.track(AnalyticsEvent(
+                id: .fishSold,
+                parameters: [
+                    .fishCount: .int(result.soldFishCount),
+                    .berriesEarned: .int(result.soldBerryAmount),
+                    .bestRarity: .string(bestRarityAnalyticsValue(in: catches))
+                ]
             ))
             berryStore.applyBalance(result.balance)
             await fishStore.loadInventoryCounts(for: sessionStore.session)

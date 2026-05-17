@@ -86,8 +86,8 @@ struct OnboardingSequenceView: View {
     @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let onBackToEntry: () -> Void
-    let onSignup: (String) -> Void
-    let onLogin: (String) -> Void
+    let onSignup: (String, OnboardingFlowContext) -> Void
+    let onLogin: (String, OnboardingFlowContext) -> Void
 
     @State private var currentStep: OnboardingStep
     @State private var hasTrackedOnboardingStart = false
@@ -100,28 +100,32 @@ struct OnboardingSequenceView: View {
     @State private var onboardingDisplayName: String
     @State private var onboardingCelebrationFish = OnboardingRareFreshwaterFish.random()
     @State private var appleSignInNonce: String?
-    @State private var hasTrackedAppleSignupCompletion = false
-    @State private var hasTrackedAppleOnboardingCompletion = false
-    @State private var hasTrackedGoogleSignupCompletion = false
-    @State private var hasTrackedGoogleOnboardingCompletion = false
+    @State private var hasTrackedAuthHandoffStepCompletion = false
     @State private var isPresentingOnboardingPaywall = false
+    @State private var onboardingAnalytics: OnboardingAnalytics
     @FocusState private var isDisplayNameFocused: Bool
 
     init(
         initialStep: OnboardingStep = OnboardingStep.ordered.first ?? .welcome,
         initialDisplayName: String = "",
+        initialFlowContext: OnboardingFlowContext? = nil,
         onBackToEntry: @escaping () -> Void,
-        onSignup: @escaping (String) -> Void,
-        onLogin: @escaping (String) -> Void
+        onSignup: @escaping (String, OnboardingFlowContext) -> Void,
+        onLogin: @escaping (String, OnboardingFlowContext) -> Void
     ) {
         self.onBackToEntry = onBackToEntry
         self.onSignup = onSignup
         self.onLogin = onLogin
         _currentStep = State(initialValue: initialStep)
         _onboardingDisplayName = State(initialValue: initialDisplayName)
+        _onboardingAnalytics = State(
+            initialValue: OnboardingAnalytics(
+                context: initialFlowContext ?? OnboardingFlowContext(onboardingVariant: Self.onboardingVariant)
+            )
+        )
     }
 
-    private let onboardingVariant = "default"
+    private static let onboardingVariant = "default"
 
     private var currentIndex: Int {
         OnboardingStep.ordered.firstIndex(of: currentStep) ?? 0
@@ -152,14 +156,14 @@ struct OnboardingSequenceView: View {
         }
     }
 
-    private var primaryCTAAnalyticsActionName: String {
+    private var primaryCTAAnalyticsAction: OnboardingAction {
         switch currentStep {
         case .rareFish:
-            "start_fishing"
+            .startFishing
         case .catchTeaser:
-            "reel_it_in"
+            .reelItIn
         case .welcome, .displayName, .focusDuration, .phoneUsage, .focusIntent, .focusGoal, .focusBarrier, .productivityExperience, .whyOtherAppsFail, .fishCelebration, .rewardCelebration, .focusWithFriends, .authHandoff:
-            "next"
+            .next
         }
     }
 
@@ -377,11 +381,7 @@ struct OnboardingSequenceView: View {
     private func handlePrimaryAction() {
         guard isPrimaryCTAEnabled else { return }
 
-        AnalyticsService.track(.onboardingActionTapped(
-            screenName: currentStep.analyticsName,
-            actionName: primaryCTAAnalyticsActionName,
-            onboardingVariant: onboardingVariant
-        ))
+        onboardingAnalytics.trackActionTapped(primaryCTAAnalyticsAction, step: currentStep)
 
         if currentStep == .focusWithFriends {
             presentOnboardingCompletePaywall()
@@ -393,45 +393,37 @@ struct OnboardingSequenceView: View {
     }
 
     private func handleSignupAction() {
-        AnalyticsService.track(.onboardingActionTapped(
-            screenName: currentStep.analyticsName,
-            actionName: "create_account",
-            onboardingVariant: onboardingVariant
-        ))
-        onSignup(normalizedDisplayName)
+        onboardingAnalytics.trackActionTapped(.createAccount, step: currentStep)
+        trackAuthHandoffStepCompletionIfNeeded()
+        onSignup(normalizedDisplayName, onboardingAnalytics.context)
     }
 
     private func handleLoginAction() {
-        AnalyticsService.track(.onboardingActionTapped(
-            screenName: currentStep.analyticsName,
-            actionName: "log_in",
-            onboardingVariant: onboardingVariant
-        ))
-        onLogin(normalizedDisplayName)
+        onboardingAnalytics.trackActionTapped(.logIn, step: currentStep)
+        onboardingAnalytics.trackExited(step: currentStep)
+        onLogin(normalizedDisplayName, onboardingAnalytics.context)
     }
 
     private func handleGoogleSignIn() {
-        AnalyticsService.track(.onboardingActionTapped(
-            screenName: currentStep.analyticsName,
-            actionName: "sign_in_with_google",
-            onboardingVariant: onboardingVariant
-        ))
+        onboardingAnalytics.trackActionTapped(.signInWithGoogle, step: currentStep)
 
         Task {
+            sessionStore.prepareProfileCompletionAnalytics(
+                method: .google,
+                entryPoint: "onboarding",
+                onboardingContext: onboardingAnalytics.context
+            )
             await sessionStore.signInWithGoogle()
             if sessionStore.session != nil {
-                trackGoogleSignupCompletionIfNeeded()
-                trackGoogleOnboardingCompletionIfNeeded()
+                trackAuthHandoffStepCompletionIfNeeded()
+            } else {
+                sessionStore.clearPendingProfileCompletionAnalytics()
             }
         }
     }
 
     private func handleAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
-        AnalyticsService.track(.onboardingActionTapped(
-            screenName: currentStep.analyticsName,
-            actionName: "sign_in_with_apple",
-            onboardingVariant: onboardingVariant
-        ))
+        onboardingAnalytics.trackActionTapped(.signInWithApple, step: currentStep)
 
         let nonce = AppleSignInNonce.random()
         appleSignInNonce = nonce
@@ -452,10 +444,16 @@ struct OnboardingSequenceView: View {
             }
 
             Task {
+                sessionStore.prepareProfileCompletionAnalytics(
+                    method: .apple,
+                    entryPoint: "onboarding",
+                    onboardingContext: onboardingAnalytics.context
+                )
                 await sessionStore.signInWithApple(idToken: idToken, nonce: appleSignInNonce)
                 if sessionStore.session != nil {
-                    trackAppleSignupCompletionIfNeeded()
-                    trackAppleOnboardingCompletionIfNeeded()
+                    trackAuthHandoffStepCompletionIfNeeded()
+                } else {
+                    sessionStore.clearPendingProfileCompletionAnalytics()
                 }
             }
         case .failure(let error):
@@ -464,36 +462,20 @@ struct OnboardingSequenceView: View {
         }
     }
 
-    private func trackAppleSignupCompletionIfNeeded() {
-        guard !hasTrackedAppleSignupCompletion else { return }
-        hasTrackedAppleSignupCompletion = true
-        AnalyticsService.track(.signupCompleted(method: "apple", entryPoint: "onboarding"))
-    }
-
-    private func trackAppleOnboardingCompletionIfNeeded() {
-        guard !hasTrackedAppleOnboardingCompletion else { return }
-        hasTrackedAppleOnboardingCompletion = true
-        AnalyticsService.track(.onboardingCompleted())
-    }
-
-    private func trackGoogleSignupCompletionIfNeeded() {
-        guard !hasTrackedGoogleSignupCompletion else { return }
-        hasTrackedGoogleSignupCompletion = true
-        AnalyticsService.track(.signupCompleted(method: "google", entryPoint: "onboarding"))
-    }
-
-    private func trackGoogleOnboardingCompletionIfNeeded() {
-        guard !hasTrackedGoogleOnboardingCompletion else { return }
-        hasTrackedGoogleOnboardingCompletion = true
-        AnalyticsService.track(.onboardingCompleted())
+    private func trackAuthHandoffStepCompletionIfNeeded() {
+        guard currentStep == .authHandoff, !hasTrackedAuthHandoffStepCompletion else { return }
+        hasTrackedAuthHandoffStepCompletion = true
+        onboardingAnalytics.trackStepCompleted(step: currentStep)
     }
 
     private func goForward() {
         let steps = OnboardingStep.ordered
         guard currentIndex < steps.index(before: steps.endIndex) else {
-            onSignup(normalizedDisplayName)
+            onSignup(normalizedDisplayName, onboardingAnalytics.context)
             return
         }
+
+        onboardingAnalytics.trackStepCompleted(step: currentStep)
 
         if currentStep == .catchTeaser {
             onboardingCelebrationFish = OnboardingRareFreshwaterFish.random()
@@ -517,13 +499,10 @@ struct OnboardingSequenceView: View {
     }
 
     private func goBack() {
-        AnalyticsService.track(.onboardingActionTapped(
-            screenName: currentStep.analyticsName,
-            actionName: "back",
-            onboardingVariant: onboardingVariant
-        ))
+        onboardingAnalytics.trackActionTapped(.back, step: currentStep)
 
         guard currentIndex > 0 else {
+            onboardingAnalytics.trackExited(step: currentStep)
             onBackToEntry()
             return
         }
@@ -534,17 +513,13 @@ struct OnboardingSequenceView: View {
     private func trackOnboardingStartIfNeeded() {
         guard !hasTrackedOnboardingStart else { return }
         hasTrackedOnboardingStart = true
-        AnalyticsService.track(.onboardingStarted())
+        onboardingAnalytics.trackStarted(step: currentStep)
     }
 
     private func trackCurrentScreenIfNeeded() {
         guard lastTrackedScreenStep != currentStep else { return }
         lastTrackedScreenStep = currentStep
-        AnalyticsService.track(.onboardingScreenViewed(
-            screenIndex: currentIndex + 1,
-            screenName: currentStep.analyticsName,
-            onboardingVariant: onboardingVariant
-        ))
+        onboardingAnalytics.trackScreenViewed(step: currentStep)
     }
 
     @ViewBuilder

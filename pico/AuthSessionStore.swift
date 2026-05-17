@@ -27,6 +27,7 @@ final class AuthSessionStore: ObservableObject {
     private var hasAttemptedSessionRestore = false
     private var hasStartedAuthSessionObservation = false
     private var authSessionTask: Task<Void, Never>?
+    private var pendingProfileCompletionAnalytics: PendingProfileCompletionAnalytics?
 
     init(authService: AuthService? = nil) {
         self.authService = authService ?? AuthService()
@@ -102,8 +103,25 @@ final class AuthSessionStore: ObservableObject {
         }
     }
 
+    func prepareProfileCompletionAnalytics(
+        method: OnboardingSignupMethod,
+        entryPoint: String,
+        onboardingContext: OnboardingFlowContext?
+    ) {
+        pendingProfileCompletionAnalytics = PendingProfileCompletionAnalytics(
+            method: method,
+            entryPoint: entryPoint,
+            onboardingContext: onboardingContext
+        )
+    }
+
+    func clearPendingProfileCompletionAnalytics() {
+        pendingProfileCompletionAnalytics = nil
+    }
+
     func signOut() {
         session = nil
+        pendingProfileCompletionAnalytics = nil
         notice = nil
         resetProfile()
         Task {
@@ -171,6 +189,11 @@ final class AuthSessionStore: ObservableObject {
                 for: session
             )
             hasLoadedProfile = true
+            if previousProfile.map(isProfileCompletionRequired) == true,
+               let profile,
+               !isProfileCompletionRequired(profile) {
+                trackPendingProfileCompletionAnalytics()
+            }
         } catch {
             profile = previousProfile
             profileNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -228,10 +251,12 @@ final class AuthSessionStore: ObservableObject {
                 await loadProfileIfNeeded()
             } else {
                 session = nil
+                pendingProfileCompletionAnalytics = nil
                 resetProfile()
             }
         } catch {
             guard !error.isCancellation else { return }
+            pendingProfileCompletionAnalytics = nil
             notice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -277,6 +302,7 @@ final class AuthSessionStore: ObservableObject {
                         self.applySession(session)
                     } else {
                         self.session = nil
+                        self.pendingProfileCompletionAnalytics = nil
                         self.resetProfile()
                     }
                 }
@@ -297,6 +323,9 @@ final class AuthSessionStore: ObservableObject {
             profile = nextProfile
             applyOwnedStoreItemIDs(nextOwnedStoreItemIDs)
             hasLoadedProfile = true
+            if !isProfileCompletionRequired(nextProfile) {
+                pendingProfileCompletionAnalytics = nil
+            }
         } catch {
             profileNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -335,6 +364,28 @@ final class AuthSessionStore: ObservableObject {
         return Set(storeIslands).union([PicoIsland.original.backendID])
     }
 
+    private func isProfileCompletionRequired(_ profile: UserProfile) -> Bool {
+        profile.profileCompletedAt == nil || PicoUsernameRules.isGeneratedOAuthUsername(profile.username)
+    }
+
+    private func trackPendingProfileCompletionAnalytics() {
+        guard let pendingProfileCompletionAnalytics else { return }
+
+        let signupAnalytics = SignupAnalytics(
+            entryPoint: pendingProfileCompletionAnalytics.entryPoint,
+            onboardingContext: pendingProfileCompletionAnalytics.onboardingContext
+        )
+        signupAnalytics.trackCompleted(method: pendingProfileCompletionAnalytics.method)
+        signupAnalytics.trackOnboardingCompleted(method: pendingProfileCompletionAnalytics.method)
+        self.pendingProfileCompletionAnalytics = nil
+    }
+
+}
+
+private struct PendingProfileCompletionAnalytics {
+    let method: OnboardingSignupMethod
+    let entryPoint: String
+    let onboardingContext: OnboardingFlowContext?
 }
 
 private extension StoreItem {

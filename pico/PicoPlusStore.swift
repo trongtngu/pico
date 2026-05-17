@@ -42,10 +42,16 @@ final class PicoPlusStore: ObservableObject {
         do {
             let entitlement = try await service.fetchEntitlement(for: authSession)
             apply(entitlement)
-            AnalyticsService.track(.picoPlusEntitlementRefreshSucceeded(isActive: entitlement.isActive))
+            Analytics.track(AnalyticsEvent(
+                id: .picoPlusRefreshSucceeded,
+                parameters: [.isActive: .bool(entitlement.isActive)]
+            ))
         } catch {
             apply(.free)
-            AnalyticsService.track(.picoPlusEntitlementRefreshFailed(message: displayMessage(for: error)))
+            Analytics.track(AnalyticsEvent(
+                id: .picoPlusRefreshFailed,
+                parameters: [.message: .string(analyticsErrorCategory(for: error))]
+            ))
         }
     }
 
@@ -53,22 +59,34 @@ final class PicoPlusStore: ObservableObject {
         notice = nil
         let placement = source.placement
         trackGateHit(for: source)
-        AnalyticsService.track(.picoPlusPaywallTriggered(placement: placement, source: source))
+        Analytics.track(AnalyticsEvent(
+            id: .picoPlusPaywallTriggered,
+            parameters: [
+                .placement: .string(placement.rawValue),
+                .source: .string(source.analyticsValue)
+            ]
+        ))
 
         do {
             let outcome = try await service.presentPaywall(placement: placement)
-            AnalyticsService.track(.picoPlusPaywallFinished(
-                placement: placement,
-                source: source,
-                outcome: outcome.analyticsValue
+            Analytics.track(AnalyticsEvent(
+                id: .picoPlusPaywallFinished,
+                parameters: [
+                    .placement: .string(placement.rawValue),
+                    .source: .string(source.analyticsValue),
+                    .outcome: .string(outcome.analyticsValue)
+                ]
             ))
             await refresh(for: authSession)
         } catch {
             notice = displayMessage(for: error)
-            AnalyticsService.track(.picoPlusPaywallFailed(
-                placement: placement,
-                source: source,
-                message: displayMessage(for: error)
+            Analytics.track(AnalyticsEvent(
+                id: .picoPlusPaywallFailed,
+                parameters: [
+                    .placement: .string(placement.rawValue),
+                    .source: .string(source.analyticsValue),
+                    .message: .string(analyticsErrorCategory(for: error))
+                ]
             ))
         }
     }
@@ -76,25 +94,34 @@ final class PicoPlusStore: ObservableObject {
     private func trackGateHit(for source: PicoPlusPaywallSource) {
         switch source {
         case .onboardingComplete:
-            AnalyticsService.track(.picoPlusOnboardingGateHit())
+            Analytics.track(AnalyticsEvent(id: .picoPlusOnboardingGateHit))
         case .calendarView:
-            AnalyticsService.track(.picoPlusCalendarGateHit())
+            Analytics.track(AnalyticsEvent(id: .picoPlusCalendarGateHit))
         case .bondReward(let residentID, let bondLevel, _):
-            AnalyticsService.track(.picoPlusBondRewardGateHit(
-                residentID: residentID,
-                bondLevel: bondLevel
+            Analytics.track(AnalyticsEvent(
+                id: .picoPlusBondRewardGateHit,
+                parameters: [
+                    .residentID: .string(residentID),
+                    .bondLevel: .int(bondLevel)
+                ]
             ))
         case .largeGroupSession(let currentMembers, let selectedInvites, let limit, _):
-            AnalyticsService.track(.picoPlusGroupGateHit(
-                currentMembers: currentMembers,
-                selectedInvites: selectedInvites,
-                limit: limit
+            Analytics.track(AnalyticsEvent(
+                id: .picoPlusGroupGateHit,
+                parameters: [
+                    .currentMembers: .int(currentMembers),
+                    .selectedInvites: .int(selectedInvites),
+                    .limit: .int(limit)
+                ]
             ))
         case .plusCosmetic(let itemID, let itemType, let itemKey, _):
-            AnalyticsService.track(.picoPlusCosmeticGateHit(
-                itemID: itemID,
-                itemType: itemType,
-                itemKey: itemKey
+            Analytics.track(AnalyticsEvent(
+                id: .picoPlusCosmeticGateHit,
+                parameters: [
+                    .itemID: .string(itemID),
+                    .itemType: .string(itemType),
+                    .itemKey: .string(itemKey)
+                ]
             ))
         }
     }
@@ -106,6 +133,29 @@ final class PicoPlusStore: ObservableObject {
 
     private func displayMessage(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    private func analyticsErrorCategory(for error: Error) -> String {
+        if error.isCancellation {
+            return "cancelled"
+        }
+
+        guard let serviceError = error as? PicoPlusServiceError else {
+            return "unknown"
+        }
+
+        switch serviceError {
+        case .missingConfiguration:
+            return "missing_configuration"
+        case .invalidResponse:
+            return "invalid_response"
+        case .paywallNotConfigured:
+            return "paywall_not_configured"
+        case .paywallSkipped:
+            return "paywall_skipped"
+        case .requestFailed:
+            return "request_failed"
+        }
     }
 }
 

@@ -321,10 +321,13 @@ final class FocusStore: ObservableObject {
             applyOpenSession(session, authSession: authSession)
             await refreshDetailIfNeeded(for: session, authSession: authSession)
             if session.isLive {
-                AnalyticsService.track(.focusSessionStarted(
-                    sessionType: session.analyticsSessionType,
-                    durationMinutes: session.analyticsDurationMinutes,
-                    entryPoint: "home"
+                Analytics.track(AnalyticsEvent(
+                    id: .focusSessionStarted,
+                    parameters: [
+                        .sessionType: .string(session.analyticsSessionType),
+                        .durationMinutes: .int(session.analyticsDurationMinutes),
+                        .entryPoint: .string("home")
+                    ]
                 ))
             }
         } catch {
@@ -441,10 +444,13 @@ final class FocusStore: ObservableObject {
             }
             resultSession = nextResultSession
             if session.isLive {
-                AnalyticsService.track(.focusSessionInterrupted(
-                    sessionType: session.analyticsSessionType,
-                    durationMinutes: session.analyticsDurationMinutes,
-                    interruptionReason: "left_multiplayer"
+                Analytics.track(AnalyticsEvent(
+                    id: .focusSessionInterrupted,
+                    parameters: [
+                        .sessionType: .string(session.analyticsSessionType),
+                        .durationMinutes: .int(session.analyticsDurationMinutes),
+                        .interruptionReason: .string(FocusFailureReason.leftMultiplayer)
+                    ]
                 ))
             }
             completionContext = nil
@@ -1095,16 +1101,22 @@ final class FocusStore: ObservableObject {
     ) {
         switch pendingResult {
         case .complete:
-            AnalyticsService.track(.focusSessionCompleted(
-                sessionType: session.analyticsSessionType,
-                durationMinutes: session.analyticsDurationMinutes,
-                completedSuccessfully: true
+            Analytics.track(AnalyticsEvent(
+                id: .focusSessionCompleted,
+                parameters: [
+                    .sessionType: .string(session.analyticsSessionType),
+                    .durationMinutes: .int(session.analyticsDurationMinutes),
+                    .completedSuccessfully: .bool(true)
+                ]
             ))
         case .interrupt:
-            AnalyticsService.track(.focusSessionInterrupted(
-                sessionType: session.analyticsSessionType,
-                durationMinutes: session.analyticsDurationMinutes,
-                interruptionReason: interruptionReason
+            Analytics.track(AnalyticsEvent(
+                id: .focusSessionInterrupted,
+                parameters: [
+                    .sessionType: .string(session.analyticsSessionType),
+                    .durationMinutes: .int(session.analyticsDurationMinutes),
+                    .interruptionReason: .string(interruptionReason)
+                ]
             ))
         }
     }
