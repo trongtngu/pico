@@ -112,6 +112,11 @@ struct DailySnapshotFocusActivity: Identifiable, Equatable {
     let hasFocus: Bool
 }
 
+enum DailyFocusGoal {
+    static let minimumMinutes = 1
+    static let maximumMinutes = 1440
+}
+
 enum DailySnapshotServiceError: LocalizedError {
     case missingConfiguration
     case invalidResponse(String? = nil)
@@ -173,6 +178,28 @@ final class DailySnapshotService {
         )
 
         return response.map(\.dailySnapshotFocusActivity)
+    }
+
+    func fetchDailyFocusGoal(for authSession: AuthSession) async throws -> Int? {
+        let response: [DailyFocusGoalResponse] = try await send(
+            path: "/rest/v1/rpc/fetch_daily_focus_goal",
+            method: "POST",
+            body: EmptyDailySnapshotRequest(),
+            accessToken: authSession.accessToken
+        )
+
+        return response.first?.dailyFocusGoalMinutes
+    }
+
+    func updateDailyFocusGoal(minutes: Int?, for authSession: AuthSession) async throws -> Int? {
+        let response: [DailyFocusGoalResponse] = try await send(
+            path: "/rest/v1/rpc/set_daily_focus_goal",
+            method: "POST",
+            body: DailyFocusGoalUpdate(goalMinutes: minutes),
+            accessToken: authSession.accessToken
+        )
+
+        return response.first?.dailyFocusGoalMinutes
     }
 
     private func send<RequestBody: Encodable, ResponseBody: Decodable>(
@@ -244,6 +271,16 @@ private struct FetchDailySnapshotRequest: Encodable {
 private struct ListDailyFocusActivityRequest: Encodable {
     let startDay: DailySnapshotDay
     let endDay: DailySnapshotDay
+}
+
+private struct EmptyDailySnapshotRequest: Encodable {}
+
+private struct DailyFocusGoalUpdate: Encodable {
+    let goalMinutes: Int?
+}
+
+private struct DailyFocusGoalResponse: Decodable {
+    let dailyFocusGoalMinutes: Int?
 }
 
 private struct DailySnapshotFocusActivityResponse: Decodable {

@@ -807,7 +807,9 @@ private struct HomePage: View {
                 initialDate: snapshotPickerDate,
                 maximumDate: snapshotPickerMaximumDate,
                 fetchFocusActivityAction: fetchCalendarFocusActivity,
-                fetchSnapshotAction: fetchCalendarSnapshot
+                fetchSnapshotAction: fetchCalendarSnapshot,
+                fetchDailyFocusGoalAction: fetchCalendarDailyFocusGoal,
+                updateDailyFocusGoalAction: updateCalendarDailyFocusGoal
             )
         }
         .fullScreenCover(isPresented: $isFishCatchSheetPresented, onDismiss: finishFishCatchFlow) {
@@ -1033,6 +1035,16 @@ private struct HomePage: View {
             endDay: endDay,
             for: session
         )
+    }
+
+    private func fetchCalendarDailyFocusGoal() async throws -> Int? {
+        guard let session = sessionStore.session else { return nil }
+        return try await dailySnapshotService.fetchDailyFocusGoal(for: session)
+    }
+
+    private func updateCalendarDailyFocusGoal(minutes: Int?) async throws -> Int? {
+        guard let session = sessionStore.session else { return nil }
+        return try await dailySnapshotService.updateDailyFocusGoal(minutes: minutes, for: session)
     }
 
     private func villageHeight(for viewportHeight: CGFloat) -> CGFloat {
@@ -2584,6 +2596,8 @@ private struct DailySnapshotCalendarScreen: View {
     let maximumDate: Date
     let fetchFocusActivityAction: (DailySnapshotDay, DailySnapshotDay) async throws -> [DailySnapshotFocusActivity]
     let fetchSnapshotAction: (DailySnapshotDay) async throws -> DailyVillageSnapshot?
+    let fetchDailyFocusGoalAction: () async throws -> Int?
+    let updateDailyFocusGoalAction: (Int?) async throws -> Int?
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var picoPlusStore: PicoPlusStore
@@ -2595,6 +2609,11 @@ private struct DailySnapshotCalendarScreen: View {
     @State private var loadedFocusActivityMonths: Set<DailySnapshotDay> = []
     @State private var loadingFocusActivityMonths: Set<DailySnapshotDay> = []
     @State private var loadState: DailySnapshotLoadState = .idle
+    @State private var dailyFocusGoalMinutes: Int?
+    @State private var isFocusGoalSheetPresented = false
+    @State private var isLoadingFocusGoal = false
+    @State private var isSavingFocusGoal = false
+    @State private var focusGoalNotice: String?
     @State private var notice: String?
 
     private var calendar: Calendar {
@@ -2642,6 +2661,9 @@ private struct DailySnapshotCalendarScreen: View {
                         isLoading: loadState == .loading,
                         isLocked: selectedDayRequiresPlus,
                         notice: selectedDayRequiresPlus ? picoPlusStore.notice : notice,
+                        dailyFocusGoalMinutes: dailyFocusGoalMinutes,
+                        isSavingFocusGoal: isSavingFocusGoal,
+                        editFocusGoalAction: presentFocusGoalEditor,
                         afterUnlock: loadSelectedSnapshotAfterPlusUnlock
                     )
 
@@ -2662,6 +2684,7 @@ private struct DailySnapshotCalendarScreen: View {
             displayedMonth = selectedMonth
             loadDisplayedMonthActivityIfNeeded(for: selectedMonth)
             loadSelectedSnapshotIfNeeded(for: initialDate)
+            loadDailyFocusGoalIfNeeded()
         }
         .onChange(of: selectedDate) {
             let selectedMonth = monthStart(for: selectedDate)
@@ -2675,6 +2698,18 @@ private struct DailySnapshotCalendarScreen: View {
         .onChange(of: picoPlusStore.capabilities) {
             guard picoPlusStore.capabilities.canAccessHistoricalDailySnapshots else { return }
             loadSelectedSnapshotIfNeeded(for: selectedDate)
+        }
+        .sheet(isPresented: $isFocusGoalSheetPresented) {
+            DailyFocusGoalEditorSheet(
+                currentGoalMinutes: dailyFocusGoalMinutes,
+                isSaving: isSavingFocusGoal,
+                notice: focusGoalNotice,
+                save: saveDailyFocusGoal
+            )
+            .presentationDetents([.height(420)])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(PicoColors.appBackground)
+            .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
         }
     }
 
@@ -2942,6 +2977,41 @@ private struct DailySnapshotCalendarScreen: View {
             loadSelectedSnapshotIfNeeded(for: selectedDate)
         }
     }
+
+    private func loadDailyFocusGoalIfNeeded() {
+        guard !isLoadingFocusGoal else { return }
+        isLoadingFocusGoal = true
+        focusGoalNotice = nil
+
+        Task {
+            do {
+                dailyFocusGoalMinutes = try await fetchDailyFocusGoalAction()
+                isLoadingFocusGoal = false
+            } catch {
+                isLoadingFocusGoal = false
+                focusGoalNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func presentFocusGoalEditor() {
+        focusGoalNotice = nil
+        isFocusGoalSheetPresented = true
+    }
+
+    private func saveDailyFocusGoal(minutes: Int?) async {
+        guard !isSavingFocusGoal else { return }
+        isSavingFocusGoal = true
+        focusGoalNotice = nil
+        defer { isSavingFocusGoal = false }
+
+        do {
+            dailyFocusGoalMinutes = try await updateDailyFocusGoalAction(minutes)
+            isFocusGoalSheetPresented = false
+        } catch {
+            focusGoalNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
 }
 
 private struct DailySnapshotCalendarDay: Identifiable {
@@ -3106,6 +3176,9 @@ private struct DailySnapshotCalendarHero: View {
     let isLoading: Bool
     let isLocked: Bool
     let notice: String?
+    let dailyFocusGoalMinutes: Int?
+    let isSavingFocusGoal: Bool
+    let editFocusGoalAction: () -> Void
     let afterUnlock: () -> Void
 
     var body: some View {
@@ -3130,7 +3203,12 @@ private struct DailySnapshotCalendarHero: View {
                     case .bonds:
                         DailySnapshotBondsHeroContent(snapshot: snapshot)
                     case .focus:
-                        DailySnapshotFocusHeroContent(snapshot: snapshot)
+                        DailySnapshotFocusHeroContent(
+                            snapshot: snapshot,
+                            dailyGoalMinutes: dailyFocusGoalMinutes,
+                            isSavingGoal: isSavingFocusGoal,
+                            editGoalAction: editFocusGoalAction
+                        )
                     case .fish:
                         DailySnapshotFishHeroContent(snapshot: snapshot)
                     }
@@ -3195,6 +3273,9 @@ private struct DailySnapshotCalendarHero: View {
 
 private struct DailySnapshotFocusHeroContent: View {
     let snapshot: DailyVillageSnapshot?
+    let dailyGoalMinutes: Int?
+    let isSavingGoal: Bool
+    let editGoalAction: () -> Void
 
     private var metrics: DailyFocusMetrics {
         snapshot?.focusMetrics ?? .zero
@@ -3205,8 +3286,18 @@ private struct DailySnapshotFocusHeroContent: View {
         return seconds == 0 ? 0 : Int(ceil(Double(seconds) / 60.0))
     }
 
+    private var progressFraction: CGFloat {
+        guard let dailyGoalMinutes, dailyGoalMinutes > 0 else { return 0 }
+        return min(1, CGFloat(focusedMinutes) / CGFloat(dailyGoalMinutes))
+    }
+
+    private var goalText: String {
+        guard let dailyGoalMinutes else { return "Set daily goal" }
+        return "\(dailyGoalMinutes)m goal"
+    }
+
     var body: some View {
-        VStack(spacing: PicoSpacing.standard) {
+        VStack(spacing: PicoSpacing.compact) {
             Spacer(minLength: 0)
 
             VStack(spacing: PicoSpacing.tiny) {
@@ -3223,6 +3314,53 @@ private struct DailySnapshotFocusHeroContent: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
             }
+
+            Button(action: editGoalAction) {
+                VStack(spacing: PicoSpacing.compact) {
+                    HStack(spacing: PicoSpacing.compact) {
+                        Text(goalText)
+                            .font(PicoTypography.captionSemibold)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.76)
+
+                        Spacer(minLength: PicoSpacing.compact)
+
+                        if isSavingGoal {
+                            ProgressView()
+                                .tint(PicoColors.primary)
+                                .scaleEffect(0.76)
+                        } else {
+                            PicoIcon(.pencilRegular, size: 15)
+                                .foregroundStyle(PicoColors.textSecondary)
+                        }
+                    }
+
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule(style: .continuous)
+                                .fill(PicoColors.softSurface)
+
+                            Capsule(style: .continuous)
+                                .fill(PicoColors.primary)
+                                .frame(width: proxy.size.width * progressFraction)
+                        }
+                    }
+                    .frame(height: 8)
+                    .opacity(dailyGoalMinutes == nil ? 0.42 : 1)
+                }
+                .padding(.horizontal, PicoSpacing.standard)
+                .padding(.vertical, PicoSpacing.compact)
+                .background(PicoColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                        .stroke(PicoColors.border, lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(isSavingGoal)
+            .accessibilityLabel(Text(dailyGoalMinutes.map { "Daily focus goal, \($0) minutes" } ?? "Set daily focus goal"))
 
             VStack(spacing: 0) {
                 DailySnapshotFocusMetricRow(
@@ -3281,7 +3419,155 @@ private struct DailySnapshotFocusMetricRow: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
         }
-        .frame(minHeight: 38)
+        .frame(minHeight: 34)
+    }
+}
+
+private struct DailyFocusGoalEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var draftMinutes: String
+    let currentGoalMinutes: Int?
+    let isSaving: Bool
+    let notice: String?
+    let save: (Int?) async -> Void
+
+    init(
+        currentGoalMinutes: Int?,
+        isSaving: Bool,
+        notice: String?,
+        save: @escaping (Int?) async -> Void
+    ) {
+        self.currentGoalMinutes = currentGoalMinutes
+        self.isSaving = isSaving
+        self.notice = notice
+        self.save = save
+        _draftMinutes = State(initialValue: currentGoalMinutes.map(String.init) ?? "")
+    }
+
+    private var parsedGoalMinutes: Int? {
+        let trimmed = draftMinutes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return Int(trimmed)
+    }
+
+    private var validationMessage: String? {
+        let trimmed = draftMinutes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let minutes = Int(trimmed) else {
+            return "Enter whole minutes."
+        }
+        guard DailyFocusGoal.minimumMinutes...DailyFocusGoal.maximumMinutes ~= minutes else {
+            return "Choose 1 to 1440 minutes."
+        }
+        return nil
+    }
+
+    private var canSave: Bool {
+        !isSaving && validationMessage == nil
+    }
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.section) {
+            Capsule(style: .continuous)
+                .fill(PicoColors.border)
+                .frame(width: 42, height: 5)
+
+            VStack(spacing: PicoSpacing.tiny) {
+                Text("Daily focus goal")
+                    .font(PicoTypography.cardTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+
+                Text("Set the minutes you want to focus each day.")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(spacing: PicoSpacing.standard) {
+                TextField("Minutes", text: $draftMinutes)
+                    .keyboardType(.numberPad)
+                    .textInputAutocapitalization(.never)
+                    .font(PicoTypography.largeValue)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .monospacedDigit()
+                    .padding(.horizontal, PicoSpacing.standard)
+                    .frame(height: 72)
+                    .background(PicoColors.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
+                            .stroke(PicoColors.border, lineWidth: 1)
+                    }
+
+                HStack(spacing: PicoSpacing.compact) {
+                    ForEach([30, 60, 90, 120], id: \.self) { minutes in
+                        Button {
+                            draftMinutes = "\(minutes)"
+                        } label: {
+                            Text("\(minutes)m")
+                                .font(PicoTypography.captionSemibold)
+                                .foregroundStyle(PicoColors.textPrimary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, PicoSpacing.compact)
+                                .background(PicoColors.surface)
+                                .clipShape(Capsule(style: .continuous))
+                                .overlay {
+                                    Capsule(style: .continuous)
+                                        .stroke(PicoColors.border, lineWidth: 1)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if let validationMessage {
+                    Text(validationMessage)
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.warning)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if let notice {
+                    Text(notice)
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.warning)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            HStack(spacing: PicoSpacing.compact) {
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Cancel")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PicoSecondaryButtonStyle())
+                .disabled(isSaving)
+
+                Button {
+                    Task {
+                        await save(parsedGoalMinutes)
+                    }
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                            .tint(PicoColors.surface)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Text(parsedGoalMinutes == nil ? "Clear" : "Save")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(PicoPrimaryButtonStyle())
+                .disabled(!canSave)
+            }
+        }
+        .padding(.horizontal, PicoSpacing.cardPadding)
+        .padding(.top, PicoSpacing.standard)
+        .padding(.bottom, PicoSpacing.cardPadding)
+        .onChange(of: currentGoalMinutes) {
+            draftMinutes = currentGoalMinutes.map(String.init) ?? ""
+        }
     }
 }
 
