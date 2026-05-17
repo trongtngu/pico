@@ -62,6 +62,22 @@ struct DailyVillageSnapshotVisitor: Identifiable, Equatable {
     let completedPairSessions: Int
 }
 
+struct DailyFocusMetrics: Equatable {
+    let totalFocusedSeconds: Int
+    let soloFocusSessions: Int
+    let groupFocusSessions: Int
+    let totalFocusSessions: Int
+    let sessionsInterrupted: Int
+
+    static let zero = DailyFocusMetrics(
+        totalFocusedSeconds: 0,
+        soloFocusSessions: 0,
+        groupFocusSessions: 0,
+        totalFocusSessions: 0,
+        sessionsInterrupted: 0
+    )
+}
+
 struct DailyVillageSnapshot: Identifiable, Equatable {
     var id: String { "\(ownerID.uuidString)-\(snapshotDay.rawValue)" }
 
@@ -73,11 +89,20 @@ struct DailyVillageSnapshot: Identifiable, Equatable {
     let visitors: [DailyVillageSnapshotVisitor]
     let focusSessionIDs: [UUID]
     let totalFocusSeconds: Int
+    let focusMetrics: DailyFocusMetrics
     let fishCaughtCount: Int
     let fishCounts: [FishCount]
     let createdAt: Date?
     let updatedAt: Date?
     let notice: String?
+
+    var focusedSecondsForDisplay: Int {
+        max(totalFocusSeconds, focusMetrics.totalFocusedSeconds)
+    }
+
+    var hasFocusActivity: Bool {
+        focusedSecondsForDisplay > 0 || focusMetrics.totalFocusSessions > 0 || !focusSessionIDs.isEmpty
+    }
 }
 
 struct DailySnapshotFocusActivity: Identifiable, Equatable {
@@ -243,6 +268,11 @@ private struct DailyVillageSnapshotResponse: Decodable {
     let skippedVisitorCount: Int
     let focusSessionIds: [UUID]
     let totalFocusSeconds: Int
+    let totalFocusedSeconds: Int
+    let soloFocusSessions: Int
+    let groupFocusSessions: Int
+    let totalFocusSessions: Int
+    let sessionsInterrupted: Int
     let fishCaughtCount: Int
     let fishCounts: [DailySnapshotFishCountResponse]
     let createdAt: String
@@ -257,6 +287,11 @@ private struct DailyVillageSnapshotResponse: Decodable {
         case visitors
         case focusSessionIds
         case totalFocusSeconds
+        case totalFocusedSeconds
+        case soloFocusSessions
+        case groupFocusSessions
+        case totalFocusSessions
+        case sessionsInterrupted
         case fishCaughtCount
         case fishCounts
         case createdAt
@@ -273,6 +308,11 @@ private struct DailyVillageSnapshotResponse: Decodable {
         ownerProfile = try container.decode(DailySnapshotProfileResponse.self, forKey: .ownerProfile)
         focusSessionIds = try container.decodeIfPresent([UUID].self, forKey: .focusSessionIds) ?? []
         totalFocusSeconds = try container.decodeIfPresent(Int.self, forKey: .totalFocusSeconds) ?? 0
+        totalFocusedSeconds = try container.decodeIfPresent(Int.self, forKey: .totalFocusedSeconds) ?? 0
+        soloFocusSessions = try container.decodeIfPresent(Int.self, forKey: .soloFocusSessions) ?? 0
+        groupFocusSessions = try container.decodeIfPresent(Int.self, forKey: .groupFocusSessions) ?? 0
+        totalFocusSessions = try container.decodeIfPresent(Int.self, forKey: .totalFocusSessions) ?? 0
+        sessionsInterrupted = try container.decodeIfPresent(Int.self, forKey: .sessionsInterrupted) ?? 0
         fishCaughtCount = try container.decodeIfPresent(Int.self, forKey: .fishCaughtCount) ?? 0
         fishCounts = try container.decodeIfPresent([DailySnapshotFishCountResponse].self, forKey: .fishCounts) ?? []
         createdAt = try container.decode(String.self, forKey: .createdAt)
@@ -293,6 +333,13 @@ private struct DailyVillageSnapshotResponse: Decodable {
             visitors: visitors.map(\.dailyVillageSnapshotVisitor),
             focusSessionIDs: focusSessionIds,
             totalFocusSeconds: totalFocusSeconds,
+            focusMetrics: DailyFocusMetrics(
+                totalFocusedSeconds: totalFocusedSeconds,
+                soloFocusSessions: soloFocusSessions,
+                groupFocusSessions: groupFocusSessions,
+                totalFocusSessions: totalFocusSessions,
+                sessionsInterrupted: sessionsInterrupted
+            ),
             fishCaughtCount: fishCaughtCount,
             fishCounts: fishCounts.map(\.fishCount),
             createdAt: FocusDateFormatter.date(from: createdAt),

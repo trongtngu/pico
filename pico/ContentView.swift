@@ -2552,6 +2552,7 @@ private struct VillageHeroSection: View {
 private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
     case fish
     case bonds
+    case focus
 
     var id: String { rawValue }
 
@@ -2559,6 +2560,8 @@ private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
         switch self {
         case .bonds:
             "Bonds"
+        case .focus:
+            "Focus"
         case .fish:
             "Catches"
         }
@@ -2568,6 +2571,8 @@ private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
         switch self {
         case .bonds:
             "Scarf_Green"
+        case .focus:
+            "clock_regular"
         case .fish:
             "FishingPole_New"
         }
@@ -2817,7 +2822,7 @@ private struct DailySnapshotCalendarScreen: View {
 
             let snapshotDay = DailySnapshotDay(date: date, calendar: calendar)
             let hasFocus = (focusActivityByDay[snapshotDay] ?? false)
-                || ((snapshotsByDay[snapshotDay]?.totalFocusSeconds ?? 0) > 0)
+                || (snapshotsByDay[snapshotDay]?.hasFocusActivity == true)
             return DailySnapshotCalendarDay(
                 id: snapshotDay.rawValue,
                 date: date,
@@ -2916,7 +2921,7 @@ private struct DailySnapshotCalendarScreen: View {
 
             if let snapshot {
                 snapshotByDay[snapshot.snapshotDay] = snapshot
-                focusActivityByDay[snapshot.snapshotDay] = snapshot.totalFocusSeconds > 0
+                focusActivityByDay[snapshot.snapshotDay] = snapshot.hasFocusActivity
             } else {
                 focusActivityByDay[day] = false
             }
@@ -3124,6 +3129,8 @@ private struct DailySnapshotCalendarHero: View {
                     switch mode {
                     case .bonds:
                         DailySnapshotBondsHeroContent(snapshot: snapshot)
+                    case .focus:
+                        DailySnapshotFocusHeroContent(snapshot: snapshot)
                     case .fish:
                         DailySnapshotFishHeroContent(snapshot: snapshot)
                     }
@@ -3160,7 +3167,8 @@ private struct DailySnapshotCalendarHero: View {
     }
 
     private var focusedTimeText: String {
-        let totalMinutes = max(0, (snapshot?.totalFocusSeconds ?? 0) / 60)
+        let focusedSeconds = max(0, snapshot?.focusedSecondsForDisplay ?? 0)
+        let totalMinutes = focusedSeconds == 0 ? 0 : Int(ceil(Double(focusedSeconds) / 60.0))
         let hours = totalMinutes / 60
         let minutes = totalMinutes % 60
 
@@ -3182,6 +3190,98 @@ private struct DailySnapshotCalendarHero: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PicoCalendarStyle.heroBackground.opacity(0.88))
+    }
+}
+
+private struct DailySnapshotFocusHeroContent: View {
+    let snapshot: DailyVillageSnapshot?
+
+    private var metrics: DailyFocusMetrics {
+        snapshot?.focusMetrics ?? .zero
+    }
+
+    private var focusedMinutes: Int {
+        let seconds = max(0, metrics.totalFocusedSeconds)
+        return seconds == 0 ? 0 : Int(ceil(Double(seconds) / 60.0))
+    }
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            Spacer(minLength: 0)
+
+            VStack(spacing: PicoSpacing.tiny) {
+                Text("\(focusedMinutes)m")
+                    .font(PicoTypography.largeValue)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                Text("Total minutes focused")
+                    .font(PicoTypography.captionSemibold)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+
+            VStack(spacing: 0) {
+                DailySnapshotFocusMetricRow(
+                    label: "Solo focus sessions",
+                    value: metrics.soloFocusSessions
+                )
+
+                PicoCardDivider(horizontalPadding: 0)
+
+                DailySnapshotFocusMetricRow(
+                    label: "Group focus sessions",
+                    value: metrics.groupFocusSessions
+                )
+
+                PicoCardDivider(horizontalPadding: 0)
+
+                DailySnapshotFocusMetricRow(
+                    label: "Total focus sessions",
+                    value: metrics.totalFocusSessions
+                )
+
+                PicoCardDivider(horizontalPadding: 0)
+
+                DailySnapshotFocusMetricRow(
+                    label: "Sessions interrupted",
+                    value: metrics.sessionsInterrupted
+                )
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: PicoCalendarStyle.heroContentHeight)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct DailySnapshotFocusMetricRow: View {
+    let label: String
+    let value: Int
+
+    var body: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            Text(label)
+                .font(PicoTypography.caption)
+                .foregroundStyle(PicoColors.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+
+            Spacer(minLength: PicoSpacing.compact)
+
+            Text("\(max(0, value))")
+                .font(PicoTypography.inlineValue)
+                .foregroundStyle(PicoColors.textPrimary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+        }
+        .frame(minHeight: 38)
     }
 }
 
