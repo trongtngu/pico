@@ -2699,18 +2699,28 @@ private struct DailySnapshotCalendarScreen: View {
             guard picoPlusStore.capabilities.canAccessHistoricalDailySnapshots else { return }
             loadSelectedSnapshotIfNeeded(for: selectedDate)
         }
-        .sheet(isPresented: $isFocusGoalSheetPresented) {
-            DailyFocusGoalEditorSheet(
-                currentGoalMinutes: dailyFocusGoalMinutes,
-                isSaving: isSavingFocusGoal,
-                notice: focusGoalNotice,
-                save: saveDailyFocusGoal
-            )
-            .presentationDetents([.height(420)])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(PicoColors.appBackground)
-            .presentationCornerRadius(PicoCreamCardStyle.sheetCornerRadius)
+        .overlay {
+            if isFocusGoalSheetPresented {
+                DailyFocusGoalEditorModal(
+                    currentGoalMinutes: dailyFocusGoalMinutes,
+                    isSaving: isSavingFocusGoal,
+                    notice: focusGoalNotice,
+                    cancel: dismissFocusGoalEditor,
+                    save: saveDailyFocusGoal
+                )
+                .padding(.horizontal, PicoSpacing.cardPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background {
+                    PicoColors.textPrimary.opacity(0.22)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            dismissFocusGoalEditor()
+                        }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
         }
+        .animation(.snappy(duration: 0.18), value: isFocusGoalSheetPresented)
     }
 
     private var header: some View {
@@ -2999,6 +3009,11 @@ private struct DailySnapshotCalendarScreen: View {
         isFocusGoalSheetPresented = true
     }
 
+    private func dismissFocusGoalEditor() {
+        guard !isSavingFocusGoal else { return }
+        isFocusGoalSheetPresented = false
+    }
+
     private func saveDailyFocusGoal(minutes: Int?) async {
         guard !isSavingFocusGoal else { return }
         isSavingFocusGoal = true
@@ -3187,12 +3202,6 @@ private struct DailySnapshotCalendarHero: View {
                 Text(selectedDate.formatted(.dateTime.month(.abbreviated).day()))
                     .font(PicoTypography.captionSemibold)
                     .foregroundStyle(PicoColors.textSecondary)
-
-                if !isLocked {
-                    Text("\(focusedTimeText) focused")
-                        .font(PicoTypography.caption)
-                        .foregroundStyle(PicoColors.textPrimary)
-                }
             }
 
             ZStack {
@@ -3244,19 +3253,6 @@ private struct DailySnapshotCalendarHero: View {
         }
     }
 
-    private var focusedTimeText: String {
-        let focusedSeconds = max(0, snapshot?.focusedSecondsForDisplay ?? 0)
-        let totalMinutes = focusedSeconds == 0 ? 0 : Int(ceil(Double(focusedSeconds) / 60.0))
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        }
-
-        return "\(minutes)m"
-    }
-
     private var loadingOverlay: some View {
         VStack(spacing: PicoSpacing.compact) {
             ProgressView()
@@ -3286,43 +3282,53 @@ private struct DailySnapshotFocusHeroContent: View {
         return seconds == 0 ? 0 : Int(ceil(Double(seconds) / 60.0))
     }
 
+    private var remainingGoalMinutes: Int? {
+        guard let dailyGoalMinutes else { return nil }
+        return max(dailyGoalMinutes - focusedMinutes, 0)
+    }
+
     private var progressFraction: CGFloat {
         guard let dailyGoalMinutes, dailyGoalMinutes > 0 else { return 0 }
         return min(1, CGFloat(focusedMinutes) / CGFloat(dailyGoalMinutes))
     }
 
-    private var goalText: String {
-        guard let dailyGoalMinutes else { return "Set daily goal" }
-        return "\(dailyGoalMinutes)m goal"
+    private var progressValueText: String {
+        guard let dailyGoalMinutes else {
+            return "\(Self.formattedMinutes(focusedMinutes)) / Set goal"
+        }
+
+        return "\(Self.formattedMinutes(focusedMinutes)) / \(Self.formattedMinutes(dailyGoalMinutes))"
+    }
+
+    private var remainingText: String {
+        guard let remainingGoalMinutes else { return "Set daily goal" }
+        guard remainingGoalMinutes > 0 else { return "Goal met" }
+        return "\(Self.formattedMinutes(remainingGoalMinutes)) left"
+    }
+
+    private var progressAccessibilityText: String {
+        guard let dailyGoalMinutes else {
+            return "\(Self.formattedMinutes(focusedMinutes)) focused. Set daily focus goal."
+        }
+
+        if let remainingGoalMinutes, remainingGoalMinutes > 0 {
+            return "\(Self.formattedMinutes(focusedMinutes)) focused out of \(Self.formattedMinutes(dailyGoalMinutes)). \(Self.formattedMinutes(remainingGoalMinutes)) left."
+        }
+
+        return "\(Self.formattedMinutes(focusedMinutes)) focused out of \(Self.formattedMinutes(dailyGoalMinutes)). Goal met."
     }
 
     var body: some View {
         VStack(spacing: PicoSpacing.compact) {
             Spacer(minLength: 0)
 
-            VStack(spacing: PicoSpacing.tiny) {
-                Text("\(focusedMinutes)m")
-                    .font(PicoTypography.largeValue)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-
-                Text("Total minutes focused")
-                    .font(PicoTypography.captionSemibold)
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-            }
-
             Button(action: editGoalAction) {
-                VStack(spacing: PicoSpacing.compact) {
+                VStack(alignment: .leading, spacing: PicoSpacing.compact) {
                     HStack(spacing: PicoSpacing.compact) {
-                        Text(goalText)
+                        Text("Focus")
                             .font(PicoTypography.captionSemibold)
-                            .foregroundStyle(PicoColors.textPrimary)
+                            .foregroundStyle(PicoColors.textSecondary)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.76)
 
                         Spacer(minLength: PicoSpacing.compact)
 
@@ -3330,10 +3336,23 @@ private struct DailySnapshotFocusHeroContent: View {
                             ProgressView()
                                 .tint(PicoColors.primary)
                                 .scaleEffect(0.76)
-                        } else {
-                            PicoIcon(.pencilRegular, size: 15)
-                                .foregroundStyle(PicoColors.textSecondary)
                         }
+                    }
+
+                    HStack(alignment: .firstTextBaseline, spacing: PicoSpacing.compact) {
+                        Text(progressValueText)
+                            .font(PicoTypography.captionSemibold)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.76)
+
+                        Spacer(minLength: PicoSpacing.compact)
+
+                        Text(remainingText)
+                            .font(PicoTypography.caption)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.76)
                     }
 
                     GeometryReader { proxy in
@@ -3349,45 +3368,32 @@ private struct DailySnapshotFocusHeroContent: View {
                     .frame(height: 8)
                     .opacity(dailyGoalMinutes == nil ? 0.42 : 1)
                 }
-                .padding(.horizontal, PicoSpacing.standard)
-                .padding(.vertical, PicoSpacing.compact)
-                .background(PicoColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: PicoRadius.medium, style: .continuous)
-                        .stroke(PicoColors.border, lineWidth: 1)
-                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(isSavingGoal)
-            .accessibilityLabel(Text(dailyGoalMinutes.map { "Daily focus goal, \($0) minutes" } ?? "Set daily focus goal"))
+            .accessibilityLabel(Text("Focus goal"))
+            .accessibilityValue(Text(progressAccessibilityText))
+            .accessibilityHint(Text("Opens daily focus goal editor"))
 
-            VStack(spacing: 0) {
-                DailySnapshotFocusMetricRow(
-                    label: "Solo focus sessions",
-                    value: metrics.soloFocusSessions
-                )
+            PicoCardDivider(horizontalPadding: 0)
+                .opacity(0.68)
+                .padding(.vertical, PicoSpacing.tiny)
 
-                PicoCardDivider(horizontalPadding: 0)
+            VStack(spacing: PicoSpacing.compact) {
+                Text("Session")
+                    .font(PicoTypography.captionSemibold)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                DailySnapshotFocusMetricRow(
-                    label: "Group focus sessions",
-                    value: metrics.groupFocusSessions
-                )
-
-                PicoCardDivider(horizontalPadding: 0)
-
-                DailySnapshotFocusMetricRow(
-                    label: "Total focus sessions",
-                    value: metrics.totalFocusSessions
-                )
-
-                PicoCardDivider(horizontalPadding: 0)
-
-                DailySnapshotFocusMetricRow(
-                    label: "Sessions interrupted",
-                    value: metrics.sessionsInterrupted
-                )
+                LazyVGrid(columns: sessionMetricColumns, spacing: PicoSpacing.compact) {
+                    ForEach(sessionMetricItems, id: \.label) { item in
+                        DailySnapshotFocusMetricPill(
+                            label: item.label,
+                            value: item.value
+                        )
+                    }
+                }
             }
 
             Spacer(minLength: 0)
@@ -3396,21 +3402,52 @@ private struct DailySnapshotFocusHeroContent: View {
         .frame(height: PicoCalendarStyle.heroContentHeight)
         .accessibilityElement(children: .combine)
     }
+
+    private var completedFocusSessions: Int {
+        max(metrics.totalFocusSessions - metrics.sessionsInterrupted, 0)
+    }
+
+    private var sessionMetricItems: [(label: String, value: Int)] {
+        [
+            ("Completed", completedFocusSessions),
+            ("Interrupted", metrics.sessionsInterrupted),
+            ("Solo", metrics.soloFocusSessions),
+            ("With friends", metrics.groupFocusSessions)
+        ]
+    }
+
+    private var sessionMetricColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: PicoSpacing.compact), count: 2)
+    }
+
+    private static func formattedMinutes(_ minutes: Int) -> String {
+        let clampedMinutes = max(0, minutes)
+        let hours = clampedMinutes / 60
+        let remainingMinutes = clampedMinutes % 60
+
+        if hours > 0, remainingMinutes > 0 {
+            return "\(hours)h \(remainingMinutes)m"
+        }
+
+        if hours > 0 {
+            return "\(hours)h"
+        }
+
+        return "\(remainingMinutes)m"
+    }
 }
 
-private struct DailySnapshotFocusMetricRow: View {
+private struct DailySnapshotFocusMetricPill: View {
     let label: String
     let value: Int
 
     var body: some View {
-        HStack(spacing: PicoSpacing.compact) {
+        VStack(spacing: PicoSpacing.tiny) {
             Text(label)
                 .font(PicoTypography.caption)
                 .foregroundStyle(PicoColors.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
-
-            Spacer(minLength: PicoSpacing.compact)
 
             Text("\(max(0, value))")
                 .font(PicoTypography.inlineValue)
@@ -3419,27 +3456,32 @@ private struct DailySnapshotFocusMetricRow: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
         }
-        .frame(minHeight: 34)
+        .frame(maxWidth: .infinity)
+        .frame(height: 58)
+        .background(PicoColors.softSurface.opacity(0.72))
+        .clipShape(Capsule(style: .continuous))
     }
 }
 
-private struct DailyFocusGoalEditorSheet: View {
-    @Environment(\.dismiss) private var dismiss
+private struct DailyFocusGoalEditorModal: View {
     @State private var draftMinutes: String
     let currentGoalMinutes: Int?
     let isSaving: Bool
     let notice: String?
+    let cancel: () -> Void
     let save: (Int?) async -> Void
 
     init(
         currentGoalMinutes: Int?,
         isSaving: Bool,
         notice: String?,
+        cancel: @escaping () -> Void,
         save: @escaping (Int?) async -> Void
     ) {
         self.currentGoalMinutes = currentGoalMinutes
         self.isSaving = isSaving
         self.notice = notice
+        self.cancel = cancel
         self.save = save
         _draftMinutes = State(initialValue: currentGoalMinutes.map(String.init) ?? "")
     }
@@ -3468,19 +3510,30 @@ private struct DailyFocusGoalEditorSheet: View {
 
     var body: some View {
         VStack(spacing: PicoSpacing.section) {
-            Capsule(style: .continuous)
-                .fill(PicoColors.border)
-                .frame(width: 42, height: 5)
+            HStack(alignment: .top, spacing: PicoSpacing.standard) {
+                VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
+                    Text("Daily focus goal")
+                        .font(PicoTypography.cardTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
 
-            VStack(spacing: PicoSpacing.tiny) {
-                Text("Daily focus goal")
-                    .font(PicoTypography.cardTitle)
-                    .foregroundStyle(PicoColors.textPrimary)
+                    Text("Set the minutes you want to focus each day.")
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-                Text("Set the minutes you want to focus each day.")
-                    .font(PicoTypography.caption)
-                    .foregroundStyle(PicoColors.textSecondary)
-                    .multilineTextAlignment(.center)
+                Spacer(minLength: 0)
+
+                Button(action: cancel) {
+                    PicoIcon(.xMarkRegular, size: 16)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 34, height: 34)
+                        .background(PicoColors.softSurface)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isSaving)
+                .accessibilityLabel(Text("Close daily focus goal editor"))
             }
 
             VStack(spacing: PicoSpacing.standard) {
@@ -3500,27 +3553,6 @@ private struct DailyFocusGoalEditorSheet: View {
                             .stroke(PicoColors.border, lineWidth: 1)
                     }
 
-                HStack(spacing: PicoSpacing.compact) {
-                    ForEach([30, 60, 90, 120], id: \.self) { minutes in
-                        Button {
-                            draftMinutes = "\(minutes)"
-                        } label: {
-                            Text("\(minutes)m")
-                                .font(PicoTypography.captionSemibold)
-                                .foregroundStyle(PicoColors.textPrimary)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, PicoSpacing.compact)
-                                .background(PicoColors.surface)
-                                .clipShape(Capsule(style: .continuous))
-                                .overlay {
-                                    Capsule(style: .continuous)
-                                        .stroke(PicoColors.border, lineWidth: 1)
-                                }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
                 if let validationMessage {
                     Text(validationMessage)
                         .font(PicoTypography.caption)
@@ -3536,7 +3568,7 @@ private struct DailyFocusGoalEditorSheet: View {
 
             HStack(spacing: PicoSpacing.compact) {
                 Button {
-                    dismiss()
+                    cancel()
                 } label: {
                     Text("Cancel")
                         .frame(maxWidth: .infinity)
@@ -3563,8 +3595,16 @@ private struct DailyFocusGoalEditorSheet: View {
             }
         }
         .padding(.horizontal, PicoSpacing.cardPadding)
-        .padding(.top, PicoSpacing.standard)
         .padding(.bottom, PicoSpacing.cardPadding)
+        .padding(.top, PicoSpacing.cardPadding)
+        .frame(maxWidth: 360)
+        .background(PicoColors.appBackground)
+        .clipShape(RoundedRectangle(cornerRadius: PicoCreamCardStyle.sheetCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: PicoCreamCardStyle.sheetCornerRadius, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
+        .shadow(color: PicoColors.textPrimary.opacity(0.14), radius: 24, x: 0, y: 14)
         .onChange(of: currentGoalMinutes) {
             draftMinutes = currentGoalMinutes.map(String.init) ?? ""
         }
