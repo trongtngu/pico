@@ -56,6 +56,19 @@ final class PicoPlusStore: ObservableObject {
     }
 
     func presentPaywall(source: PicoPlusPaywallSource, authSession: AuthSession?) async {
+        guard let authSession else {
+            notice = "Create an account or log in to unlock Plus."
+            Analytics.track(AnalyticsEvent(
+                id: .picoPlusPaywallFailed,
+                parameters: [
+                    .placement: .string(source.placement.rawValue),
+                    .source: .string(source.analyticsValue),
+                    .message: .string("missing_auth_session")
+                ]
+            ))
+            return
+        }
+
         notice = nil
         let placement = source.placement
         trackGateHit(for: source)

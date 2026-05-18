@@ -34,7 +34,7 @@ struct AuthGateView: View {
 }
 
 private struct AuthRootView: View {
-    @StateObject private var picoPlusStore = PicoPlusStore()
+    @EnvironmentObject private var sessionStore: AuthSessionStore
     @State private var route: AuthRoute = .entry
     @State private var loginReturnPolicy: AuthReturnPolicy = .route(.entry)
     @State private var signupReturnPolicy: AuthReturnPolicy = .lockedAfterOnboarding
@@ -52,6 +52,7 @@ private struct AuthRootView: View {
                 case .entry:
                     AuthEntryView(
                         onGetStarted: {
+                            sessionStore.clearOnboardingPicoPlusPaywallPending()
                             onboardingDisplayName = ""
                             onboardingInitialStep = .welcome
                             activeOnboardingFlowContext = nil
@@ -70,6 +71,7 @@ private struct AuthRootView: View {
                         initialDisplayName: onboardingDisplayName,
                         initialFlowContext: activeOnboardingFlowContext,
                         onBackToEntry: {
+                            sessionStore.clearOnboardingPicoPlusPaywallPending()
                             onboardingInitialStep = .welcome
                             activeOnboardingFlowContext = nil
                             signupOnboardingFlowContext = nil
@@ -152,7 +154,6 @@ private struct AuthRootView: View {
             .background(PicoColors.appBackground.ignoresSafeArea())
             .tint(PicoColors.primary)
         }
-        .environmentObject(picoPlusStore)
     }
 }
 

@@ -20,6 +20,7 @@ final class AuthSessionStore: ObservableObject {
     @Published private(set) var isProfileLoading = false
     @Published private(set) var isProfileSaving = false
     @Published private(set) var profileNotice: String?
+    @Published private(set) var shouldPresentOnboardingPicoPlusPaywall = false
     @Published var notice: String?
 
     private let authService: AuthService
@@ -119,9 +120,24 @@ final class AuthSessionStore: ObservableObject {
         pendingProfileCompletionAnalytics = nil
     }
 
+    func markOnboardingPicoPlusPaywallPending() {
+        shouldPresentOnboardingPicoPlusPaywall = true
+    }
+
+    func clearOnboardingPicoPlusPaywallPending() {
+        shouldPresentOnboardingPicoPlusPaywall = false
+    }
+
+    func consumeOnboardingPicoPlusPaywallPending() -> Bool {
+        guard shouldPresentOnboardingPicoPlusPaywall else { return false }
+        shouldPresentOnboardingPicoPlusPaywall = false
+        return true
+    }
+
     func signOut() {
         session = nil
         pendingProfileCompletionAnalytics = nil
+        shouldPresentOnboardingPicoPlusPaywall = false
         notice = nil
         resetProfile()
         Task {

@@ -29,18 +29,23 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: "Missing Supabase function environment" }, 500);
   }
 
-  const eventType = stringValue(payload.event) ?? stringValue(payload.type) ?? stringValue(payload.eventName);
-  const eventID = stringValue(payload.id) ?? stringValue(payload.eventId) ?? crypto.randomUUID();
   const data = objectValue(payload.data) ?? {};
+  const eventType = stringValue(payload.type)
+    ?? stringValue(payload.event)
+    ?? stringValue(payload.eventName)
+    ?? stringValue(data.name);
+  const eventID = stringValue(payload.id)
+    ?? stringValue(payload.eventId)
+    ?? stringValue(data.id)
+    ?? crypto.randomUUID();
   const userAttributes = objectValue(data.userAttributes) ?? {};
-  const appUserID = normalizedUUID(
+  const appUserID = normalizedUserID(
     stringValue(data.appUserId)
       ?? stringValue(data.app_user_id)
-      ?? stringValue(data.originalAppUserId)
-      ?? stringValue(data.original_app_user_id)
+      ?? stringValue(payload.appUserId)
+      ?? stringValue(payload.app_user_id)
       ?? stringValue(userAttributes.user_id)
-      ?? stringValue(userAttributes.userID)
-      ?? stringValue(payload.appUserId),
+      ?? stringValue(userAttributes.userID),
   );
 
   const supabase = createClient(supabaseURL, serviceRoleKey, {
@@ -160,13 +165,18 @@ function timestampValue(value: unknown): string | null {
   return null;
 }
 
-function normalizedUUID(value: string | undefined): string | null {
+function normalizedUserID(value: string | undefined): string | null {
   if (!value) {
     return null;
   }
 
-  const match = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  return match?.[0].toLowerCase() ?? null;
+  const trimmedValue = value.trim();
+  if (trimmedValue.startsWith("$SuperwallAlias:")) {
+    return null;
+  }
+
+  const match = trimmedValue.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  return match ? trimmedValue.toLowerCase() : null;
 }
 
 function objectValue(value: unknown): JsonObject | undefined {

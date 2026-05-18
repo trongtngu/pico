@@ -83,7 +83,6 @@ private struct PicoLogoImage: View {
 
 struct OnboardingSequenceView: View {
     @EnvironmentObject private var sessionStore: AuthSessionStore
-    @EnvironmentObject private var picoPlusStore: PicoPlusStore
 
     let onBackToEntry: () -> Void
     let onSignup: (String, OnboardingFlowContext) -> Void
@@ -101,7 +100,6 @@ struct OnboardingSequenceView: View {
     @State private var onboardingCelebrationFish = OnboardingRareFreshwaterFish.random()
     @State private var appleSignInNonce: String?
     @State private var hasTrackedAuthHandoffStepCompletion = false
-    @State private var isPresentingOnboardingPaywall = false
     @State private var onboardingAnalytics: OnboardingAnalytics
     @FocusState private var isDisplayNameFocused: Bool
 
@@ -172,8 +170,6 @@ struct OnboardingSequenceView: View {
     }
 
     private var isPrimaryCTAEnabled: Bool {
-        guard !isPresentingOnboardingPaywall else { return false }
-
         return switch currentStep {
         case .displayName:
             (1...40).contains(normalizedDisplayName.count)
@@ -384,8 +380,7 @@ struct OnboardingSequenceView: View {
         onboardingAnalytics.trackActionTapped(primaryCTAAnalyticsAction, step: currentStep)
 
         if currentStep == .focusWithFriends {
-            presentOnboardingCompletePaywall()
-            return
+            sessionStore.markOnboardingPicoPlusPaywallPending()
         }
 
         isDisplayNameFocused = false
@@ -482,20 +477,6 @@ struct OnboardingSequenceView: View {
         }
 
         currentStep = steps[currentIndex + 1]
-    }
-
-    private func presentOnboardingCompletePaywall() {
-        guard !isPresentingOnboardingPaywall else { return }
-
-        isPresentingOnboardingPaywall = true
-        Task { @MainActor in
-            await picoPlusStore.presentPaywall(
-                source: .onboardingComplete(placement: .onboardingComplete),
-                authSession: sessionStore.session
-            )
-            isPresentingOnboardingPaywall = false
-            goForward()
-        }
     }
 
     private func goBack() {

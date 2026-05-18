@@ -98,6 +98,7 @@ struct AppShellView: View {
             await sessionStore.loadProfileIfNeeded()
             picoPlusStore.configureIdentity(session: sessionStore.session, profile: sessionStore.profile)
             await picoPlusStore.refresh(for: sessionStore.session)
+            await presentPendingOnboardingPlusPaywallIfNeeded()
             islandStore.configure(
                 for: sessionStore.session?.user?.id,
                 ownedIslandIDs: sessionStore.ownedIslandIDs
@@ -118,6 +119,17 @@ struct AppShellView: View {
         .onChange(of: sessionStore.ownedIslandIDs) {
             islandStore.updateOwnedIslandIDs(sessionStore.ownedIslandIDs)
             focusStore.updateSelectedIslandID(islandStore.selectedIslandID)
+        }
+        .onChange(of: sessionStore.profile) {
+            Task {
+                picoPlusStore.configureIdentity(session: sessionStore.session, profile: sessionStore.profile)
+                await presentPendingOnboardingPlusPaywallIfNeeded()
+            }
+        }
+        .onChange(of: sessionStore.shouldPresentOnboardingPicoPlusPaywall) {
+            Task {
+                await presentPendingOnboardingPlusPaywallIfNeeded()
+            }
         }
         .onChange(of: islandStore.selectedIsland) {
             focusStore.updateSelectedIslandID(islandStore.selectedIslandID)
@@ -181,6 +193,7 @@ struct AppShellView: View {
                     await sessionStore.refreshSessionIfNeeded()
                     picoPlusStore.configureIdentity(session: sessionStore.session, profile: sessionStore.profile)
                     await picoPlusStore.refresh(for: sessionStore.session)
+                    await presentPendingOnboardingPlusPaywallIfNeeded()
                     await focusStore.handleSceneBecameActive(for: sessionStore.session)
                 }
             case .background:
@@ -260,6 +273,28 @@ struct AppShellView: View {
         await villageStore.loadResidents(for: sessionStore.session, force: true)
         focusStore.updateKnownVillageResidentIDs(currentVillageResidentIDs)
         await berryStore.loadBalance(for: sessionStore.session)
+    }
+
+    private func presentPendingOnboardingPlusPaywallIfNeeded() async {
+        guard sessionStore.shouldPresentOnboardingPicoPlusPaywall,
+              let session = sessionStore.session,
+              let profile = sessionStore.profile,
+              !profile.requiresProfileCompletion
+        else {
+            return
+        }
+
+        guard sessionStore.consumeOnboardingPicoPlusPaywallPending() else { return }
+
+        picoPlusStore.configureIdentity(session: session, profile: profile)
+        await picoPlusStore.refresh(for: session)
+
+        guard !picoPlusStore.capabilities.isPlusActive else { return }
+
+        await picoPlusStore.presentPaywall(
+            source: .onboardingComplete(placement: .onboardingComplete),
+            authSession: session
+        )
     }
 }
 
