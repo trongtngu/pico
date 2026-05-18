@@ -112,6 +112,40 @@ struct DailySnapshotFocusActivity: Identifiable, Equatable {
     let hasFocus: Bool
 }
 
+struct DailyFocusDistributionBucket: Identifiable, Equatable {
+    var id: String { "\(snapshotDay.rawValue)-\(bucketHour)" }
+
+    let snapshotDay: DailySnapshotDay
+    let bucketHour: Int
+    let focusedSeconds: Int
+}
+
+struct DailyFocusDistribution: Identifiable, Equatable {
+    var id: String { snapshotDay.rawValue }
+
+    let snapshotDay: DailySnapshotDay
+    let buckets: [DailyFocusDistributionBucket]
+    let metrics: DailyFocusMetrics
+
+    var totalFocusedSeconds: Int {
+        max(metrics.totalFocusedSeconds, buckets.reduce(0) { $0 + max(0, $1.focusedSeconds) })
+    }
+
+    static func empty(day: DailySnapshotDay) -> DailyFocusDistribution {
+        DailyFocusDistribution(
+            snapshotDay: day,
+            buckets: (0..<24).map { hour in
+                DailyFocusDistributionBucket(
+                    snapshotDay: day,
+                    bucketHour: hour,
+                    focusedSeconds: 0
+                )
+            },
+            metrics: .zero
+        )
+    }
+}
+
 enum DailyFocusGoal {
     static let minimumMinutes = 1
     static let maximumMinutes = 1440
@@ -191,6 +225,20 @@ final class DailySnapshotService {
         return response.first?.dailyFocusGoalMinutes
     }
 
+    func fetchFocusDistribution(
+        day: DailySnapshotDay,
+        for authSession: AuthSession
+    ) async throws -> DailyFocusDistribution {
+        let response: [DailyFocusDistributionResponse] = try await send(
+            path: "/rest/v1/rpc/fetch_daily_focus_distribution",
+            method: "POST",
+            body: FetchDailyFocusDistributionRequest(requestedSnapshotDay: day),
+            accessToken: authSession.accessToken
+        )
+
+        return DailyFocusDistribution(response: response, fallbackDay: day)
+    }
+
     func updateDailyFocusGoal(minutes: Int?, for authSession: AuthSession) async throws -> Int? {
         let response: [DailyFocusGoalResponse] = try await send(
             path: "/rest/v1/rpc/set_daily_focus_goal",
@@ -268,6 +316,10 @@ private struct FetchDailySnapshotRequest: Encodable {
     let requestedSnapshotDay: DailySnapshotDay
 }
 
+private struct FetchDailyFocusDistributionRequest: Encodable {
+    let requestedSnapshotDay: DailySnapshotDay
+}
+
 private struct ListDailyFocusActivityRequest: Encodable {
     let startDay: DailySnapshotDay
     let endDay: DailySnapshotDay
@@ -291,6 +343,54 @@ private struct DailySnapshotFocusActivityResponse: Decodable {
         DailySnapshotFocusActivity(
             snapshotDay: snapshotDay,
             hasFocus: hasFocus
+        )
+    }
+}
+
+private struct DailyFocusDistributionResponse: Decodable {
+    let snapshotDay: DailySnapshotDay
+    let bucketHour: Int
+    let focusedSeconds: Int
+    let totalFocusedSeconds: Int
+    let soloFocusSessions: Int
+    let groupFocusSessions: Int
+    let totalFocusSessions: Int
+    let sessionsInterrupted: Int
+}
+
+private extension DailyFocusDistribution {
+    init(response: [DailyFocusDistributionResponse], fallbackDay: DailySnapshotDay) {
+        guard let first = response.first else {
+            self = .empty(day: fallbackDay)
+            return
+        }
+
+        guard first.totalFocusSessions > 0 || first.totalFocusedSeconds > 0 else {
+            self = .empty(day: first.snapshotDay)
+            return
+        }
+
+        let rowsByHour = Dictionary(uniqueKeysWithValues: response.map { row in
+            (row.bucketHour, row)
+        })
+        let snapshotDay = first.snapshotDay
+
+        self.init(
+            snapshotDay: snapshotDay,
+            buckets: (0..<24).map { hour in
+                DailyFocusDistributionBucket(
+                    snapshotDay: snapshotDay,
+                    bucketHour: hour,
+                    focusedSeconds: max(0, rowsByHour[hour]?.focusedSeconds ?? 0)
+                )
+            },
+            metrics: DailyFocusMetrics(
+                totalFocusedSeconds: max(0, first.totalFocusedSeconds),
+                soloFocusSessions: max(0, first.soloFocusSessions),
+                groupFocusSessions: max(0, first.groupFocusSessions),
+                totalFocusSessions: max(0, first.totalFocusSessions),
+                sessionsInterrupted: max(0, first.sessionsInterrupted)
+            )
         )
     }
 }

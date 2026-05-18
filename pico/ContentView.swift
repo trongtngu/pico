@@ -808,6 +808,7 @@ private struct HomePage: View {
                 maximumDate: snapshotPickerMaximumDate,
                 fetchFocusActivityAction: fetchCalendarFocusActivity,
                 fetchSnapshotAction: fetchCalendarSnapshot,
+                fetchFocusDistributionAction: fetchCalendarFocusDistribution,
                 fetchDailyFocusGoalAction: fetchCalendarDailyFocusGoal,
                 updateDailyFocusGoalAction: updateCalendarDailyFocusGoal
             )
@@ -1040,6 +1041,11 @@ private struct HomePage: View {
     private func fetchCalendarDailyFocusGoal() async throws -> Int? {
         guard let session = sessionStore.session else { return nil }
         return try await dailySnapshotService.fetchDailyFocusGoal(for: session)
+    }
+
+    private func fetchCalendarFocusDistribution(day: DailySnapshotDay) async throws -> DailyFocusDistribution {
+        guard let session = sessionStore.session else { return .empty(day: day) }
+        return try await dailySnapshotService.fetchFocusDistribution(day: day, for: session)
     }
 
     private func updateCalendarDailyFocusGoal(minutes: Int?) async throws -> Int? {
@@ -2564,7 +2570,6 @@ private struct VillageHeroSection: View {
 private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
     case fish
     case bonds
-    case focus
 
     var id: String { rawValue }
 
@@ -2572,8 +2577,6 @@ private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
         switch self {
         case .bonds:
             "Bonds"
-        case .focus:
-            "Focus"
         case .fish:
             "Catches"
         }
@@ -2583,10 +2586,24 @@ private enum DailySnapshotHeroMode: String, CaseIterable, Identifiable {
         switch self {
         case .bonds:
             "Scarf_Green"
-        case .focus:
-            "clock_regular"
         case .fish:
             "FishingPole_New"
+        }
+    }
+}
+
+private enum DailySnapshotScreenTab: String, CaseIterable, Identifiable {
+    case calendar
+    case stats
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .calendar:
+            "Calendar"
+        case .stats:
+            "Stats"
         }
     }
 }
@@ -2596,25 +2613,32 @@ private struct DailySnapshotCalendarScreen: View {
     let maximumDate: Date
     let fetchFocusActivityAction: (DailySnapshotDay, DailySnapshotDay) async throws -> [DailySnapshotFocusActivity]
     let fetchSnapshotAction: (DailySnapshotDay) async throws -> DailyVillageSnapshot?
+    let fetchFocusDistributionAction: (DailySnapshotDay) async throws -> DailyFocusDistribution
     let fetchDailyFocusGoalAction: () async throws -> Int?
     let updateDailyFocusGoalAction: (Int?) async throws -> Int?
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var sessionStore: AuthSessionStore
     @EnvironmentObject private var picoPlusStore: PicoPlusStore
+    @State private var selectedScreenTab: DailySnapshotScreenTab = .calendar
     @State private var displayedMonth = Calendar.current.startOfDay(for: Date())
     @State private var heroMode: DailySnapshotHeroMode = .fish
     @State private var selectedDate = Date()
+    @State private var selectedStatsDate = Date()
     @State private var snapshotByDay: [DailySnapshotDay: DailyVillageSnapshot] = [:]
     @State private var focusActivityByDay: [DailySnapshotDay: Bool] = [:]
+    @State private var focusDistributionByDay: [DailySnapshotDay: DailyFocusDistribution] = [:]
     @State private var loadedFocusActivityMonths: Set<DailySnapshotDay> = []
     @State private var loadingFocusActivityMonths: Set<DailySnapshotDay> = []
+    @State private var loadingFocusDistributionDays: Set<DailySnapshotDay> = []
     @State private var loadState: DailySnapshotLoadState = .idle
+    @State private var statsLoadState: DailySnapshotLoadState = .idle
     @State private var dailyFocusGoalMinutes: Int?
     @State private var isFocusGoalSheetPresented = false
     @State private var isLoadingFocusGoal = false
     @State private var isSavingFocusGoal = false
     @State private var focusGoalNotice: String?
     @State private var notice: String?
+    @State private var statsNotice: String?
 
     private var calendar: Calendar {
         .current
@@ -2622,6 +2646,10 @@ private struct DailySnapshotCalendarScreen: View {
 
     private var selectedSnapshotDay: DailySnapshotDay {
         DailySnapshotDay(date: selectedDate, calendar: calendar)
+    }
+
+    private var selectedStatsDay: DailySnapshotDay {
+        DailySnapshotDay(date: selectedStatsDate, calendar: calendar)
     }
 
     private var snapshotsByDay: [DailySnapshotDay: DailyVillageSnapshot] {
@@ -2632,12 +2660,20 @@ private struct DailySnapshotCalendarScreen: View {
         snapshotByDay[selectedSnapshotDay]
     }
 
+    private var selectedFocusDistribution: DailyFocusDistribution {
+        focusDistributionByDay[selectedStatsDay] ?? .empty(day: selectedStatsDay)
+    }
+
     private var displayedMonthTitle: String {
         displayedMonth.formatted(.dateTime.month(.wide).year())
     }
 
     private var canGoToNextMonth: Bool {
         monthStart(for: displayedMonth) < monthStart(for: maximumDate)
+    }
+
+    private var canGoToNextStatsDay: Bool {
+        calendar.startOfDay(for: selectedStatsDate) < maximumDate
     }
 
     private var monthDays: [DailySnapshotCalendarDay] {
@@ -2648,28 +2684,24 @@ private struct DailySnapshotCalendarScreen: View {
         !picoPlusStore.capabilities.canAccessDailySnapshot(isPastDay: isPastDay(selectedDate))
     }
 
+    private var isStatsLocked: Bool {
+        !picoPlusStore.capabilities.isPlusActive
+    }
+
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
                 VStack(spacing: PicoSpacing.section) {
                     header
 
-                    DailySnapshotCalendarHero(
-                        selectedDate: selectedDate,
-                        snapshot: selectedSnapshot,
-                        mode: heroMode,
-                        isLoading: loadState == .loading,
-                        isLocked: selectedDayRequiresPlus,
-                        notice: selectedDayRequiresPlus ? picoPlusStore.notice : notice,
-                        dailyFocusGoalMinutes: dailyFocusGoalMinutes,
-                        isSavingFocusGoal: isSavingFocusGoal,
-                        editFocusGoalAction: presentFocusGoalEditor,
-                        afterUnlock: loadSelectedSnapshotAfterPlusUnlock
-                    )
-
-                    heroModePills
-
-                    calendarPanel
+                    Group {
+                        switch selectedScreenTab {
+                        case .calendar:
+                            calendarTab
+                        case .stats:
+                            statsTab
+                        }
+                    }
                 }
                 .padding(.horizontal, PicoSpacing.standard)
                 .padding(.top, 0)
@@ -2680,11 +2712,11 @@ private struct DailySnapshotCalendarScreen: View {
         .background(PicoCalendarStyle.background.ignoresSafeArea())
         .onAppear {
             selectedDate = initialDate
+            selectedStatsDate = maximumDate
             let selectedMonth = monthStart(for: initialDate)
             displayedMonth = selectedMonth
             loadDisplayedMonthActivityIfNeeded(for: selectedMonth)
             loadSelectedSnapshotIfNeeded(for: initialDate)
-            loadDailyFocusGoalIfNeeded()
         }
         .onChange(of: selectedDate) {
             let selectedMonth = monthStart(for: selectedDate)
@@ -2695,9 +2727,17 @@ private struct DailySnapshotCalendarScreen: View {
         .onChange(of: displayedMonth) {
             loadDisplayedMonthActivityIfNeeded(for: displayedMonth)
         }
+        .onChange(of: selectedStatsDate) {
+            loadStatsIfNeeded()
+        }
+        .onChange(of: selectedScreenTab) {
+            loadStatsIfNeeded()
+        }
         .onChange(of: picoPlusStore.capabilities) {
-            guard picoPlusStore.capabilities.canAccessHistoricalDailySnapshots else { return }
-            loadSelectedSnapshotIfNeeded(for: selectedDate)
+            if picoPlusStore.capabilities.canAccessHistoricalDailySnapshots {
+                loadSelectedSnapshotIfNeeded(for: selectedDate)
+            }
+            loadStatsIfNeeded()
         }
         .overlay {
             if isFocusGoalSheetPresented {
@@ -2724,24 +2764,89 @@ private struct DailySnapshotCalendarScreen: View {
     }
 
     private var header: some View {
-        HStack {
-            Spacer(minLength: 0)
+        VStack(spacing: PicoSpacing.compact) {
+            HStack {
+                Spacer(minLength: 0)
 
-            Button {
-                dismiss()
-            } label: {
-                PicoIcon(.xMarkRegular, size: 19)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .frame(width: 44, height: 44)
-                    .background(PicoColors.softSurface)
-                    .clipShape(Circle())
-                    .overlay {
-                        Circle()
-                            .stroke(PicoColors.border, lineWidth: 1)
-                    }
+                Button {
+                    dismiss()
+                } label: {
+                    PicoIcon(.xMarkRegular, size: 19)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Close calendar"))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("Close calendar"))
+
+            screenTabs
+        }
+    }
+
+    private var screenTabs: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            ForEach(DailySnapshotScreenTab.allCases) { tab in
+                Button {
+                    withAnimation(.snappy(duration: 0.18)) {
+                        selectedScreenTab = tab
+                    }
+                } label: {
+                    Text(tab.label)
+                        .font(PicoTypography.largePill)
+                        .foregroundStyle(selectedScreenTab == tab ? PicoColors.textPrimary : PicoColors.textSecondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, PicoSpacing.compact)
+                        .background(selectedScreenTab == tab ? PicoColors.surface : Color.clear)
+                        .clipShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(PicoSpacing.tiny)
+        .background(PicoColors.softSurface)
+        .clipShape(Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
+    }
+
+    private var calendarTab: some View {
+        VStack(spacing: PicoSpacing.section) {
+            DailySnapshotCalendarHero(
+                selectedDate: selectedDate,
+                snapshot: selectedSnapshot,
+                mode: heroMode,
+                isLoading: loadState == .loading,
+                isLocked: selectedDayRequiresPlus,
+                notice: selectedDayRequiresPlus ? picoPlusStore.notice : notice,
+                afterUnlock: loadSelectedSnapshotAfterPlusUnlock
+            )
+
+            heroModePills
+
+            calendarPanel
+        }
+    }
+
+    @ViewBuilder
+    private var statsTab: some View {
+        if isStatsLocked {
+            DailyFocusStatsLockedPage(afterUnlock: loadStatsAfterPlusUnlock)
+        } else {
+            DailyFocusStatsPage(
+                selectedDate: selectedStatsDate,
+                distribution: selectedFocusDistribution,
+                dailyGoalMinutes: dailyFocusGoalMinutes,
+                isLoading: statsLoadState == .loading,
+                notice: statsNotice,
+                canGoToNextDay: canGoToNextStatsDay,
+                isSavingFocusGoal: isSavingFocusGoal,
+                previousDayAction: { moveSelectedStatsDay(by: -1) },
+                nextDayAction: { moveSelectedStatsDay(by: 1) },
+                editFocusGoalAction: presentFocusGoalEditor
+            )
         }
     }
 
@@ -2892,6 +2997,11 @@ private struct DailySnapshotCalendarScreen: View {
         displayedMonth = month
     }
 
+    private func moveSelectedStatsDay(by offset: Int) {
+        guard let nextDate = calendar.date(byAdding: .day, value: offset, to: selectedStatsDate) else { return }
+        selectedStatsDate = min(calendar.startOfDay(for: nextDate), maximumDate)
+    }
+
     private func loadDisplayedMonthActivityIfNeeded(for month: Date) {
         let monthKey = DailySnapshotDay(date: monthStart(for: month), calendar: calendar)
         guard !loadedFocusActivityMonths.contains(monthKey),
@@ -2985,6 +3095,52 @@ private struct DailySnapshotCalendarScreen: View {
     private func loadSelectedSnapshotAfterPlusUnlock() {
         if picoPlusStore.capabilities.canAccessDailySnapshot(isPastDay: isPastDay(selectedDate)) {
             loadSelectedSnapshotIfNeeded(for: selectedDate)
+        }
+    }
+
+    private func loadStatsAfterPlusUnlock() {
+        loadStatsIfNeeded()
+    }
+
+    private func loadStatsIfNeeded() {
+        guard selectedScreenTab == .stats, picoPlusStore.capabilities.isPlusActive else { return }
+        loadDailyFocusGoalIfNeeded()
+        loadSelectedStatsDistributionIfNeeded(for: selectedStatsDate)
+    }
+
+    private func loadSelectedStatsDistributionIfNeeded(for date: Date) {
+        let day = DailySnapshotDay(date: date, calendar: calendar)
+        let isCurrentDay = day == DailySnapshotDay(date: maximumDate, calendar: calendar)
+        guard (focusDistributionByDay[day] == nil || isCurrentDay),
+              !loadingFocusDistributionDays.contains(day) else {
+            statsLoadState = .loaded
+            statsNotice = nil
+            return
+        }
+
+        loadingFocusDistributionDays.insert(day)
+
+        Task {
+            await loadSelectedStatsDistribution(day: day)
+        }
+    }
+
+    private func loadSelectedStatsDistribution(day: DailySnapshotDay) async {
+        statsLoadState = .loading
+        statsNotice = nil
+
+        do {
+            let distribution = try await fetchFocusDistributionAction(day)
+            loadingFocusDistributionDays.remove(day)
+            guard day == selectedStatsDay else { return }
+            focusDistributionByDay[day] = distribution
+            focusActivityByDay[day] = distribution.totalFocusedSeconds > 0 || distribution.metrics.totalFocusSessions > 0
+            statsLoadState = .loaded
+        } catch {
+            loadingFocusDistributionDays.remove(day)
+            guard day == selectedStatsDay else { return }
+            statsLoadState = .failed
+            statsNotice = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
@@ -3191,9 +3347,6 @@ private struct DailySnapshotCalendarHero: View {
     let isLoading: Bool
     let isLocked: Bool
     let notice: String?
-    let dailyFocusGoalMinutes: Int?
-    let isSavingFocusGoal: Bool
-    let editFocusGoalAction: () -> Void
     let afterUnlock: () -> Void
 
     var body: some View {
@@ -3211,13 +3364,6 @@ private struct DailySnapshotCalendarHero: View {
                     switch mode {
                     case .bonds:
                         DailySnapshotBondsHeroContent(snapshot: snapshot)
-                    case .focus:
-                        DailySnapshotFocusHeroContent(
-                            snapshot: snapshot,
-                            dailyGoalMinutes: dailyFocusGoalMinutes,
-                            isSavingGoal: isSavingFocusGoal,
-                            editGoalAction: editFocusGoalAction
-                        )
                     case .fish:
                         DailySnapshotFishHeroContent(snapshot: snapshot)
                     }
@@ -3267,15 +3413,285 @@ private struct DailySnapshotCalendarHero: View {
     }
 }
 
+private struct DailyFocusStatsLockedPage: View {
+    let afterUnlock: () -> Void
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.section) {
+            VStack(spacing: PicoSpacing.standard) {
+                Text("Stats")
+                    .font(PicoTypography.cardTitle)
+                    .foregroundStyle(PicoColors.textPrimary)
+
+                Text("Track your focus goals and daily time distribution with Plus.")
+                    .font(PicoTypography.body)
+                    .foregroundStyle(PicoColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                PicoPlusCTAButton(
+                    title: "Unlock Stats",
+                    size: .regular,
+                    source: .calendarView(placement: .calendarView),
+                    afterPresentation: afterUnlock
+                )
+            }
+            .padding(PicoSpacing.section)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 260)
+            .background(PicoColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous)
+                    .stroke(PicoColors.border, lineWidth: 1)
+            }
+        }
+    }
+}
+
+private struct DailyFocusStatsPage: View {
+    let selectedDate: Date
+    let distribution: DailyFocusDistribution
+    let dailyGoalMinutes: Int?
+    let isLoading: Bool
+    let notice: String?
+    let canGoToNextDay: Bool
+    let isSavingFocusGoal: Bool
+    let previousDayAction: () -> Void
+    let nextDayAction: () -> Void
+    let editFocusGoalAction: () -> Void
+
+    var body: some View {
+        VStack(spacing: PicoSpacing.section) {
+            dayNavigation
+
+            DailySnapshotFocusHeroContent(
+                metrics: distribution.metrics,
+                dailyGoalMinutes: dailyGoalMinutes,
+                isSavingGoal: isSavingFocusGoal,
+                editGoalAction: editFocusGoalAction
+            )
+
+            DailyFocusDistributionChart(distribution: distribution)
+                .overlay {
+                    if isLoading {
+                        loadingOverlay
+                    }
+                }
+
+            if let notice, !isLoading {
+                Label {
+                    Text(notice)
+                        .font(PicoTypography.caption)
+                        .lineLimit(2)
+                } icon: {
+                    PicoIcon(.infoRegular, size: 15)
+                }
+                .foregroundStyle(PicoColors.textSecondary)
+            }
+        }
+    }
+
+    private var dayNavigation: some View {
+        HStack(spacing: PicoSpacing.compact) {
+            Button(action: previousDayAction) {
+                PicoIcon(.chevronLeftRegular, size: 18)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .frame(width: 36, height: 34)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Previous stats day"))
+
+            VStack(spacing: PicoSpacing.tiny) {
+                Text(selectedDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                    .font(PicoTypography.primaryLabel)
+                    .foregroundStyle(PicoColors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+            }
+            .frame(maxWidth: .infinity)
+
+            Button(action: nextDayAction) {
+                PicoIcon(.chevronRightRegular, size: 18)
+                    .foregroundStyle(canGoToNextDay ? PicoColors.textPrimary : PicoColors.textMuted)
+                    .frame(width: 36, height: 34)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canGoToNextDay)
+            .accessibilityLabel(Text("Next stats day"))
+        }
+        .padding(.horizontal, PicoSpacing.compact)
+        .padding(.vertical, PicoSpacing.tiny)
+    }
+
+    private var loadingOverlay: some View {
+        VStack(spacing: PicoSpacing.compact) {
+            ProgressView()
+                .tint(PicoColors.primary)
+
+            Text("Loading stats")
+                .font(PicoTypography.captionSemibold)
+                .foregroundStyle(PicoColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PicoColors.surface.opacity(0.88))
+        .clipShape(RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous))
+    }
+}
+
+private struct DailyFocusDistributionChart: View {
+    let distribution: DailyFocusDistribution
+
+    private var totalFocusedText: AttributedString {
+        var text = AttributedString("Total focused time: \(Self.formattedDuration(distribution.totalFocusedSeconds))")
+        if let range = text.range(of: Self.formattedDuration(distribution.totalFocusedSeconds)) {
+            text[range].foregroundColor = PicoColors.primary
+        }
+        return text
+    }
+
+    private var maxFocusedMinutes: Double {
+        distribution.buckets
+            .map { Double(max(0, $0.focusedSeconds)) / 60.0 }
+            .max() ?? 0
+    }
+
+    private var axisMaximum: Double {
+        max(75, ceil(maxFocusedMinutes / 15.0) * 15.0)
+    }
+
+    private var yTicks: [Int] {
+        stride(from: Int(axisMaximum), through: 0, by: -15).map { $0 }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+            Text("Time distribution")
+                .font(PicoTypography.compactTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+
+            VStack(spacing: PicoSpacing.compact) {
+                chartArea
+                    .frame(height: 182)
+
+                xAxis
+            }
+        }
+        .padding(PicoSpacing.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PicoColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Focused time distribution"))
+        .accessibilityValue(Text(Self.formattedDuration(distribution.totalFocusedSeconds)))
+    }
+
+    private var chartArea: some View {
+        GeometryReader { proxy in
+            HStack(alignment: .bottom, spacing: PicoSpacing.tiny) {
+                yAxisLabels(height: proxy.size.height)
+
+                ZStack(alignment: .bottom) {
+                    gridLines(height: proxy.size.height)
+
+                    HStack(alignment: .bottom, spacing: 5) {
+                        ForEach(distribution.buckets) { bucket in
+                            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                .fill(PicoColors.primary.opacity(0.88))
+                                .frame(height: barHeight(for: bucket, chartHeight: proxy.size.height))
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .padding(.horizontal, 1)
+                }
+            }
+        }
+    }
+
+    private func yAxisLabels(height: CGFloat) -> some View {
+        ZStack(alignment: .topTrailing) {
+            ForEach(yTicks, id: \.self) { tick in
+                Text(tick == 0 ? "0 M" : "\(tick)")
+                    .font(PicoTypography.caption)
+                    .foregroundStyle(PicoColors.textMuted)
+                    .position(x: 18, y: yPosition(for: tick, height: height))
+            }
+        }
+        .frame(width: 38, height: height)
+    }
+
+    private func gridLines(height: CGFloat) -> some View {
+        GeometryReader { proxy in
+            ZStack {
+                ForEach(yTicks, id: \.self) { tick in
+                    Rectangle()
+                        .fill(PicoColors.border.opacity(0.72))
+                        .frame(width: proxy.size.width, height: 1)
+                        .position(x: proxy.size.width / 2, y: yPosition(for: tick, height: height))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var xAxis: some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: 38)
+
+            HStack {
+                Text("00:00")
+                Spacer(minLength: 0)
+                Text("06:00")
+                Spacer(minLength: 0)
+                Text("12:00")
+                Spacer(minLength: 0)
+                Text("18:00")
+                Spacer(minLength: 0)
+                Text("23:00")
+            }
+            .font(PicoTypography.caption)
+            .foregroundStyle(PicoColors.textMuted)
+        }
+    }
+
+    private func yPosition(for tick: Int, height: CGFloat) -> CGFloat {
+        let value = min(max(Double(tick), 0), axisMaximum)
+        return height - (CGFloat(value / axisMaximum) * height)
+    }
+
+    private func barHeight(for bucket: DailyFocusDistributionBucket, chartHeight: CGFloat) -> CGFloat {
+        let minutes = Double(max(0, bucket.focusedSeconds)) / 60.0
+        guard minutes > 0 else { return 0 }
+        return max(4, CGFloat(minutes / axisMaximum) * chartHeight)
+    }
+
+    private static func formattedDuration(_ seconds: Int) -> String {
+        let minutes = max(0, Int(ceil(Double(seconds) / 60.0)))
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+
+        if hours > 0, remainingMinutes > 0 {
+            return "\(hours) hours \(remainingMinutes) mins"
+        }
+
+        if hours > 0 {
+            return hours == 1 ? "1 hour" : "\(hours) hours"
+        }
+
+        return "\(remainingMinutes) mins"
+    }
+}
+
 private struct DailySnapshotFocusHeroContent: View {
-    let snapshot: DailyVillageSnapshot?
+    let metrics: DailyFocusMetrics
     let dailyGoalMinutes: Int?
     let isSavingGoal: Bool
     let editGoalAction: () -> Void
-
-    private var metrics: DailyFocusMetrics {
-        snapshot?.focusMetrics ?? .zero
-    }
 
     private var focusedMinutes: Int {
         let seconds = max(0, metrics.totalFocusedSeconds)
@@ -3300,6 +3716,15 @@ private struct DailySnapshotFocusHeroContent: View {
         return "\(Self.formattedMinutes(focusedMinutes)) / \(Self.formattedMinutes(dailyGoalMinutes))"
     }
 
+    private var focusedValueText: String {
+        Self.formattedMinutes(focusedMinutes)
+    }
+
+    private var goalValueText: String {
+        guard let dailyGoalMinutes else { return "/ Set goal" }
+        return "/ \(Self.formattedMinutes(dailyGoalMinutes))"
+    }
+
     private var remainingText: String {
         guard let remainingGoalMinutes else { return "Set daily goal" }
         guard remainingGoalMinutes > 0 else { return "Goal met" }
@@ -3319,88 +3744,114 @@ private struct DailySnapshotFocusHeroContent: View {
     }
 
     var body: some View {
-        VStack(spacing: PicoSpacing.compact) {
-            Spacer(minLength: 0)
+        VStack(spacing: PicoSpacing.section) {
+            focusProgressCard
 
-            Button(action: editGoalAction) {
-                VStack(alignment: .leading, spacing: PicoSpacing.compact) {
-                    HStack(spacing: PicoSpacing.compact) {
-                        Text("Focus")
-                            .font(PicoTypography.captionSemibold)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .lineLimit(1)
-
-                        Spacer(minLength: PicoSpacing.compact)
-
-                        if isSavingGoal {
-                            ProgressView()
-                                .tint(PicoColors.primary)
-                                .scaleEffect(0.76)
-                        }
-                    }
-
-                    HStack(alignment: .firstTextBaseline, spacing: PicoSpacing.compact) {
-                        Text(progressValueText)
-                            .font(PicoTypography.captionSemibold)
-                            .foregroundStyle(PicoColors.textPrimary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.76)
-
-                        Spacer(minLength: PicoSpacing.compact)
-
-                        Text(remainingText)
-                            .font(PicoTypography.caption)
-                            .foregroundStyle(PicoColors.textSecondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.76)
-                    }
-
-                    GeometryReader { proxy in
-                        ZStack(alignment: .leading) {
-                            Capsule(style: .continuous)
-                                .fill(PicoColors.softSurface)
-
-                            Capsule(style: .continuous)
-                                .fill(PicoColors.primary)
-                                .frame(width: proxy.size.width * progressFraction)
-                        }
-                    }
-                    .frame(height: 8)
-                    .opacity(dailyGoalMinutes == nil ? 0.42 : 1)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(isSavingGoal)
-            .accessibilityLabel(Text("Focus goal"))
-            .accessibilityValue(Text(progressAccessibilityText))
-            .accessibilityHint(Text("Opens daily focus goal editor"))
-
-            PicoCardDivider(horizontalPadding: 0)
-                .opacity(0.68)
-                .padding(.vertical, PicoSpacing.tiny)
-
-            VStack(spacing: PicoSpacing.compact) {
-                Text("Session")
-                    .font(PicoTypography.captionSemibold)
-                    .foregroundStyle(PicoColors.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                LazyVGrid(columns: sessionMetricColumns, spacing: PicoSpacing.compact) {
-                    ForEach(sessionMetricItems, id: \.label) { item in
-                        DailySnapshotFocusMetricPill(
-                            label: item.label,
-                            value: item.value
-                        )
-                    }
-                }
-            }
-
-            Spacer(minLength: 0)
+            sessionMetricsCard
         }
         .frame(maxWidth: .infinity)
-        .frame(height: PicoCalendarStyle.heroContentHeight)
         .accessibilityElement(children: .combine)
+    }
+
+    private var focusProgressCard: some View {
+        Button(action: editGoalAction) {
+            VStack(alignment: .leading, spacing: PicoSpacing.standard) {
+                HStack(spacing: PicoSpacing.compact) {
+                    Text("Focus time")
+                        .font(PicoTypography.compactTitle)
+                        .foregroundStyle(PicoColors.textPrimary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: PicoSpacing.compact)
+
+                    if isSavingGoal {
+                        ProgressView()
+                            .tint(PicoColors.primary)
+                            .scaleEffect(0.76)
+                    }
+                }
+
+                HStack(alignment: .lastTextBaseline, spacing: PicoSpacing.compact) {
+                    HStack(alignment: .lastTextBaseline, spacing: PicoSpacing.tiny) {
+                        Text(focusedValueText)
+                            .font(PicoTypography.durationValue)
+                            .foregroundStyle(PicoColors.textPrimary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+
+                        Text(goalValueText)
+                            .font(PicoTypography.captionSemibold)
+                            .foregroundStyle(PicoColors.textSecondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                    .layoutPriority(1)
+
+                    Spacer(minLength: PicoSpacing.compact)
+
+                    Text(remainingText)
+                        .font(PicoTypography.caption)
+                        .foregroundStyle(PicoColors.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule(style: .continuous)
+                            .fill(PicoColors.softSurface)
+
+                        Capsule(style: .continuous)
+                            .fill(PicoColors.primary)
+                            .frame(width: proxy.size.width * progressFraction)
+                    }
+                }
+                .frame(height: 10)
+                .opacity(dailyGoalMinutes == nil ? 0.42 : 1)
+            }
+            .padding(PicoSpacing.cardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSavingGoal)
+        .background(PicoColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
+        .accessibilityLabel(Text("Focus goal"))
+        .accessibilityValue(Text(progressAccessibilityText))
+        .accessibilityHint(Text("Opens daily focus goal editor"))
+    }
+
+    private var sessionMetricsCard: some View {
+        VStack(spacing: PicoSpacing.standard) {
+            Text("Sessions")
+                .font(PicoTypography.compactTitle)
+                .foregroundStyle(PicoColors.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            LazyVGrid(columns: sessionMetricColumns, spacing: PicoSpacing.standard) {
+                ForEach(sessionMetricItems, id: \.label) { item in
+                    DailySnapshotFocusMetricPill(
+                        label: item.label,
+                        value: item.value
+                    )
+                }
+            }
+        }
+        .padding(PicoSpacing.cardPadding)
+        .frame(maxWidth: .infinity)
+        .background(PicoColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: PicoCalendarStyle.panelCornerRadius, style: .continuous)
+                .stroke(PicoColors.border, lineWidth: 1)
+        }
     }
 
     private var completedFocusSessions: Int {
@@ -3417,7 +3868,7 @@ private struct DailySnapshotFocusHeroContent: View {
     }
 
     private var sessionMetricColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: PicoSpacing.compact), count: 2)
+        Array(repeating: GridItem(.flexible(), spacing: PicoSpacing.standard, alignment: .leading), count: 2)
     }
 
     private static func formattedMinutes(_ minutes: Int) -> String {
@@ -3442,24 +3893,22 @@ private struct DailySnapshotFocusMetricPill: View {
     let value: Int
 
     var body: some View {
-        VStack(spacing: PicoSpacing.tiny) {
-            Text(label)
-                .font(PicoTypography.caption)
-                .foregroundStyle(PicoColors.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-
+        VStack(alignment: .leading, spacing: PicoSpacing.tiny) {
             Text("\(max(0, value))")
-                .font(PicoTypography.inlineValue)
+                .font(PicoTypography.sectionTitle)
                 .foregroundStyle(PicoColors.textPrimary)
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
+
+            Text(label)
+                .font(PicoTypography.captionSemibold)
+                .foregroundStyle(PicoColors.textSecondary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.72)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 58)
-        .background(PicoColors.softSurface.opacity(0.72))
-        .clipShape(Capsule(style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
     }
 }
 
